@@ -201,19 +201,38 @@ class MainActivity : AudioServiceActivity() {
             MediaStore.Audio.Media.ALBUM_ID,
             MediaStore.Audio.Media.DURATION,
             MediaStore.Audio.Media.MIME_TYPE,
-            MediaStore.Audio.Media.SIZE
+            MediaStore.Audio.Media.SIZE,
+            MediaStore.Audio.Media.IS_MUSIC,
+            MediaStore.Audio.Media.DATA
         )
-
-        val selection =
-            "${MediaStore.Audio.Media.IS_MUSIC} != 0"
 
         val sortOrder =
             "${MediaStore.Audio.Media.TITLE} COLLATE NOCASE ASC"
 
+        // Carpetas a excluir (audios de aplicaciones)
+        val excludedFolders = listOf(
+            "WhatsApp",
+            "Android/data",
+            "Android/media/com.whatsapp",
+            "Android/media/com.facebook",
+            "Android/media/com.instagram",
+            "Android/media/com.snapchat",
+            "Android/media/com.discord",
+            "Android/media/com.telegram",
+            "Recordings",
+            "Voice Recorder",
+            "Voice Notes",
+            "Call Recordings",
+            "Sounds",
+            "Notifications",
+            "Ringtones",
+            "Alarms"
+        )
+
         contentResolver.query(
             collection,
             projection,
-            selection,
+            null,
             null,
             sortOrder
         )?.use { cursor ->
@@ -263,6 +282,16 @@ class MainActivity : AudioServiceActivity() {
                     MediaStore.Audio.Media.SIZE
                 )
 
+            val isMusicColumn =
+                cursor.getColumnIndexOrThrow(
+                    MediaStore.Audio.Media.IS_MUSIC
+                )
+
+            val dataColumn =
+                cursor.getColumnIndexOrThrow(
+                    MediaStore.Audio.Media.DATA
+                )
+
             while (cursor.moveToNext()) {
 
                 val id =
@@ -309,6 +338,21 @@ class MainActivity : AudioServiceActivity() {
                         0L
                     }
 
+                val isMusic =
+                    cursor.getInt(isMusicColumn) != 0
+
+                val dataPath =
+                    cursor.getString(dataColumn) ?: ""
+
+                // Filtrar por carpetas excluidas
+                val isInExcludedFolder = excludedFolders.any { folder ->
+                    dataPath.contains(folder, ignoreCase = true)
+                }
+
+                if (isInExcludedFolder) {
+                    continue
+                }
+
                 val contentUri =
                     ContentUris.withAppendedId(
                         collection,
@@ -334,7 +378,8 @@ class MainActivity : AudioServiceActivity() {
                         "mimeType" to mimeType,
                         "size" to size,
                         "uri" to contentUri.toString(),
-                        "artworkUri" to artworkUri
+                        "artworkUri" to artworkUri,
+                        "isMusic" to isMusic
                     )
                 )
             }

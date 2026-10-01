@@ -5,6 +5,9 @@ import 'package:flutter/services.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:just_audio_background/just_audio_background.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:http/http.dart' as http;
+
+import 'services/youtube_audio_service.dart';
 
 class Song {
   final int id;
@@ -18,6 +21,7 @@ class Song {
   final int size;
   final String uri;
   final String artworkUri;
+  final bool isMusic;
 
   Song({
     required this.id,
@@ -31,6 +35,7 @@ class Song {
     required this.size,
     required this.uri,
     required this.artworkUri,
+    required this.isMusic,
   });
 
   factory Song.fromMap(Map<dynamic, dynamic> map) {
@@ -46,8 +51,33 @@ class Song {
       size: (map['size'] as num?)?.toInt() ?? 0,
       uri: map['uri']?.toString() ?? '',
       artworkUri: map['artworkUri']?.toString() ?? '',
+      isMusic: map['isMusic'] == true,
     );
   }
+
+  /// Convierte un resultado de YouTube en una Song.
+  /// La URL real del audio se obtiene al reproducir.
+  factory Song.fromYouTube(YouTubeSearchResult result) {
+    return Song(
+      id: result.videoId.hashCode & 0x7fffffff,
+      title: result.title,
+      displayName: result.title,
+      artist: result.artist.isEmpty ? 'YouTube' : result.artist,
+      album: 'YouTube',
+      albumId: null,
+      duration: result.duration * 1000,
+      mimeType: 'youtube',
+      size: 0,
+      uri: result.url,
+      artworkUri: result.thumbnail,
+      isMusic: true,
+    );
+  }
+
+  bool get isOnline => mimeType == 'youtube';
+
+  String get onlineVideoId =>
+      Uri.tryParse(uri)?.queryParameters['v'] ?? '';
 }
 
 class MusicPlayerController extends ChangeNotifier {
@@ -58,6 +88,7 @@ class MusicPlayerController extends ChangeNotifier {
   late SharedPreferences _preferences;
 
   List<Song> _songs = [];
+  List<Song> _hiddenSongs = [];
   List<Song> _queue = [];
 
   Song? _currentSong;
@@ -74,9 +105,17 @@ class MusicPlayerController extends ChangeNotifier {
   int _queueIndex = -1;
 
   final Map<int, Uint8List?> _artworkCache = {};
+  final Map<int, Uint8List?> _onlineArtworkCache = {};
+
+  bool _loadingOnline = false;
+  int _playToken = 0;
+
+  /// Mensaje del último error de reproducción (null si todo fue bien).
+  String? playbackError;
 
   // Getters
   List<Song> get songs => _songs;
+  List<Song> get hiddenSongs => _hiddenSongs;
   List<Song> get queue => _queue;
   Song? get currentSong => _currentSong;
   bool get loading => _loading;
@@ -84,6 +123,7 @@ class MusicPlayerController extends ChangeNotifier {
   bool get isPlaying => _isPlaying;
   bool get shuffleEnabled => _shuffleEnabled;
   bool get repeatEnabled => _repeatEnabled;
+  bool get loadingOnline => _loadingOnline;
   int get queueIndex => _queueIndex;
   AudioPlayer get audioPlayer => _audioPlayer;
 
@@ -200,13 +240,14 @@ class MusicPlayerController extends ChangeNotifier {
         }
       }
 
-      _songs = songs;
+      _songs = songs.where((song) => song.isMusic).toList();
+      _hiddenSongs = songs.where((song) => !song.isMusic).toList();
       _loading = false;
       _permissionDenied = false;
       notifyListeners();
 
-      if (_queue.isEmpty && songs.isNotEmpty) {
-        _queue = List<Song>.from(songs);
+      if (_queue.isEmpty && _songs.isNotEmpty) {
+        _queue = List<Song>.from(_songs);
         _queueIndex = -1;
       }
     } catch (e) {
@@ -260,9 +301,43 @@ class MusicPlayerController extends ChangeNotifier {
     Song song, {
     bool createQueue = true,
   }) async {
+    playbackError = null;
+    final token = ++_playToken;
+
     try {
-      if (createQueue) {
+      if (createQueue && !song.isOnline) {
         _createQueueFromSong(song);
+      }
+
+      final Uri sourceUri;
+
+      if (song.isOnline) {
+        // Mostramos la canción en el mini player mientras se obtiene el audio.
+        _currentSong = song;
+        _loadingOnline = true;
+        _isPlaying = false;
+        notifyListeners();
+
+        final audioPath = await YouTubeAudioService.instance.getAudioFile(
+          song.onlineVideoId,
+        );
+
+        // Si el usuario eligió otra canción mientras descargaba, descartamos esta.
+        if (token != _playToken) {
+          return;
+        }
+
+        if (audioPath == null) {
+          playbackError =
+              YouTubeAudioService.instance.lastError ??
+                  'No se pudo obtener el audio.';
+          debugPrint('[SoundNeed] $playbackError');
+          return;
+        }
+
+        sourceUri = Uri.file(audioPath);
+      } else {
+        sourceUri = Uri.parse(song.uri);
       }
 
       final mediaItem = MediaItem(
@@ -272,15 +347,18 @@ class MusicPlayerController extends ChangeNotifier {
             : song.title,
         artist: song.artist,
         album: song.album,
-        duration: Duration(
-          milliseconds: song.duration,
-        ),
+        duration: song.duration > 0
+            ? Duration(milliseconds: song.duration)
+            : null,
+        artUri: song.isOnline && song.artworkUri.isNotEmpty
+            ? Uri.tryParse(song.artworkUri)
+            : null,
         playable: true,
       );
 
       await _audioPlayer.setAudioSource(
         AudioSource.uri(
-          Uri.parse(song.uri),
+          sourceUri,
           tag: mediaItem,
         ),
       );
@@ -291,8 +369,43 @@ class MusicPlayerController extends ChangeNotifier {
 
       await _audioPlayer.play();
     } catch (e) {
+      playbackError = e.toString();
       debugPrint('Error reproduciendo canción: $e');
+    } finally {
+      if (_loadingOnline && token == _playToken) {
+        _loadingOnline = false;
+        notifyListeners();
+      }
     }
+  }
+
+  /// Reproduce un resultado de YouTube. Si pasas [playlist], esos
+  /// resultados forman la cola (siguiente / anterior funcionan).
+  /// Devuelve false si falló (ver [playbackError]).
+  Future<bool> playOnline(
+    YouTubeSearchResult result, {
+    List<YouTubeSearchResult>? playlist,
+  }) async {
+    final source = (playlist == null || playlist.isEmpty)
+        ? <YouTubeSearchResult>[result]
+        : playlist;
+
+    final song = Song.fromYouTube(result);
+
+    _queue = source.map(Song.fromYouTube).toList();
+
+    var index = _queue.indexWhere((s) => s.id == song.id);
+
+    if (index == -1) {
+      _queue.insert(0, song);
+      index = 0;
+    }
+
+    _queueIndex = index;
+
+    await playSong(_queue[_queueIndex], createQueue: false);
+
+    return playbackError == null;
   }
 
   // ============================================================
@@ -320,7 +433,7 @@ class MusicPlayerController extends ChangeNotifier {
   // ============================================================
 
   Future<void> nextSong() async {
-    if (_songs.isEmpty) return;
+    if (_songs.isEmpty && _queue.isEmpty) return;
 
     if (_queue.isEmpty) {
       _queue = List<Song>.from(_songs);
@@ -363,7 +476,7 @@ class MusicPlayerController extends ChangeNotifier {
   // ============================================================
 
   Future<void> previousSong() async {
-    if (_songs.isEmpty) return;
+    if (_songs.isEmpty && _queue.isEmpty) return;
 
     if (_queue.isEmpty) {
       _queue = List<Song>.from(_songs);
@@ -451,18 +564,20 @@ class MusicPlayerController extends ChangeNotifier {
   // ============================================================
 
   Song? _getRandomSong() {
-    if (_songs.isEmpty) {
+    final pool = _queue.isNotEmpty ? _queue : _songs;
+
+    if (pool.isEmpty) {
       return null;
     }
 
     final currentId = _currentSong?.id;
 
-    final available = _songs
+    final available = pool
         .where((song) => song.id != currentId)
         .toList();
 
     if (available.isEmpty) {
-      return _songs.first;
+      return pool.first;
     }
 
     available.shuffle();
@@ -496,7 +611,40 @@ class MusicPlayerController extends ChangeNotifier {
   // PORTADAS
   // ============================================================
 
+  Future<Uint8List?> loadOnlineArtwork(Song song) async {
+    if (_onlineArtworkCache.containsKey(song.id)) {
+      return _onlineArtworkCache[song.id];
+    }
+
+    if (song.artworkUri.isEmpty) {
+      return null;
+    }
+
+    try {
+      final response = await http
+          .get(Uri.parse(song.artworkUri))
+          .timeout(const Duration(seconds: 10));
+
+      final Uint8List? bytes =
+          response.statusCode == 200 ? response.bodyBytes : null;
+
+      _onlineArtworkCache[song.id] = bytes;
+
+      return bytes;
+    } catch (e) {
+      debugPrint('Error descargando portada online: $e');
+
+      _onlineArtworkCache[song.id] = null;
+
+      return null;
+    }
+  }
+
   Future<Uint8List?> loadArtwork(Song song) async {
+    if (song.isOnline) {
+      return loadOnlineArtwork(song);
+    }
+
     final albumId = song.albumId;
 
     if (albumId == null || albumId <= 0) {

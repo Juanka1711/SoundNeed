@@ -4,6 +4,13 @@ import 'package:flutter/material.dart';
 import 'music_player.dart';
 import 'full_player.dart';
 import 'mini_player.dart';
+import 'app_colors.dart';
+import 'sections/home_section.dart';
+import 'sections/songs_section.dart';
+import 'sections/playlists_section.dart';
+import 'sections/folders_section.dart';
+import 'sections/artists_section.dart';
+import 'sections/albums_section.dart';
 
 // ============================================================
 // COLORES BASE DE SOUNDNEED
@@ -25,6 +32,7 @@ class AppColors {
 // ============================================================
 
 enum MusicSection {
+  home,
   songs,
   playlists,
   folders,
@@ -57,7 +65,7 @@ class _MusicHomePageState extends State<MusicHomePage> {
   bool _isSearching = false;
   String _searchText = '';
 
-  MusicSection _section = MusicSection.songs;
+  MusicSection _section = MusicSection.home;
 
   bool _isAppBarVisible = true;
   double _lastScrollPosition = 0;
@@ -373,6 +381,11 @@ class _MusicHomePageState extends State<MusicHomePage> {
           physics: const BouncingScrollPhysics(),
           children: [
             _buildFloatingSection(
+              MusicSection.home,
+              Icons.home_outlined,
+              'Inicio',
+            ),
+            _buildFloatingSection(
               MusicSection.songs,
               Icons.music_note_outlined,
               'Canciones',
@@ -489,200 +502,39 @@ class _MusicHomePageState extends State<MusicHomePage> {
 
   Widget _buildCurrentSection() {
     switch (_section) {
+      case MusicSection.home:
+        return HomeSection(
+          player: widget.player,
+        );
+
       case MusicSection.songs:
-        return _buildSongSection();
+        return SongsSection(
+          player: widget.player,
+          filteredSongs: _filteredSongs,
+          searchText: _searchText,
+        );
 
       case MusicSection.playlists:
-        return _buildComingSoon(
-          Icons.queue_music_outlined,
-          'Playlists',
-        );
+        return const PlaylistsSection();
 
       case MusicSection.folders:
-        return _buildComingSoon(
-          Icons.folder_outlined,
-          'Carpetas',
-        );
+        return const FoldersSection();
 
       case MusicSection.artists:
-        return _buildComingSoon(
-          Icons.person_outline,
-          'Artistas',
-        );
+        return const ArtistsSection();
 
       case MusicSection.albums:
-        return _buildComingSoon(
-          Icons.album_outlined,
-          'Álbumes',
-        );
+        return const AlbumsSection();
     }
   }
 
   // ==========================================================
-  // CANCIONES
-  // ==========================================================
-
-  Widget _buildSongSection() {
-    if (widget.player.loading) {
-      return const Center(
-        child: CircularProgressIndicator(
-          color: Colors.white,
-        ),
-      );
-    }
-
-    if (widget.player.permissionDenied) {
-      return _buildPermissionMessage();
-    }
-
-    if (widget.player.songs.isEmpty) {
-      return _buildEmptyLibrary();
-    }
-
-    if (_filteredSongs.isEmpty) {
-      return _buildNoResults();
-    }
-
-    return RefreshIndicator(
-      color: Colors.white,
-      backgroundColor: AppColors.card,
-      onRefresh: widget.player.loadSongs,
-      child: ListView.builder(
-        padding: const EdgeInsets.only(
-          top: 4,
-          bottom: 14,
-        ),
-        itemCount: _filteredSongs.length,
-        itemBuilder: (context, index) {
-          final song = _filteredSongs[index];
-
-          final isCurrent =
-              widget.player.currentSong?.id ==
-                  song.id;
-
-          return _buildSongTile(
-            song,
-            isCurrent,
-          );
-        },
-      ),
-    );
-  }
-
-  // ==========================================================
-  // SONG TILE
-  // ==========================================================
-
-  Widget _buildSongTile(
-    Song song,
-    bool isCurrent,
-  ) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 12,
-        vertical: 4,
-      ),
-      child: Material(
-        color: isCurrent
-            ? Colors.white.withOpacity(0.06)
-            : Colors.transparent,
-        borderRadius:
-            BorderRadius.circular(16),
-        child: InkWell(
-          borderRadius:
-              BorderRadius.circular(16),
-          onTap: () =>
-              widget.player.playSong(song),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 7,
-              vertical: 7,
-            ),
-            child: Row(
-              children: [
-                // ==================================================
-                // PORTADA
-                // ==================================================
-
-                _buildArtwork(
-                  song,
-                  size: 76,
-                ),
-
-                const SizedBox(width: 14),
-
-                // ==================================================
-                // INFORMACIÓN
-                // ==================================================
-
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment:
-                        CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        song.title.isEmpty
-                            ? song.displayName
-                            : song.title,
-                        maxLines: 2,
-                        overflow:
-                            TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 17,
-                          fontWeight: isCurrent
-                              ? FontWeight.w700
-                              : FontWeight.w600,
-                          color: Colors.white,
-                        ),
-                      ),
-                      const SizedBox(height: 5),
-                      Text(
-                        song.artist.isEmpty
-                            ? 'Artista desconocido'
-                            : song.artist,
-                        maxLines: 1,
-                        overflow:
-                            TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 13,
-                          color:
-                              AppColors.textSecondary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(width: 6),
-
-                // ==================================================
-                // DURACIÓN
-                // ==================================================
-
-                Text(
-                  widget.player.formatDuration(
-                    song.duration,
-                  ),
-                  style: const TextStyle(
-                    color: Colors.white38,
-                    fontSize: 11,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ==========================================================
-  // ARTWORK
+  // ARTWORK (para el queue)
   // ==========================================================
 
   Widget _buildArtwork(
     Song song, {
-    double size = 76,
+    double size = 52,
   }) {
     return FutureBuilder<Uint8List?>(
       future: widget.player.loadArtwork(song),
@@ -716,199 +568,11 @@ class _MusicHomePageState extends State<MusicHomePage> {
           ),
           child: const Icon(
             Icons.music_note,
-            size: 32,
+            size: 24,
             color: Colors.white54,
           ),
         );
       },
-    );
-  }
-
-  // ==========================================================
-  // PRÓXIMAMENTE
-  // ==========================================================
-
-  Widget _buildComingSoon(
-    IconData icon,
-    String title,
-  ) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(30),
-        child: Column(
-          mainAxisAlignment:
-              MainAxisAlignment.center,
-          children: [
-            Icon(
-              icon,
-              size: 65,
-              color: Colors.white38,
-            ),
-            const SizedBox(height: 18),
-            Text(
-              title,
-              style: const TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Esta sección estará disponible próximamente.',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: AppColors.textSecondary,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ==========================================================
-  // NO RESULTS
-  // ==========================================================
-
-  Widget _buildNoResults() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(30),
-        child: Column(
-          mainAxisAlignment:
-              MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.search_off,
-              size: 70,
-              color:
-                  Colors.white.withOpacity(0.25),
-            ),
-            const SizedBox(height: 18),
-            const Text(
-              'No encontramos canciones',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'No hay resultados para "$_searchText".',
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: AppColors.textSecondary,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ==========================================================
-  // EMPTY LIBRARY
-  // ==========================================================
-
-  Widget _buildEmptyLibrary() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(30),
-        child: Column(
-          mainAxisAlignment:
-              MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.music_off,
-              size: 80,
-              color:
-                  Colors.white.withOpacity(0.25),
-            ),
-            const SizedBox(height: 20),
-            const Text(
-              'No hay música',
-              style: TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 10),
-            const Text(
-              'Agrega archivos de música a tu dispositivo y actualiza la biblioteca.',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: AppColors.textSecondary,
-              ),
-            ),
-            const SizedBox(height: 20),
-            FilledButton.icon(
-              style: FilledButton.styleFrom(
-                backgroundColor: Colors.white,
-                foregroundColor: Colors.black,
-              ),
-              onPressed:
-                  widget.player.loadSongs,
-              icon: const Icon(Icons.refresh),
-              label:
-                  const Text('Actualizar'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ==========================================================
-  // PERMISSION
-  // ==========================================================
-
-  Widget _buildPermissionMessage() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(30),
-        child: Column(
-          mainAxisAlignment:
-              MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.lock_outline,
-              size: 80,
-              color:
-                  Colors.white.withOpacity(0.25),
-            ),
-            const SizedBox(height: 20),
-            const Text(
-              'Permiso necesario',
-              style: TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 10),
-            const Text(
-              'La aplicación necesita permiso para acceder a la música almacenada en el dispositivo.',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: AppColors.textSecondary,
-              ),
-            ),
-            const SizedBox(height: 20),
-            FilledButton.icon(
-              style: FilledButton.styleFrom(
-                backgroundColor: Colors.white,
-                foregroundColor: Colors.black,
-              ),
-              onPressed:
-                  widget.player.loadSongs,
-              icon:
-                  const Icon(Icons.lock_open),
-              label: const Text(
-                'Conceder permiso',
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 
