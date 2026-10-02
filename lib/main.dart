@@ -12,6 +12,8 @@ Future<void> main() async {
     androidNotificationChannelDescription:
         'Controles de reproducción de SoundNeed',
     androidNotificationOngoing: true,
+    androidShowNotificationBadge: true,
+    androidNotificationIcon: 'mipmap/ic_launcher',
   );
 
   runApp(const MusicPlayerApp());

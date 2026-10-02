@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -11,6 +12,7 @@ import 'sections/playlists_section.dart';
 import 'sections/folders_section.dart';
 import 'sections/artists_section.dart';
 import 'sections/albums_section.dart';
+import 'services/youtube_audio_service.dart';
 
 // ============================================================
 // COLORES BASE DE SOUNDNEED
@@ -65,6 +67,15 @@ class _MusicHomePageState extends State<MusicHomePage> {
   bool _isSearching = false;
   String _searchText = '';
 
+  // ==========================================================
+  // ONLINE SEARCH
+  // ==========================================================
+
+  bool _isSearchingOnline = false;
+  List<YouTubeSearchResult> _onlineResults = [];
+  String _onlineQuery = '';
+  Timer? _onlineSearchDebounce;
+
   MusicSection _section = MusicSection.home;
 
   bool _isAppBarVisible = true;
@@ -77,6 +88,7 @@ class _MusicHomePageState extends State<MusicHomePage> {
 
     _searchController.addListener(() {
       _filterSongs(_searchController.text);
+      _triggerOnlineSearch(_searchController.text);
     });
 
     widget.player.addListener(_onPlayerChanged);
@@ -87,6 +99,7 @@ class _MusicHomePageState extends State<MusicHomePage> {
   @override
   void dispose() {
     _searchController.dispose();
+    _onlineSearchDebounce?.cancel();
     widget.player.removeListener(_onPlayerChanged);
     super.dispose();
   }
@@ -145,6 +158,71 @@ class _MusicHomePageState extends State<MusicHomePage> {
   }
 
   // ==========================================================
+  // ONLINE SEARCH
+  // ==========================================================
+
+  void _triggerOnlineSearch(String query) {
+    _onlineSearchDebounce?.cancel();
+
+    if (query.trim().isEmpty) {
+      setState(() {
+        _onlineResults = [];
+        _onlineQuery = '';
+        _isSearchingOnline = false;
+      });
+      return;
+    }
+
+    _onlineSearchDebounce = Timer(
+      const Duration(milliseconds: 800),
+      () {
+        _searchOnline(query);
+      },
+    );
+  }
+
+  Future<void> _searchOnline(String query) async {
+    if (query.trim().isEmpty) return;
+
+    setState(() {
+      _isSearchingOnline = true;
+      _onlineResults = [];
+      _onlineQuery = query;
+    });
+
+    try {
+      final results =
+          await YouTubeAudioService.instance.search(query);
+
+      if (!mounted) return;
+
+      setState(() {
+        _onlineResults = results;
+        _isSearchingOnline = false;
+      });
+    } catch (e) {
+      debugPrint(
+        '[SoundNeed] Error buscando YouTube: $e',
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _onlineResults = [];
+        _isSearchingOnline = false;
+      });
+    }
+  }
+
+  void _clearOnlineSearch() {
+    setState(() {
+      _onlineResults = [];
+      _onlineQuery = '';
+      _isSearchingOnline = false;
+    });
+  }
+
+  // ==========================================================
   // SEARCH TOGGLE
   // ==========================================================
 
@@ -156,6 +234,7 @@ class _MusicHomePageState extends State<MusicHomePage> {
     if (!_isSearching) {
       _searchController.clear();
       FocusScope.of(context).unfocus();
+      _clearOnlineSearch();
     }
   }
 
@@ -267,6 +346,7 @@ class _MusicHomePageState extends State<MusicHomePage> {
                             style: const TextStyle(
                               color: Colors.white,
                             ),
+                            textInputAction: TextInputAction.search,
                             decoration: const InputDecoration(
                               hintText:
                                   'Buscar canción, artista o álbum...',
@@ -505,6 +585,11 @@ class _MusicHomePageState extends State<MusicHomePage> {
       case MusicSection.home:
         return HomeSection(
           player: widget.player,
+          onlineResults: _onlineResults,
+          onlineQuery: _onlineQuery,
+          isSearchingOnline: _isSearchingOnline,
+          clearOnlineSearch: _clearOnlineSearch,
+          localSearchResults: _searchText.isNotEmpty ? _filteredSongs : null,
         );
 
       case MusicSection.songs:

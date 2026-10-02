@@ -7,7 +7,9 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
+import android.util.Log
 import java.io.ByteArrayOutputStream
+import java.util.concurrent.Executors
 
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -17,11 +19,20 @@ import com.ryanheise.audioservice.AudioServiceActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
+import org.schabi.newpipe.extractor.NewPipe
+import org.schabi.newpipe.extractor.stream.AudioStream
+
 class MainActivity : AudioServiceActivity() {
+
+    private var newPipeInitialized = false
 
     companion object {
         private const val CHANNEL = "music_player/media"
+        private const val YOUTUBE_CHANNEL = "youtube/extractor"
         private const val NOTIFICATION_PERMISSION_REQUEST_CODE = 200
+
+        private val extractorExecutor =
+            Executors.newSingleThreadExecutor()
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -86,6 +97,99 @@ class MainActivity : AudioServiceActivity() {
                     result.notImplemented()
                 }
             }
+        }
+
+        // ============================================================
+        // CANAL YOUTUBE EXTRACTOR
+        // ============================================================
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            YOUTUBE_CHANNEL
+        ).setMethodCallHandler { call, result ->
+
+            when (call.method) {
+
+                "getAudioUrl" -> {
+
+                    val videoId =
+                        call.argument<String>("videoId")
+
+                    if (videoId.isNullOrBlank()) {
+                        result.error(
+                            "INVALID_VIDEO_ID",
+                            "El videoId está vacío",
+                            null
+                        )
+                        return@setMethodCallHandler
+                    }
+
+                    extractorExecutor.execute {
+
+                        try {
+
+                            val url =
+                                getYouTubeAudioUrl(videoId)
+
+                            runOnUiThread {
+
+                                if (url != null) {
+                                    result.success(url)
+                                } else {
+                                    result.error(
+                                        "NO_AUDIO",
+                                        "No se encontró un stream de audio",
+                                        null
+                                    )
+                                }
+                            }
+
+                        } catch (e: Exception) {
+
+                            Log.e(
+                                "SoundNeedYouTube",
+                                "Error extrayendo audio",
+                                e
+                            )
+
+                            runOnUiThread {
+                                result.error(
+                                    "EXTRACTION_ERROR",
+                                    e.message ?: "Error desconocido",
+                                    null
+                                )
+                            }
+                        }
+                    }
+                }
+
+                else -> {
+                    result.notImplemented()
+                }
+            }
+        }
+    }
+
+    // ============================================================
+    // INICIALIZAR NEWPIPE (UNA SOLA VEZ)
+    // ============================================================
+
+    private fun initializeNewPipe() {
+        if (newPipeInitialized) return
+
+        synchronized(this) {
+            if (newPipeInitialized) return
+
+            NewPipe.init(
+                NewPipeDownloader()
+            )
+
+            newPipeInitialized = true
+
+            Log.d(
+                "SoundNeedYouTube",
+                "NewPipe inicializado"
+            )
         }
     }
 
@@ -431,5 +535,254 @@ class MainActivity : AudioServiceActivity() {
 
             null
         }
+    }
+
+    // ============================================================
+    // OBTENER URL DE AUDIO DE YOUTUBE (NEWPIPE)
+    // ============================================================
+
+    private fun getYouTubeAudioUrl(
+        videoId: String
+    ): String? {
+
+        initializeNewPipe()
+
+        Log.d(
+            "SoundNeedYouTube",
+            "Extrayendo audio para videoId=$videoId"
+        )
+
+        val service =
+            NewPipe.getService("YouTube")
+
+        val extractor =
+            service.getStreamExtractor(
+                "https://www.youtube.com/watch?v=$videoId"
+            )
+
+        extractor.fetchPage()
+
+        val streams =
+            extractor.getAudioStreams()
+
+        if (streams.isEmpty()) {
+
+            Log.w(
+                "SoundNeedYouTube",
+                "YouTube no devolvió streams de audio"
+            )
+
+            return null
+        }
+
+        // ========================================================
+        // FILTRAR STREAMS UTILIZABLES
+        // ========================================================
+
+        val validStreams =
+            streams.filter { stream ->
+
+                stream.isUrl &&
+                    stream.content.isNotBlank()
+            }
+
+        if (validStreams.isEmpty()) {
+
+            Log.w(
+                "SoundNeedYouTube",
+                "Existen streams, pero ninguno tiene una URL directa válida"
+            )
+
+            return null
+        }
+
+        // ========================================================
+        // MOSTRAR INFORMACIÓN DE LOS STREAMS
+        // ========================================================
+
+        for (stream in validStreams) {
+
+            val mime =
+                stream.codec ?: ""
+
+            val bitrate =
+                stream.getBitrate()
+
+            Log.d(
+                "SoundNeedYouTube",
+                "Stream -> " +
+                    "mime=$mime, " +
+                    "bitrate=$bitrate, " +
+                    "url=${stream.content.take(80)}..."
+            )
+        }
+
+        // ========================================================
+        // FUNCIÓN PARA OBTENER EL MIME COMPLETO
+        // ========================================================
+
+        fun mime(stream: AudioStream): String {
+            return stream.codec
+                ?.lowercase()
+                ?.trim()
+                ?: ""
+        }
+
+        // ========================================================
+        // FUNCIÓN DE PRIORIDAD
+        // ========================================================
+        //
+        // Queremos:
+        //
+        // 1. AAC-LC / mp4a.40.2
+        // 2. Otros AAC / mp4a
+        // 3. MP4 audio
+        // 4. Opus/WebM
+        // 5. Otros formatos
+        //
+        // El número mayor gana.
+        // ========================================================
+
+        fun codecPriority(stream: AudioStream): Int {
+
+            val mimeType =
+                mime(stream)
+
+            return when {
+
+                // AAC-LC explícito
+                mimeType.contains("mp4a.40.2") -> 500
+
+                // Cualquier AAC/mp4a
+                mimeType.contains("mp4a") -> 450
+
+                // Audio MP4 aunque el codec no esté indicado
+                mimeType.contains("audio/mp4") -> 400
+
+                // Opus
+                mimeType.contains("opus") -> 250
+
+                // WebM sin codec explícito
+                mimeType.contains("audio/webm") -> 200
+
+                else -> 0
+            }
+        }
+
+        // ========================================================
+        // FUNCIÓN DE PRIORIDAD DE BITRATE
+        // ========================================================
+        //
+        // No buscamos simplemente el bitrate máximo.
+        //
+        // Preferimos:
+        //
+        // 128-192 kbps
+        // después 192-256
+        // después 96-128
+        // después el resto
+        //
+        // Esto reduce la posibilidad de seleccionar un stream
+        // innecesariamente pesado.
+        // ========================================================
+
+        fun bitrateScore(stream: AudioStream): Int {
+
+            val bitrate =
+                stream.getBitrate()
+
+            return when {
+
+                bitrate in 128_000..192_000 -> 400
+
+                bitrate in 192_001..256_000 -> 350
+
+                bitrate in 96_000..127_999 -> 300
+
+                bitrate in 256_001..320_000 -> 250
+
+                bitrate > 320_000 -> 150
+
+                bitrate > 0 -> 100
+
+                else -> 0
+            }
+        }
+
+        // ========================================================
+        // SELECCIÓN FINAL
+        // ========================================================
+
+        val selected =
+            validStreams
+                .sortedWith(
+                    compareByDescending<AudioStream> {
+                        codecPriority(it)
+                    }.thenByDescending {
+                        bitrateScore(it)
+                    }.thenByDescending {
+                        it.getBitrate()
+                    }
+                )
+                .firstOrNull()
+
+        if (selected == null) {
+
+            Log.e(
+                "SoundNeedYouTube",
+                "No fue posible seleccionar un stream compatible"
+            )
+
+            return null
+        }
+
+        // ========================================================
+        // INFORMACIÓN DEL STREAM SELECCIONADO
+        // ========================================================
+
+        val selectedMime =
+            selected.codec ?: ""
+
+        val selectedBitrate =
+            selected.getBitrate()
+
+        val selectedUrl =
+            selected.content
+
+        Log.d(
+            "SoundNeedYouTube",
+            "STREAM SELECCIONADO -> " +
+                "mime=$selectedMime, " +
+                "bitrate=$selectedBitrate"
+        )
+
+        // ========================================================
+        // VALIDACIÓN FINAL DE LA URL
+        // ========================================================
+
+        if (selectedUrl.isBlank()) {
+
+            Log.e(
+                "SoundNeedYouTube",
+                "El stream seleccionado tiene URL vacía"
+            )
+
+            return null
+        }
+
+        if (
+            !selectedUrl.startsWith("https://") &&
+            !selectedUrl.startsWith("http://")
+        ) {
+
+            Log.e(
+                "SoundNeedYouTube",
+                "URL de stream inválida"
+            )
+
+            return null
+        }
+
+        return selectedUrl
     }
 }

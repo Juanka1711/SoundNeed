@@ -10,6 +10,8 @@ android {
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
+        isCoreLibraryDesugaringEnabled = true
+
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -34,6 +36,13 @@ android {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
+
+            // NOTE: The Flutter Gradle Plugin force-enables R8 minification for the
+            // "release" build type, so disabling it here has no effect. R8 overrides
+            // needed for NewPipe Extractor (via org.mozilla.javascript / Rhino, which
+            // references desktop-JDK-only classes like java.beans, javax.script and
+            // jdk.dynalink that do not exist on Android) are provided in
+            // "proguard-rules.pro" in this directory.
         }
     }
 }
@@ -42,6 +51,17 @@ kotlin {
     compilerOptions {
         jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
     }
+}
+
+dependencies {
+    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.5")
+    // NewPipe Extractor requires java.nio desugaring when minSdk < 33.
+    // desugar_jdk_libs_nio includes the base desugar set PLUS package java.nio
+    // (the plain "desugar_jdk_libs" does NOT cover java.nio). Without it, NewPipe
+    // throws in runtime on devices with SDK lower than 33 (e.g. Android 10) when
+    // extracting an online stream (NewPipeExtractor prerequisite,
+    // see the project Installation docs).
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.1.5")
 }
 
 flutter {

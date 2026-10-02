@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -8,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 
 import 'services/youtube_audio_service.dart';
+import 'services/recommendation_service.dart';
 
 class Song {
   final int id;
@@ -113,6 +115,9 @@ class MusicPlayerController extends ChangeNotifier {
   /// Mensaje del último error de reproducción (null si todo fue bien).
   String? playbackError;
 
+  /// Timer para actualizar progreso en RecommendationService.
+  Timer? _progressUpdateTimer;
+
   // Getters
   List<Song> get songs => _songs;
   List<Song> get hiddenSongs => _hiddenSongs;
@@ -157,6 +162,9 @@ class MusicPlayerController extends ChangeNotifier {
         savedFavorites.map((id) => int.tryParse(id)).whereType<int>(),
       );
     }
+
+    // Inicializar servicio de recomendaciones
+    await RecommendationService.instance.initialize();
 
     await loadSongs();
   }
@@ -246,6 +254,17 @@ class MusicPlayerController extends ChangeNotifier {
       _permissionDenied = false;
       notifyListeners();
 
+      // Registrar canciones locales en el servicio de recomendaciones
+      final localSongsData = _songs.map((song) => {
+        'id': song.id,
+        'title': song.title,
+        'artist': song.artist,
+        'artworkUri': song.artworkUri,
+        'duration': song.duration,
+      }).toList();
+
+      await RecommendationService.instance.registerLocalSongs(localSongsData);
+
       if (_queue.isEmpty && _songs.isNotEmpty) {
         _queue = List<Song>.from(_songs);
         _queueIndex = -1;
@@ -269,8 +288,16 @@ class MusicPlayerController extends ChangeNotifier {
   Future<void> toggleFavorite(Song song) async {
     if (_favoriteIds.contains(song.id)) {
       _favoriteIds.remove(song.id);
+      await RecommendationService.instance.setFavorite(
+        songId: song.id.toString(),
+        favorite: false,
+      );
     } else {
       _favoriteIds.add(song.id);
+      await RecommendationService.instance.setFavorite(
+        songId: song.id.toString(),
+        favorite: true,
+      );
     }
 
     await _saveFavorites();
@@ -304,6 +331,11 @@ class MusicPlayerController extends ChangeNotifier {
     playbackError = null;
     final token = ++_playToken;
 
+    // Detener escucha anterior si hay una canción diferente
+    if (_currentSong != null && _currentSong!.id != song.id) {
+      await _stopCurrentListening();
+    }
+
     try {
       if (createQueue && !song.isOnline) {
         _createQueueFromSong(song);
@@ -318,26 +350,33 @@ class MusicPlayerController extends ChangeNotifier {
         _isPlaying = false;
         notifyListeners();
 
-        final audioPath = await YouTubeAudioService.instance.getAudioFile(
+        final audioUrl = await YouTubeAudioService.instance.getAudioUrl(
           song.onlineVideoId,
         );
 
-        // Si el usuario eligió otra canción mientras descargaba, descartamos esta.
+        // Si el usuario eligió otra canción mientras obtenía la URL, descartamos esta.
         if (token != _playToken) {
           return;
         }
 
-        if (audioPath == null) {
+        if (audioUrl == null || audioUrl.isEmpty) {
           playbackError =
               YouTubeAudioService.instance.lastError ??
-                  'No se pudo obtener el audio.';
+                  'No se pudo obtener el audio de YouTube';
           debugPrint('[SoundNeed] $playbackError');
           return;
         }
 
-        sourceUri = Uri.file(audioPath);
+        sourceUri = Uri.parse(audioUrl);
       } else {
         sourceUri = Uri.parse(song.uri);
+      }
+
+      // Validar que la URI es válida antes de usarla
+      if (!sourceUri.hasScheme || !sourceUri.hasAuthority) {
+        playbackError = 'URL de audio inválida: ${sourceUri.toString()}';
+        debugPrint('[SoundNeed] $playbackError');
+        return;
       }
 
       final mediaItem = MediaItem(
@@ -356,21 +395,98 @@ class MusicPlayerController extends ChangeNotifier {
         playable: true,
       );
 
-      await _audioPlayer.setAudioSource(
-        AudioSource.uri(
-          sourceUri,
-          tag: mediaItem,
-        ),
-      );
+      // ============================================================
+      // MANEJO ROBUSTO DE ERRORES EN REPRODUCCIÓN
+      // ============================================================
+      try {
+        await _audioPlayer.setAudioSource(
+          AudioSource.uri(
+            sourceUri,
+            tag: mediaItem,
+          ),
+        ).timeout(
+          const Duration(seconds: 45),
+          onTimeout: () {
+            throw TimeoutException(
+              'Timeout al preparar el audio (45s)',
+            );
+          },
+        );
+      } on TimeoutException catch (e) {
+        playbackError = 'Timeout: No se pudo cargar el audio a tiempo. '
+            'Inténtalo de nuevo o verifica tu conexión.';
+        debugPrint('[SoundNeed] Timeout en setAudioSource: $e');
+        return;
+      } on PlayerException catch (e) {
+        // Errores específicos de just_audio/MediaCodec
+        final errorMsg = e.message?.toLowerCase() ?? '';
+        if (errorMsg.contains('codec') ||
+            errorMsg.contains('format') ||
+            errorMsg.contains('decode')) {
+          playbackError = 'Error de códec/decodificación: ${e.message}. '
+              'El formato de audio no es compatible con tu dispositivo.';
+        } else {
+          playbackError = 'Error del reproductor: ${e.message}. '
+              'Este formato puede no ser compatible.';
+        }
+        debugPrint('[SoundNeed] PlayerException: ${e.message}');
+        return;
+      } on PlatformException catch (e) {
+        // Errores del lado nativo (Android MediaCodec)
+        playbackError = 'Error del sistema: ${e.message}. '
+            'Posible incompatibilidad de formato en tu dispositivo.';
+        debugPrint('[SoundNeed] PlatformException: ${e.code} ${e.message}');
+        return;
+      } catch (e) {
+        playbackError = 'Error al preparar el audio: $e. '
+            'El stream seleccionado puede no ser compatible.';
+        debugPrint('[SoundNeed] Error en setAudioSource: $e');
+        return;
+      }
 
       _currentSong = song;
       _isPlaying = true;
       notifyListeners();
 
-      await _audioPlayer.play();
+      // ============================================================
+      // RECOMMENDATION SERVICE - INICIAR ESCUCHA
+      // ============================================================
+      await RecommendationService.instance.startListening(
+        id: song.isOnline ? song.onlineVideoId : song.id.toString(),
+        title: song.title.isEmpty ? song.displayName : song.title,
+        artist: song.artist,
+        thumbnail: song.artworkUri.isNotEmpty ? song.artworkUri : null,
+        source: song.isOnline ? 'youtube' : 'local',
+        durationSeconds: (song.duration / 1000).round(),
+      );
+
+      // Iniciar timer para actualizar progreso
+      _startProgressUpdateTimer();
+
+      try {
+        await _audioPlayer.play().timeout(
+          const Duration(seconds: 45),
+          onTimeout: () {
+            throw TimeoutException('Timeout al iniciar reproducción (45s)');
+          },
+        );
+      } on TimeoutException catch (e) {
+        playbackError = 'Timeout al iniciar la reproducción. '
+            'Verifica tu conexión e inténtalo de nuevo.';
+        debugPrint('[SoundNeed] Timeout en play: $e');
+        _isPlaying = false;
+        notifyListeners();
+        return;
+      } catch (e) {
+        playbackError = 'Error al reproducir: $e';
+        debugPrint('[SoundNeed] Error en play: $e');
+        _isPlaying = false;
+        notifyListeners();
+        return;
+      }
     } catch (e) {
-      playbackError = e.toString();
-      debugPrint('Error reproduciendo canción: $e');
+      playbackError = 'Error inesperado: $e';
+      debugPrint('[SoundNeed] Error general en playSong: $e');
     } finally {
       if (_loadingOnline && token == _playToken) {
         _loadingOnline = false;
@@ -423,8 +539,10 @@ class MusicPlayerController extends ChangeNotifier {
 
     if (_audioPlayer.playing) {
       await _audioPlayer.pause();
+      _progressUpdateTimer?.cancel();
     } else {
       await _audioPlayer.play();
+      _startProgressUpdateTimer();
     }
   }
 
@@ -433,6 +551,8 @@ class MusicPlayerController extends ChangeNotifier {
   // ============================================================
 
   Future<void> nextSong() async {
+    await _stopCurrentListening();
+
     if (_songs.isEmpty && _queue.isEmpty) return;
 
     if (_queue.isEmpty) {
@@ -476,6 +596,8 @@ class MusicPlayerController extends ChangeNotifier {
   // ============================================================
 
   Future<void> previousSong() async {
+    await _stopCurrentListening();
+
     if (_songs.isEmpty && _queue.isEmpty) return;
 
     if (_queue.isEmpty) {
@@ -518,6 +640,8 @@ class MusicPlayerController extends ChangeNotifier {
   // ============================================================
 
   Future<void> _handleSongCompleted() async {
+    await _stopCurrentListening();
+
     if (_shuffleEnabled) {
       final nextSong = _getRandomSong();
 
@@ -605,6 +729,13 @@ class MusicPlayerController extends ChangeNotifier {
 
   Future<void> seek(Duration position) async {
     await _audioPlayer.seek(position);
+
+    // Si se hace seek al inicio, contarlo como replay
+    if (position.inSeconds < 3 && _currentSong != null) {
+      await RecommendationService.instance.registerReplay(
+        songId: _currentSong!.id.toString(),
+      );
+    }
   }
 
   // ============================================================
@@ -647,28 +778,49 @@ class MusicPlayerController extends ChangeNotifier {
 
     final albumId = song.albumId;
 
-    if (albumId == null || albumId <= 0) {
-      return null;
+    // Intentar obtener por albumId primero
+    if (albumId != null && albumId > 0) {
+      if (_artworkCache.containsKey(albumId)) {
+        return _artworkCache[albumId];
+      }
+
+      try {
+        final Uint8List? artwork =
+            await _channel.invokeMethod<Uint8List>(
+          'getArtwork',
+          {'albumId': albumId},
+        );
+
+        _artworkCache[albumId] = artwork;
+
+        if (artwork != null) {
+          return artwork;
+        }
+      } catch (e) {
+        debugPrint('Error obteniendo portada por albumId: $e');
+      }
     }
 
-    if (_artworkCache.containsKey(albumId)) {
-      return _artworkCache[albumId];
+    // Fallback: intentar obtener por URI de la canción
+    final cacheKey = song.id;
+    if (_artworkCache.containsKey(cacheKey)) {
+      return _artworkCache[cacheKey];
     }
 
     try {
       final Uint8List? artwork =
           await _channel.invokeMethod<Uint8List>(
         'getArtwork',
-        {'albumId': albumId},
+        {'uri': song.uri},
       );
 
-      _artworkCache[albumId] = artwork;
+      _artworkCache[cacheKey] = artwork;
 
       return artwork;
     } catch (e) {
-      debugPrint('Error obteniendo portada: $e');
+      debugPrint('Error obteniendo portada por URI: $e');
 
-      _artworkCache[albumId] = null;
+      _artworkCache[cacheKey] = null;
 
       return null;
     }
@@ -691,8 +843,46 @@ class MusicPlayerController extends ChangeNotifier {
     _queueIndex = index;
   }
 
+  // ============================================================
+  // RECOMMENDATION SERVICE - TIMER DE PROGRESO
+  // ============================================================
+
+  void _startProgressUpdateTimer() {
+    _progressUpdateTimer?.cancel();
+
+    _progressUpdateTimer = Timer.periodic(
+      const Duration(seconds: 5),
+      (_) {
+        if (_currentSong != null && _audioPlayer.playing) {
+          final position = _audioPlayer.position.inSeconds;
+          final duration = _audioPlayer.duration?.inSeconds;
+
+          RecommendationService.instance.updateProgress(
+            positionSeconds: position,
+            durationSeconds: duration,
+          );
+        }
+      },
+    );
+  }
+
+  Future<void> _stopCurrentListening() async {
+    if (_currentSong != null) {
+      _progressUpdateTimer?.cancel();
+
+      final position = _audioPlayer.position.inSeconds;
+      final duration = _audioPlayer.duration?.inSeconds;
+
+      await RecommendationService.instance.stopListening(
+        positionSeconds: position,
+        durationSeconds: duration,
+      );
+    }
+  }
+
   @override
   void dispose() {
+    _progressUpdateTimer?.cancel();
     _audioPlayer.dispose();
     super.dispose();
   }
