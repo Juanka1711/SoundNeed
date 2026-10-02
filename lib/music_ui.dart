@@ -13,6 +13,7 @@ import 'sections/folders_section.dart';
 import 'sections/artists_section.dart';
 import 'sections/albums_section.dart';
 import 'services/youtube_audio_service.dart';
+import 'services/artwork_palette.dart';
 
 // ============================================================
 // COLORES BASE DE SOUNDNEED
@@ -67,6 +68,10 @@ class _MusicHomePageState extends State<MusicHomePage> {
   bool _isSearching = false;
   String _searchText = '';
 
+  ArtworkPalette _appPalette = ArtworkPalette.neutral;
+  int? _paletteSongId;
+  int _paletteRequest = 0;
+
   // ==========================================================
   // ONLINE SEARCH
   // ==========================================================
@@ -94,6 +99,8 @@ class _MusicHomePageState extends State<MusicHomePage> {
     widget.player.addListener(_onPlayerChanged);
 
     _filteredSongs = widget.player.songs;
+    _paletteSongId = widget.player.currentSong?.id;
+    _loadAppPalette(widget.player.currentSong);
   }
 
   @override
@@ -111,9 +118,107 @@ class _MusicHomePageState extends State<MusicHomePage> {
   void _onPlayerChanged() {
     if (!mounted) return;
 
+    final song = widget.player.currentSong;
+    if (song?.id != _paletteSongId) {
+      _paletteSongId = song?.id;
+      _loadAppPalette(song);
+    }
+
     _filterSongs(
       _searchController.text,
       rebuild: true,
+    );
+  }
+
+  Future<void> _loadAppPalette(Song? song) async {
+    final request = ++_paletteRequest;
+
+    if (song == null) {
+      if (!mounted) return;
+      setState(() => _appPalette = ArtworkPalette.neutral);
+      return;
+    }
+
+    try {
+      final artwork = await widget.player.loadArtwork(song);
+      final palette = artwork == null
+          ? ArtworkPalette.neutral
+          : await ArtworkPaletteExtractor.fromBytes(artwork);
+
+      if (!mounted || request != _paletteRequest) return;
+      setState(() => _appPalette = palette);
+    } catch (_) {
+      if (!mounted || request != _paletteRequest) return;
+      setState(() => _appPalette = ArtworkPalette.neutral);
+    }
+  }
+
+  Widget _buildAppBackdrop() {
+    final palette = _appPalette;
+
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 1100),
+              curve: Curves.easeInOutCubic,
+              color: palette.dark,
+            ),
+            if (palette.isArtworkDerived)
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  return Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      Positioned(
+                        top: -constraints.maxHeight * 0.24,
+                        left: -constraints.maxWidth * 0.14,
+                        width: constraints.maxWidth * 1.28,
+                        height: constraints.maxHeight * 0.78,
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 1100),
+                          curve: Curves.easeInOutCubic,
+                          decoration: BoxDecoration(
+                            gradient: RadialGradient(
+                              colors: [
+                                palette.primary.withValues(alpha: 0.34),
+                                palette.primary.withValues(alpha: 0.13),
+                                palette.primary.withValues(alpha: 0),
+                              ],
+                              stops: const [0, 0.48, 1],
+                            ),
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        bottom: -constraints.maxHeight * 0.43,
+                        right: -constraints.maxWidth * 0.38,
+                        width: constraints.maxWidth * 1.18,
+                        height: constraints.maxHeight * 0.86,
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 1400),
+                          curve: Curves.easeInOutCubic,
+                          decoration: BoxDecoration(
+                            gradient: RadialGradient(
+                              colors: [
+                                palette.secondary.withValues(alpha: 0.19),
+                                palette.secondary.withValues(alpha: 0.07),
+                                palette.secondary.withValues(alpha: 0),
+                              ],
+                              stops: const [0, 0.52, 1],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -331,111 +436,118 @@ class _MusicHomePageState extends State<MusicHomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Column(
+      backgroundColor: _appPalette.dark,
+      body: Stack(
+        fit: StackFit.expand,
         children: [
-          // AppBar animado
-          AnimatedSize(
-            duration: const Duration(milliseconds: 200),
-            curve: Curves.easeInOut,
-            child: _isAppBarVisible
-                ? AppBar(
-                    title: _isSearching
-                        ? TextField(
-                            controller: _searchController,
-                            autofocus: true,
-                            style: const TextStyle(
+          _buildAppBackdrop(),
+          Column(
+            children: [
+              // AppBar animado
+              AnimatedSize(
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeInOut,
+                child: _isAppBarVisible
+                    ? AppBar(
+                        title: _isSearching
+                            ? TextField(
+                                controller: _searchController,
+                                autofocus: true,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                ),
+                                textInputAction: TextInputAction.search,
+                                decoration: const InputDecoration(
+                                  hintText:
+                                      'Buscar canción, artista o álbum...',
+                                  border: InputBorder.none,
+                                ),
+                              )
+                            : const Text(
+                                'SoundNeed',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                        actions: [
+                          // ==================================================
+                          // BUSCAR
+                          // ==================================================
+
+                          IconButton(
+                            tooltip: 'Buscar',
+                            onPressed: _toggleSearch,
+                            icon: Icon(
+                              _isSearching
+                                  ? Icons.close
+                                  : Icons.search,
                               color: Colors.white,
                             ),
-                            textInputAction: TextInputAction.search,
-                            decoration: const InputDecoration(
-                              hintText:
-                                  'Buscar canción, artista o álbum...',
-                              border: InputBorder.none,
-                            ),
-                          )
-                        : const Text(
-                            'SoundNeed',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
+                          ),
+
+                          // ==================================================
+                          // COLA
+                          // ==================================================
+
+                          IconButton(
+                            tooltip: 'Cola',
+                            onPressed: _showQueue,
+                            icon: const Icon(
+                              Icons.queue_music_outlined,
+                              color: Colors.white,
                             ),
                           ),
-                    actions: [
-                      // ==================================================
-                      // BUSCAR
-                      // ==================================================
 
-                      IconButton(
-                        tooltip: 'Buscar',
-                        onPressed: _toggleSearch,
-                        icon: Icon(
-                          _isSearching
-                              ? Icons.close
-                              : Icons.search,
-                          color: Colors.white,
-                        ),
-                      ),
+                          // ==================================================
+                          // AJUSTES
+                          // ==================================================
 
-                      // ==================================================
-                      // COLA
-                      // ==================================================
-
-                      IconButton(
-                        tooltip: 'Cola',
-                        onPressed: _showQueue,
-                        icon: const Icon(
-                          Icons.queue_music_outlined,
-                          color: Colors.white,
-                        ),
-                      ),
-
-                      // ==================================================
-                      // AJUSTES
-                      // ==================================================
-
-                      IconButton(
-                        tooltip: 'Ajustes',
-                        onPressed: _showSettings,
-                        icon: const Icon(
-                          Icons.settings_outlined,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ],
-                  )
-                : const SizedBox.shrink(),
-          ),
-          // Espacio cuando está oculto
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            curve: Curves.easeInOut,
-            height: _isAppBarVisible ? 0 : 30,
-          ),
-
-          // ======================================================
-          // BODY
-          // ======================================================
-
-          Expanded(
-            child: NotificationListener<ScrollNotification>(
-              onNotification: _handleScrollNotification,
-              child: Column(
-                children: [
-                  // Paneles flotantes
-                  _buildFloatingSections(),
-
-                  // Contenido
-                  Expanded(
-                    child: _buildCurrentSection(),
-                  ),
-
-                  // Mini player
-                  if (widget.player.currentSong != null)
-                    MiniPlayer(
-                      player: widget.player,
-                    ),
-                ],
+                          IconButton(
+                            tooltip: 'Ajustes',
+                            onPressed: _showSettings,
+                            icon: const Icon(
+                              Icons.settings_outlined,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
+                      )
+                    : const SizedBox.shrink(),
               ),
-            ),
+              // Espacio cuando está oculto
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeInOut,
+                height: _isAppBarVisible ? 0 : 30,
+              ),
+
+              // ======================================================
+              // BODY
+              // ======================================================
+
+              Expanded(
+                child: NotificationListener<ScrollNotification>(
+                  onNotification: _handleScrollNotification,
+                  child: Column(
+                    children: [
+                      // Paneles flotantes
+                      _buildFloatingSections(),
+
+                      // Contenido
+                      Expanded(
+                        child: _buildCurrentSection(),
+                      ),
+
+                      // Mini player
+                      if (widget.player.currentSong != null)
+                        MiniPlayer(
+                          player: widget.player,
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -472,7 +584,7 @@ class _MusicHomePageState extends State<MusicHomePage> {
             ),
             _buildFloatingSection(
               MusicSection.playlists,
-              Icons.queue_music_outlined,
+              Icons.playlist_play_rounded,
               'Playlists',
             ),
             _buildFloatingSection(
@@ -600,16 +712,24 @@ class _MusicHomePageState extends State<MusicHomePage> {
         );
 
       case MusicSection.playlists:
-        return const PlaylistsSection();
+        return PlaylistsSection(player: widget.player);
 
       case MusicSection.folders:
         return const FoldersSection();
 
       case MusicSection.artists:
-        return const ArtistsSection();
+        return ArtistsSection(
+          player: widget.player,
+          songs: _filteredSongs,
+          searchText: _searchText,
+        );
 
       case MusicSection.albums:
-        return const AlbumsSection();
+        return AlbumsSection(
+          player: widget.player,
+          songs: _filteredSongs,
+          searchText: _searchText,
+        );
     }
   }
 

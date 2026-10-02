@@ -83,6 +83,10 @@ class Song {
 }
 
 class MusicPlayerController extends ChangeNotifier {
+  static const int modeNormal = 0;
+  static const int modeShuffle = 1;
+  static const int modeRepeatAll = 2;
+  static const int modeRepeatOne = 3;
   static const MethodChannel _channel = MethodChannel('music_player/media');
 
   final AudioPlayer _audioPlayer = AudioPlayer();
@@ -94,6 +98,7 @@ class MusicPlayerController extends ChangeNotifier {
   List<Song> _queue = [];
 
   Song? _currentSong;
+  Song? _loadedSong;
 
   final Set<int> _favoriteIds = {};
 
@@ -101,8 +106,7 @@ class MusicPlayerController extends ChangeNotifier {
   bool _permissionDenied = false;
   bool _isPlaying = false;
 
-  bool _shuffleEnabled = false;
-  bool _repeatEnabled = false;
+  int _playbackMode = modeNormal;
 
   int _queueIndex = -1;
 
@@ -117,6 +121,7 @@ class MusicPlayerController extends ChangeNotifier {
 
   /// Timer para actualizar progreso en RecommendationService.
   Timer? _progressUpdateTimer;
+  Future<void> _recommendationQueue = Future<void>.value();
 
   // Getters
   List<Song> get songs => _songs;
@@ -126,8 +131,9 @@ class MusicPlayerController extends ChangeNotifier {
   bool get loading => _loading;
   bool get permissionDenied => _permissionDenied;
   bool get isPlaying => _isPlaying;
-  bool get shuffleEnabled => _shuffleEnabled;
-  bool get repeatEnabled => _repeatEnabled;
+  bool get shuffleEnabled => _playbackMode == modeShuffle;
+  bool get repeatEnabled => _playbackMode == modeRepeatAll;
+  int get playbackMode => _playbackMode;
   bool get loadingOnline => _loadingOnline;
   int get queueIndex => _queueIndex;
   AudioPlayer get audioPlayer => _audioPlayer;
@@ -286,16 +292,17 @@ class MusicPlayerController extends ChangeNotifier {
   }
 
   Future<void> toggleFavorite(Song song) async {
-    if (_favoriteIds.contains(song.id)) {
+    final wasFavorite = _favoriteIds.contains(song.id);
+    if (wasFavorite) {
       _favoriteIds.remove(song.id);
       await RecommendationService.instance.setFavorite(
-        songId: song.id.toString(),
+        songId: song.isOnline ? song.onlineVideoId : song.id.toString(),
         favorite: false,
       );
     } else {
       _favoriteIds.add(song.id);
       await RecommendationService.instance.setFavorite(
-        songId: song.id.toString(),
+        songId: song.isOnline ? song.onlineVideoId : song.id.toString(),
         favorite: true,
       );
     }
@@ -331,10 +338,22 @@ class MusicPlayerController extends ChangeNotifier {
     playbackError = null;
     final token = ++_playToken;
 
-    // Detener escucha anterior si hay una canción diferente
-    if (_currentSong != null && _currentSong!.id != song.id) {
-      await _stopCurrentListening();
+    _queueStopListening(_currentSong);
+    _progressUpdateTimer?.cancel();
+
+    // Pausar la pista actual de inmediato, incluso cuando la nueva requiere
+    // resolver primero una URL de YouTube.
+    try {
+      await _audioPlayer.pause();
+    } catch (_) {
+      // Puede no haber una fuente cargada en el primer inicio.
     }
+    if (token != _playToken) return;
+
+    _currentSong = song;
+    _loadingOnline = song.isOnline;
+    _isPlaying = false;
+    notifyListeners();
 
     try {
       if (createQueue && !song.isOnline) {
@@ -344,12 +363,6 @@ class MusicPlayerController extends ChangeNotifier {
       final Uri sourceUri;
 
       if (song.isOnline) {
-        // Mostramos la canción en el mini player mientras se obtiene el audio.
-        _currentSong = song;
-        _loadingOnline = true;
-        _isPlaying = false;
-        notifyListeners();
-
         final audioUrl = await YouTubeAudioService.instance.getAudioUrl(
           song.onlineVideoId,
         );
@@ -444,46 +457,18 @@ class MusicPlayerController extends ChangeNotifier {
         return;
       }
 
+      if (token != _playToken) return;
+
+      _loadedSong = song;
       _currentSong = song;
-      _isPlaying = true;
+      _isPlaying = false;
       notifyListeners();
 
-      // ============================================================
-      // RECOMMENDATION SERVICE - INICIAR ESCUCHA
-      // ============================================================
-      await RecommendationService.instance.startListening(
-        id: song.isOnline ? song.onlineVideoId : song.id.toString(),
-        title: song.title.isEmpty ? song.displayName : song.title,
-        artist: song.artist,
-        thumbnail: song.artworkUri.isNotEmpty ? song.artworkUri : null,
-        source: song.isOnline ? 'youtube' : 'local',
-        durationSeconds: (song.duration / 1000).round(),
-      );
-
-      // Iniciar timer para actualizar progreso
+      _queueStartListening(song);
       _startProgressUpdateTimer();
-
-      try {
-        await _audioPlayer.play().timeout(
-          const Duration(seconds: 45),
-          onTimeout: () {
-            throw TimeoutException('Timeout al iniciar reproducción (45s)');
-          },
-        );
-      } on TimeoutException catch (e) {
-        playbackError = 'Timeout al iniciar la reproducción. '
-            'Verifica tu conexión e inténtalo de nuevo.';
-        debugPrint('[SoundNeed] Timeout en play: $e');
-        _isPlaying = false;
-        notifyListeners();
-        return;
-      } catch (e) {
-        playbackError = 'Error al reproducir: $e';
-        debugPrint('[SoundNeed] Error en play: $e');
-        _isPlaying = false;
-        notifyListeners();
-        return;
-      }
+      // Esta espera solo termina al pausar o al terminar toda la canción.
+      // Se ejecuta en segundo plano, sin timeout de 45 s.
+      unawaited(_startAudioPlayback(token));
     } catch (e) {
       playbackError = 'Error inesperado: $e';
       debugPrint('[SoundNeed] Error general en playSong: $e');
@@ -493,6 +478,67 @@ class MusicPlayerController extends ChangeNotifier {
         notifyListeners();
       }
     }
+  }
+
+  Future<void> _startAudioPlayback(int token) async {
+    try {
+      await _audioPlayer.play();
+    } catch (error) {
+      if (token != _playToken) return;
+      playbackError = 'Error al reproducir: $error';
+      _isPlaying = false;
+      _progressUpdateTimer?.cancel();
+      notifyListeners();
+    }
+  }
+
+  void _enqueueRecommendation(Future<void> Function() operation) {
+    _recommendationQueue = _recommendationQueue.then((_) async {
+      try {
+        await operation();
+      } catch (error) {
+        debugPrint('[SoundNeed] Error de recomendaciones: $error');
+      }
+    });
+  }
+
+  void _queueStopListening(Song? song) {
+    if (song == null) return;
+    final position = _audioPlayer.position.inSeconds;
+    final duration = _audioPlayer.duration?.inSeconds;
+    _enqueueRecommendation(() => RecommendationService.instance.stopListening(
+          positionSeconds: position,
+          durationSeconds: duration,
+        ));
+  }
+
+  void _queueStartListening(Song song) {
+    _enqueueRecommendation(() => RecommendationService.instance.startListening(
+          id: song.isOnline ? song.onlineVideoId : song.id.toString(),
+          title: song.title.isEmpty ? song.displayName : song.title,
+          artist: song.artist,
+          thumbnail: song.artworkUri.isNotEmpty ? song.artworkUri : null,
+          source: song.isOnline ? 'youtube' : 'local',
+          durationSeconds: (song.duration / 1000).round(),
+        ));
+  }
+
+  Future<void> playPlaylist(List<Song> songs, {int startIndex = 0, bool shuffle = false}) async {
+    if (songs.isEmpty) return;
+    final safeIndex = startIndex.clamp(0, songs.length - 1);
+    final selected = songs[safeIndex];
+    _queue = List<Song>.from(songs);
+    if (shuffle) {
+      _queue.removeAt(safeIndex);
+      _queue.shuffle();
+      _queue.insert(0, selected);
+      _playbackMode = modeShuffle;
+      _queueIndex = 0;
+    } else {
+      _queueIndex = safeIndex;
+    }
+    notifyListeners();
+    await playSong(selected, createQueue: false);
   }
 
   /// Reproduce un resultado de YouTube. Si pasas [playlist], esos
@@ -537,12 +583,28 @@ class MusicPlayerController extends ChangeNotifier {
       return;
     }
 
+    if (_loadingOnline) {
+      // Si se pulsa pausa mientras resolvemos el stream, cancela esa solicitud.
+      ++_playToken;
+      _loadingOnline = false;
+      _isPlaying = false;
+      notifyListeners();
+      return;
+    }
+
     if (_audioPlayer.playing) {
       await _audioPlayer.pause();
       _progressUpdateTimer?.cancel();
     } else {
-      await _audioPlayer.play();
+      final song = _currentSong!;
+      if (_loadedSong == null ||
+          _loadedSong!.id != song.id ||
+          _loadedSong!.uri != song.uri) {
+        await playSong(song, createQueue: false);
+        return;
+      }
       _startProgressUpdateTimer();
+      unawaited(_startAudioPlayback(_playToken));
     }
   }
 
@@ -551,8 +613,6 @@ class MusicPlayerController extends ChangeNotifier {
   // ============================================================
 
   Future<void> nextSong() async {
-    await _stopCurrentListening();
-
     if (_songs.isEmpty && _queue.isEmpty) return;
 
     if (_queue.isEmpty) {
@@ -561,8 +621,9 @@ class MusicPlayerController extends ChangeNotifier {
 
     Song? nextSong;
 
-    if (_shuffleEnabled) {
+    if (shuffleEnabled) {
       nextSong = _getRandomSong();
+      _queueIndex = _queue.indexWhere((song) => song.id == nextSong?.id);
     } else {
       if (_queueIndex < 0) {
         _queueIndex = 0;
@@ -571,7 +632,7 @@ class MusicPlayerController extends ChangeNotifier {
       }
 
       if (_queueIndex >= _queue.length) {
-        if (_repeatEnabled) {
+        if (repeatEnabled) {
           _queueIndex = 0;
         } else {
           _queueIndex = _queue.length - 1;
@@ -596,8 +657,6 @@ class MusicPlayerController extends ChangeNotifier {
   // ============================================================
 
   Future<void> previousSong() async {
-    await _stopCurrentListening();
-
     if (_songs.isEmpty && _queue.isEmpty) return;
 
     if (_queue.isEmpty) {
@@ -609,8 +668,9 @@ class MusicPlayerController extends ChangeNotifier {
       return;
     }
 
-    if (_shuffleEnabled) {
+    if (shuffleEnabled) {
       final previousSong = _getRandomSong();
+      _queueIndex = _queue.indexWhere((song) => song.id == previousSong?.id);
 
       if (previousSong != null) {
         await playSong(previousSong, createQueue: false);
@@ -622,7 +682,7 @@ class MusicPlayerController extends ChangeNotifier {
     _queueIndex--;
 
     if (_queueIndex < 0) {
-      if (_repeatEnabled) {
+      if (repeatEnabled) {
         _queueIndex = _queue.length - 1;
       } else {
         _queueIndex = 0;
@@ -640,10 +700,16 @@ class MusicPlayerController extends ChangeNotifier {
   // ============================================================
 
   Future<void> _handleSongCompleted() async {
-    await _stopCurrentListening();
+    if (_playbackMode == modeRepeatOne && _currentSong != null) {
+      await _audioPlayer.seek(Duration.zero);
+      await _audioPlayer.play();
+      _startProgressUpdateTimer();
+      return;
+    }
 
-    if (_shuffleEnabled) {
+    if (shuffleEnabled) {
       final nextSong = _getRandomSong();
+      _queueIndex = _queue.indexWhere((song) => song.id == nextSong?.id);
 
       if (nextSong != null) {
         await playSong(
@@ -660,7 +726,7 @@ class MusicPlayerController extends ChangeNotifier {
     final nextIndex = _queueIndex + 1;
 
     if (nextIndex >= _queue.length) {
-      if (_repeatEnabled) {
+      if (repeatEnabled) {
         _queueIndex = 0;
 
         await playSong(
@@ -710,7 +776,7 @@ class MusicPlayerController extends ChangeNotifier {
   }
 
   void toggleShuffle() {
-    _shuffleEnabled = !_shuffleEnabled;
+    _playbackMode = shuffleEnabled ? modeNormal : modeShuffle;
     notifyListeners();
   }
 
@@ -719,7 +785,12 @@ class MusicPlayerController extends ChangeNotifier {
   // ============================================================
 
   void toggleRepeat() {
-    _repeatEnabled = !_repeatEnabled;
+    _playbackMode = repeatEnabled ? modeNormal : modeRepeatAll;
+    notifyListeners();
+  }
+
+  void cyclePlaybackMode() {
+    _playbackMode = (_playbackMode + 1) % 4;
     notifyListeners();
   }
 
@@ -864,20 +935,6 @@ class MusicPlayerController extends ChangeNotifier {
         }
       },
     );
-  }
-
-  Future<void> _stopCurrentListening() async {
-    if (_currentSong != null) {
-      _progressUpdateTimer?.cancel();
-
-      final position = _audioPlayer.position.inSeconds;
-      final duration = _audioPlayer.duration?.inSeconds;
-
-      await RecommendationService.instance.stopListening(
-        positionSeconds: position,
-        durationSeconds: duration,
-      );
-    }
   }
 
   @override

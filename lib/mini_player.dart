@@ -52,8 +52,6 @@ class _MiniPlayerState extends State<MiniPlayer> {
   // 2 = repetir una
   // ==========================================================
 
-  int _playMode = 0;
-
   @override
   void initState() {
     super.initState();
@@ -371,66 +369,20 @@ class _MiniPlayerState extends State<MiniPlayer> {
   // 🔀 → 🔁 → 🔂 → 🔀
   // ==========================================================
 
-  void _changePlayMode() {
-    setState(() {
-      _playMode++;
-
-      if (_playMode > 2) {
-        _playMode = 0;
-      }
-    });
-
-    // ----------------------------------------------------------
-    // ALEATORIO
-    // ----------------------------------------------------------
-
-    if (_playMode == 0) {
-      if (!widget.player.shuffleEnabled) {
-        widget.player.toggleShuffle();
-      }
-    }
-
-    // ----------------------------------------------------------
-    // REPETIR TODO
-    // ----------------------------------------------------------
-
-    else if (_playMode == 1) {
-      if (widget.player.shuffleEnabled) {
-        widget.player.toggleShuffle();
-      }
-
-      widget.player.toggleRepeat();
-    }
-
-    // ----------------------------------------------------------
-    // REPETIR UNA
-    // ----------------------------------------------------------
-    //
-    // El icono queda preparado para este modo.
-    // La reproducción real de "repeat one" deberá manejarse
-    // en MusicPlayerController.
-    // ----------------------------------------------------------
-
-    else if (_playMode == 2) {
-      if (widget.player.shuffleEnabled) {
-        widget.player.toggleShuffle();
-      }
-
-      // La lógica real de repeat-one se añadirá
-      // en MusicPlayerController.
-    }
-  }
+  void _changePlayMode() => widget.player.cyclePlaybackMode();
 
   // ==========================================================
   // ICONO DEL MODO
   // ==========================================================
 
   IconData get _playModeIcon {
-    switch (_playMode) {
-      case 1:
+    switch (widget.player.playbackMode) {
+      case MusicPlayerController.modeShuffle:
+        return Icons.shuffle;
+      case MusicPlayerController.modeRepeatAll:
         return Icons.repeat;
 
-      case 2:
+      case MusicPlayerController.modeRepeatOne:
         return Icons.repeat_one;
 
       default:
@@ -716,9 +668,7 @@ class _MiniPlayerState extends State<MiniPlayer> {
   // ==========================================================
 
   Widget _buildModeButton() {
-    final active =
-        _playMode != 0 ||
-        widget.player.shuffleEnabled;
+    final active = widget.player.playbackMode != MusicPlayerController.modeNormal;
 
     return Material(
       color: Colors.transparent,
@@ -744,7 +694,7 @@ class _MiniPlayerState extends State<MiniPlayer> {
             child: Icon(
               _playModeIcon,
               key: ValueKey(
-                _playMode,
+                widget.player.playbackMode,
               ),
               size: 21,
               color: active

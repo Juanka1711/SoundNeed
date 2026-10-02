@@ -3,6 +3,8 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'music_player.dart';
+import 'playlist_actions.dart';
+import 'playlist_manager.dart';
 
 // ============================================================
 // COLORES BASE DE SOUNDNEED
@@ -47,7 +49,6 @@ class _FullPlayerState extends State<FullPlayer> {
   // 2 = repetir una
   // ==========================================================
 
-  int _playMode = 0;
 
   @override
   void initState() {
@@ -345,36 +346,13 @@ class _FullPlayerState extends State<FullPlayer> {
   // 🔀 → 🔁 → 🔂 → 🔀
   // ==========================================================
 
-  void _changePlayMode() {
-    setState(() {
-      _playMode++;
-
-      if (_playMode > 2) {
-        _playMode = 0;
-      }
-    });
-
-    if (_playMode == 0) {
-      if (!widget.player.shuffleEnabled) {
-        widget.player.toggleShuffle();
-      }
-    } else {
-      if (widget.player.shuffleEnabled) {
-        widget.player.toggleShuffle();
-      }
-
-      if (_playMode == 1) {
-        widget.player.toggleRepeat();
-      }
-    }
-  }
-
   IconData get _playModeIcon {
-    switch (_playMode) {
-      case 1:
+    switch (widget.player.playbackMode) {
+      case MusicPlayerController.modeShuffle:
+        return Icons.shuffle;
+      case MusicPlayerController.modeRepeatAll:
         return Icons.repeat;
-
-      case 2:
+      case MusicPlayerController.modeRepeatOne:
         return Icons.repeat_one;
 
       default:
@@ -466,6 +444,12 @@ class _FullPlayerState extends State<FullPlayer> {
                       ),
                     ),
 
+                    IconButton(
+                      tooltip: 'Añadir a playlist',
+                      onPressed: () => addSongToPlaylist(context, widget.player, song),
+                      icon: const Icon(Icons.playlist_add_rounded, size: 25),
+                    ),
+
                     // =========================================
                     // CORAZÓN
                     // =========================================
@@ -475,11 +459,11 @@ class _FullPlayerState extends State<FullPlayer> {
                               .isFavorite(song)
                           ? 'Quitar de favoritos'
                           : 'Añadir a favoritos',
-                      onPressed: () {
-                        widget.player
-                            .toggleFavorite(song);
-
-                        setState(() {});
+                      onPressed: () async {
+                        final liked = !widget.player.isFavorite(song);
+                        await widget.player.toggleFavorite(song);
+                        await PlaylistManager.instance.setLikedSong(song, liked);
+                        if (mounted) setState(() {});
                       },
                       icon: Icon(
                         widget.player
@@ -745,11 +729,10 @@ class _FullPlayerState extends State<FullPlayer> {
 
                     _buildSmallControl(
                       icon: _playModeIcon,
-                      color: _playMode == 0
+                      color: widget.player.playbackMode == MusicPlayerController.modeNormal
                           ? Colors.white60
                           : _themeColor,
-                      onTap:
-                          _changePlayMode,
+                      onTap: widget.player.cyclePlaybackMode,
                     ),
 
                     // ===========================================
@@ -783,21 +766,6 @@ class _FullPlayerState extends State<FullPlayer> {
                           widget.player.nextSong,
                     ),
 
-                    // ===========================================
-                    // REPETIR
-                    // ===========================================
-
-                    _buildSmallControl(
-                      icon: Icons.repeat_rounded,
-                      color: widget
-                              .player
-                              .repeatEnabled
-                          ? _themeColor
-                          : Colors.white60,
-                      onTap:
-                          widget.player
-                              .toggleRepeat,
-                    ),
                   ],
                 ),
               ),

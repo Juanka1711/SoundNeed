@@ -1,52 +1,25 @@
 import 'package:flutter/material.dart';
-import '../app_colors.dart';
+
+import '../music_player.dart';
+import 'media_collection_section.dart';
 
 class ArtistsSection extends StatelessWidget {
-  const ArtistsSection({super.key});
+  const ArtistsSection({
+    super.key,
+    required this.player,
+    required this.songs,
+    this.searchText = '',
+  });
+
+  final MusicPlayerController player;
+  final List<Song> songs;
+  final String searchText;
 
   @override
-  Widget build(BuildContext context) {
-    return _buildComingSoon(
-      Icons.person_outline,
-      'Artistas',
-    );
-  }
-
-  Widget _buildComingSoon(
-    IconData icon,
-    String title,
-  ) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(30),
-        child: Column(
-          mainAxisAlignment:
-              MainAxisAlignment.center,
-          children: [
-            Icon(
-              icon,
-              size: 65,
-              color: Colors.white38,
-            ),
-            const SizedBox(height: 18),
-            Text(
-              title,
-              style: const TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Esta sección estará disponible próximamente.',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: AppColors.textSecondary,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => MediaCollectionSection(
+        player: player,
+        songs: songs,
+        kind: MediaCollectionKind.artists,
+        searchText: searchText,
+      );
 }
