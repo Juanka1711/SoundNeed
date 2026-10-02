@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+
 import 'music_player.dart';
 import 'full_player.dart';
 import 'mini_player.dart';
@@ -34,14 +35,7 @@ class AppColors {
 // SECCIONES PRINCIPALES
 // ============================================================
 
-enum MusicSection {
-  home,
-  songs,
-  playlists,
-  folders,
-  artists,
-  albums,
-}
+enum MusicSection { home, songs, playlists, folders, artists, albums }
 
 // ============================================================
 // HOME
@@ -50,18 +44,14 @@ enum MusicSection {
 class MusicHomePage extends StatefulWidget {
   final MusicPlayerController player;
 
-  const MusicHomePage({
-    super.key,
-    required this.player,
-  });
+  const MusicHomePage({super.key, required this.player});
 
   @override
   State<MusicHomePage> createState() => _MusicHomePageState();
 }
 
 class _MusicHomePageState extends State<MusicHomePage> {
-  final TextEditingController _searchController =
-      TextEditingController();
+  final TextEditingController _searchController = TextEditingController();
 
   List<Song> _filteredSongs = [];
 
@@ -82,10 +72,6 @@ class _MusicHomePageState extends State<MusicHomePage> {
   Timer? _onlineSearchDebounce;
 
   MusicSection _section = MusicSection.home;
-
-  bool _isAppBarVisible = true;
-  double _lastScrollPosition = 0;
-  static const double _scrollThreshold = 5.0;
 
   @override
   void initState() {
@@ -124,10 +110,7 @@ class _MusicHomePageState extends State<MusicHomePage> {
       _loadAppPalette(song);
     }
 
-    _filterSongs(
-      _searchController.text,
-      rebuild: true,
-    );
+    _filterSongs(_searchController.text, rebuild: true);
   }
 
   Future<void> _loadAppPalette(Song? song) async {
@@ -226,10 +209,7 @@ class _MusicHomePageState extends State<MusicHomePage> {
   // SEARCH
   // ==========================================================
 
-  void _filterSongs(
-    String value, {
-    bool rebuild = false,
-  }) {
+  void _filterSongs(String value, {bool rebuild = false}) {
     final query = value.trim().toLowerCase();
 
     Iterable<Song> result = widget.player.songs;
@@ -278,12 +258,9 @@ class _MusicHomePageState extends State<MusicHomePage> {
       return;
     }
 
-    _onlineSearchDebounce = Timer(
-      const Duration(milliseconds: 800),
-      () {
-        _searchOnline(query);
-      },
-    );
+    _onlineSearchDebounce = Timer(const Duration(milliseconds: 800), () {
+      _searchOnline(query);
+    });
   }
 
   Future<void> _searchOnline(String query) async {
@@ -296,8 +273,7 @@ class _MusicHomePageState extends State<MusicHomePage> {
     });
 
     try {
-      final results =
-          await YouTubeAudioService.instance.search(query);
+      final results = await YouTubeAudioService.instance.search(query);
 
       if (!mounted) return;
 
@@ -306,9 +282,7 @@ class _MusicHomePageState extends State<MusicHomePage> {
         _isSearchingOnline = false;
       });
     } catch (e) {
-      debugPrint(
-        '[SoundNeed] Error buscando YouTube: $e',
-      );
+      debugPrint('[SoundNeed] Error buscando YouTube: $e');
 
       if (!mounted) return;
 
@@ -354,33 +328,6 @@ class _MusicHomePageState extends State<MusicHomePage> {
   }
 
   // ==========================================================
-  // SCROLL HANDLER
-  // ==========================================================
-
-  bool _handleScrollNotification(ScrollNotification notification) {
-    if (notification is ScrollUpdateNotification) {
-      final currentScroll = notification.metrics.pixels;
-      final scrollDelta = currentScroll - _lastScrollPosition;
-
-      // Si el scroll aumenta (hacia abajo) y supera el umbral, ocultar el AppBar
-      if (scrollDelta > _scrollThreshold && _isAppBarVisible) {
-        setState(() {
-          _isAppBarVisible = false;
-        });
-      }
-      // Si el scroll disminuye (hacia arriba) y supera el umbral, mostrar el AppBar
-      else if (scrollDelta < -_scrollThreshold && !_isAppBarVisible) {
-        setState(() {
-          _isAppBarVisible = true;
-        });
-      }
-
-      _lastScrollPosition = currentScroll;
-    }
-    return false;
-  }
-
-  // ==========================================================
   // SETTINGS
   // ==========================================================
 
@@ -392,23 +339,14 @@ class _MusicHomePageState extends State<MusicHomePage> {
       builder: (context) {
         return SafeArea(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(
-              20,
-              8,
-              20,
-              30,
-            ),
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 30),
             child: Column(
               mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment:
-                  CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
                   'Ajustes',
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                  ),
+                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 20),
                 const ListTile(
@@ -417,9 +355,7 @@ class _MusicHomePageState extends State<MusicHomePage> {
                     color: Colors.white70,
                   ),
                   title: Text('SoundNeed'),
-                  subtitle: Text(
-                    'Configuración del reproductor',
-                  ),
+                  subtitle: Text('Configuración del reproductor'),
                 ),
               ],
             ),
@@ -443,108 +379,83 @@ class _MusicHomePageState extends State<MusicHomePage> {
           _buildAppBackdrop(),
           Column(
             children: [
-              // AppBar animado
-              AnimatedSize(
-                duration: const Duration(milliseconds: 200),
-                curve: Curves.easeInOut,
-                child: _isAppBarVisible
-                    ? AppBar(
-                        title: _isSearching
-                            ? TextField(
-                                controller: _searchController,
-                                autofocus: true,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                ),
-                                textInputAction: TextInputAction.search,
-                                decoration: const InputDecoration(
-                                  hintText:
-                                      'Buscar canción, artista o álbum...',
-                                  border: InputBorder.none,
-                                ),
-                              )
-                            : const Text(
-                                'SoundNeed',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                        actions: [
-                          // ==================================================
-                          // BUSCAR
-                          // ==================================================
-
-                          IconButton(
-                            tooltip: 'Buscar',
-                            onPressed: _toggleSearch,
-                            icon: Icon(
-                              _isSearching
-                                  ? Icons.close
-                                  : Icons.search,
-                              color: Colors.white,
-                            ),
-                          ),
-
-                          // ==================================================
-                          // COLA
-                          // ==================================================
-
-                          IconButton(
-                            tooltip: 'Cola',
-                            onPressed: _showQueue,
-                            icon: const Icon(
-                              Icons.queue_music_outlined,
-                              color: Colors.white,
-                            ),
-                          ),
-
-                          // ==================================================
-                          // AJUSTES
-                          // ==================================================
-
-                          IconButton(
-                            tooltip: 'Ajustes',
-                            onPressed: _showSettings,
-                            icon: const Icon(
-                              Icons.settings_outlined,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ],
+              AppBar(
+                title: _isSearching
+                    ? TextField(
+                        controller: _searchController,
+                        autofocus: true,
+                        style: const TextStyle(color: Colors.white),
+                        textInputAction: TextInputAction.search,
+                        decoration: const InputDecoration(
+                          hintText: 'Buscar canción, artista o álbum...',
+                          border: InputBorder.none,
+                        ),
                       )
-                    : const SizedBox.shrink(),
-              ),
-              // Espacio cuando está oculto
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                curve: Curves.easeInOut,
-                height: _isAppBarVisible ? 0 : 30,
+                    : const Text(
+                        'SoundNeed',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                actions: [
+                  // ==================================================
+                  // BUSCAR
+                  // ==================================================
+
+                  IconButton(
+                    tooltip: 'Buscar',
+                    onPressed: _toggleSearch,
+                    icon: Icon(
+                      _isSearching ? Icons.close : Icons.search,
+                      color: Colors.white,
+                    ),
+                  ),
+
+                  // ==================================================
+                  // COLA
+                  // ==================================================
+                  IconButton(
+                    tooltip: 'Cola',
+                    onPressed: _showQueue,
+                    icon: const Icon(
+                      Icons.queue_music_outlined,
+                      color: Colors.white,
+                    ),
+                  ),
+
+                  // ==================================================
+                  // AJUSTES
+                  // ==================================================
+                  IconButton(
+                    tooltip: 'Ajustes',
+                    onPressed: _showSettings,
+                    icon: const Icon(
+                      Icons.settings_outlined,
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
               ),
 
               // ======================================================
               // BODY
               // ======================================================
-
               Expanded(
-                child: NotificationListener<ScrollNotification>(
-                  onNotification: _handleScrollNotification,
-                  child: Column(
-                    children: [
-                      // Paneles flotantes
-                      _buildFloatingSections(),
+                child: Column(
+                  children: [
+                    // Navegación fija y completa.
+                    _buildFloatingSections(),
 
-                      // Contenido
-                      Expanded(
-                        child: _buildCurrentSection(),
+                    // Contenido
+                    Expanded(child: _buildCurrentSection()),
+
+                    // Keep the mini player above Android's gesture area so
+                    // it never appears to float over the system navigation.
+                    if (widget.player.currentSong != null)
+                      SafeArea(
+                        top: false,
+                        minimum: const EdgeInsets.only(bottom: 4),
+                        child: MiniPlayer(player: widget.player),
                       ),
-
-                      // Mini player
-                      if (widget.player.currentSong != null)
-                        MiniPlayer(
-                          player: widget.player,
-                        ),
-                    ],
-                  ),
+                  ],
                 ),
               ),
             ],
@@ -555,52 +466,65 @@ class _MusicHomePageState extends State<MusicHomePage> {
   }
 
   // ==========================================================
-  // PANELES FLOTANTES
+  // NAVEGACIÓN PRINCIPAL
   // ==========================================================
 
   Widget _buildFloatingSections() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        12,
-        8,
-        12,
-        8,
-      ),
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
       child: SizedBox(
         height: 54,
         child: ListView(
           scrollDirection: Axis.horizontal,
           physics: const BouncingScrollPhysics(),
           children: [
-            _buildFloatingSection(
-              MusicSection.home,
-              Icons.home_outlined,
-              'Inicio',
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: _buildSectionBubble(
+                MusicSection.home,
+                Icons.home_outlined,
+                'Inicio',
+              ),
             ),
-            _buildFloatingSection(
-              MusicSection.songs,
-              Icons.music_note_outlined,
-              'Canciones',
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: _buildSectionBubble(
+                MusicSection.songs,
+                Icons.music_note_outlined,
+                'Canciones',
+              ),
             ),
-            _buildFloatingSection(
-              MusicSection.playlists,
-              Icons.playlist_play_rounded,
-              'Playlists',
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: _buildSectionBubble(
+                MusicSection.playlists,
+                Icons.playlist_play_rounded,
+                'Playlists',
+              ),
             ),
-            _buildFloatingSection(
-              MusicSection.folders,
-              Icons.folder_outlined,
-              'Carpetas',
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: _buildSectionBubble(
+                MusicSection.folders,
+                Icons.folder_outlined,
+                'Carpetas',
+              ),
             ),
-            _buildFloatingSection(
-              MusicSection.artists,
-              Icons.person_outline,
-              'Artistas',
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: _buildSectionBubble(
+                MusicSection.artists,
+                Icons.person_outline,
+                'Artistas',
+              ),
             ),
-            _buildFloatingSection(
-              MusicSection.albums,
-              Icons.album_outlined,
-              'Álbumes',
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: _buildSectionBubble(
+                MusicSection.albums,
+                Icons.album_outlined,
+                'Álbumes',
+              ),
             ),
           ],
         ),
@@ -609,80 +533,60 @@ class _MusicHomePageState extends State<MusicHomePage> {
   }
 
   // ==========================================================
-  // PANEL FLOTANTE INDIVIDUAL
+  // BURBUJA DE NAVEGACIÓN
   // ==========================================================
 
-  Widget _buildFloatingSection(
+  Widget _buildSectionBubble(
     MusicSection section,
     IconData icon,
     String label,
   ) {
     final selected = _section == section;
 
-    return Padding(
-      padding: const EdgeInsets.only(
-        right: 8,
-      ),
-      child: GestureDetector(
-        onTap: () => _selectSection(section),
-        behavior: HitTestBehavior.opaque,
-        child: AnimatedContainer(
-          duration: const Duration(
-            milliseconds: 180,
-          ),
-          curve: Curves.easeOut,
-          padding: const EdgeInsets.symmetric(
-            horizontal: 16,
-            vertical: 8,
-          ),
-          decoration: BoxDecoration(
-            // Nada de morado.
+    return GestureDetector(
+      onTap: () => _selectSection(section),
+      behavior: HitTestBehavior.opaque,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOut,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          // Nada de morado.
+          color: selected ? Colors.white : AppColors.surface,
+          borderRadius: BorderRadius.circular(30),
+          border: Border.all(
             color: selected
                 ? Colors.white
-                : AppColors.surface,
-            borderRadius:
-                BorderRadius.circular(30),
-            border: Border.all(
-              color: selected
-                  ? Colors.white
-                  : Colors.white.withOpacity(0.08),
+                : Colors.white.withValues(alpha: 0.08),
+          ),
+          boxShadow: selected
+              ? [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.28),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+                ]
+              : null,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 17,
+              color: selected ? Colors.black : Colors.white70,
             ),
-            boxShadow: selected
-                ? [
-                    BoxShadow(
-                      color:
-                          Colors.black.withOpacity(0.28),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
-                    ),
-                  ]
-                : null,
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                icon,
-                size: 19,
-                color: selected
-                    ? Colors.black
-                    : Colors.white70,
+            const SizedBox(width: 7),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                color: selected ? Colors.black : Colors.white70,
               ),
-              const SizedBox(width: 7),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: selected
-                      ? FontWeight.w700
-                      : FontWeight.w500,
-                  color: selected
-                      ? Colors.black
-                      : Colors.white70,
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -737,18 +641,13 @@ class _MusicHomePageState extends State<MusicHomePage> {
   // ARTWORK (para el queue)
   // ==========================================================
 
-  Widget _buildArtwork(
-    Song song, {
-    double size = 52,
-  }) {
+  Widget _buildArtwork(Song song, {double size = 52}) {
     return FutureBuilder<Uint8List?>(
       future: widget.player.loadArtwork(song),
       builder: (context, snapshot) {
-        if (snapshot.hasData &&
-            snapshot.data != null) {
+        if (snapshot.hasData && snapshot.data != null) {
           return ClipRRect(
-            borderRadius:
-                BorderRadius.circular(13),
+            borderRadius: BorderRadius.circular(13),
             child: Image.memory(
               snapshot.data!,
               width: size,
@@ -764,18 +663,10 @@ class _MusicHomePageState extends State<MusicHomePage> {
           height: size,
           decoration: BoxDecoration(
             color: Colors.white.withOpacity(0.06),
-            borderRadius:
-                BorderRadius.circular(13),
-            border: Border.all(
-              color:
-                  Colors.white.withOpacity(0.10),
-            ),
+            borderRadius: BorderRadius.circular(13),
+            border: Border.all(color: Colors.white.withOpacity(0.10)),
           ),
-          child: const Icon(
-            Icons.music_note,
-            size: 24,
-            color: Colors.white54,
-          ),
+          child: const Icon(Icons.music_note, size: 24, color: Colors.white54),
         );
       },
     );
@@ -794,28 +685,20 @@ class _MusicHomePageState extends State<MusicHomePage> {
       builder: (context) {
         return SafeArea(
           child: SizedBox(
-            height:
-                MediaQuery.of(context)
-                        .size
-                        .height *
-                    0.70,
+            height: MediaQuery.of(context).size.height * 0.70,
             child: Column(
               children: [
                 const Padding(
                   padding: EdgeInsets.all(18),
                   child: Row(
                     children: [
-                      Icon(
-                        Icons.queue_music_outlined,
-                        color: Colors.white70,
-                      ),
+                      Icon(Icons.queue_music_outlined, color: Colors.white70),
                       SizedBox(width: 10),
                       Text(
                         'Cola de reproducción',
                         style: TextStyle(
                           fontSize: 20,
-                          fontWeight:
-                              FontWeight.bold,
+                          fontWeight: FontWeight.bold,
                         ),
                       ),
                     ],
@@ -827,81 +710,49 @@ class _MusicHomePageState extends State<MusicHomePage> {
                       ? const Center(
                           child: Text(
                             'La cola está vacía.',
-                            style: TextStyle(
-                              color:
-                                  AppColors
-                                      .textSecondary,
-                            ),
+                            style: TextStyle(color: AppColors.textSecondary),
                           ),
                         )
                       : ListView.builder(
-                          itemCount:
-                              widget.player
-                                  .queue.length,
-                          itemBuilder:
-                              (context, index) {
-                            final song =
-                                widget.player
-                                    .queue[index];
+                          itemCount: widget.player.queue.length,
+                          itemBuilder: (context, index) {
+                            final song = widget.player.queue[index];
 
                             final isCurrent =
-                                widget.player
-                                        .currentSong
-                                        ?.id ==
-                                    song.id;
+                                widget.player.currentSong?.id == song.id;
 
                             return ListTile(
-                              leading:
-                                  _buildArtwork(
-                                song,
-                                size: 52,
-                              ),
+                              leading: _buildArtwork(song, size: 52),
                               title: Text(
                                 song.title,
                                 maxLines: 1,
-                                overflow:
-                                    TextOverflow
-                                        .ellipsis,
+                                overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
                                   color: Colors.white,
-                                  fontWeight:
-                                      isCurrent
-                                          ? FontWeight
-                                              .bold
-                                          : FontWeight
-                                              .normal,
+                                  fontWeight: isCurrent
+                                      ? FontWeight.bold
+                                      : FontWeight.normal,
                                 ),
                               ),
                               subtitle: Text(
                                 song.artist,
                                 maxLines: 1,
-                                overflow:
-                                    TextOverflow
-                                        .ellipsis,
+                                overflow: TextOverflow.ellipsis,
                               ),
                               trailing: isCurrent
                                   ? const Icon(
-                                      Icons
-                                          .equalizer,
-                                      color:
-                                          Colors.white,
+                                      Icons.equalizer,
+                                      color: Colors.white,
                                     )
                                   : null,
                               onTap: () async {
-                                Navigator.pop(
-                                  context,
-                                );
+                                Navigator.pop(context);
 
-                                widget.player
-                                    .setQueueIndex(
-                                  index,
-                                );
+                                widget.player.setQueueIndex(index);
 
-                                await widget.player
-                                    .playSong(
+                                await widget.player.playSong(
                                   song,
-                                  createQueue:
-                                      false,
+                                  createQueue: false,
                                 );
                               },
                             );

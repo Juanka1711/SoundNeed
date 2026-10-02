@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../music_player.dart';
-import 'media_collection_section.dart';
+import 'artist_album_discovery_section.dart';
 
 class AlbumsSection extends StatelessWidget {
   const AlbumsSection({
@@ -16,10 +16,10 @@ class AlbumsSection extends StatelessWidget {
   final String searchText;
 
   @override
-  Widget build(BuildContext context) => MediaCollectionSection(
-        player: player,
-        songs: songs,
-        kind: MediaCollectionKind.albums,
-        searchText: searchText,
-      );
+  Widget build(BuildContext context) => ArtistAlbumDiscoverySection(
+    player: player,
+    songs: songs,
+    searchText: searchText,
+    showArtists: false,
+  );
 }
