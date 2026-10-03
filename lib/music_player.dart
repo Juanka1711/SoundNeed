@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -304,20 +303,41 @@ class MusicPlayerController extends ChangeNotifier {
     final wasFavorite = _favoriteIds.contains(song.id);
     if (wasFavorite) {
       _favoriteIds.remove(song.id);
-      await RecommendationService.instance.setFavorite(
-        songId: song.isOnline ? song.onlineVideoId : song.id.toString(),
-        favorite: false,
-      );
     } else {
       _favoriteIds.add(song.id);
-      await RecommendationService.instance.setFavorite(
-        songId: song.isOnline ? song.onlineVideoId : song.id.toString(),
-        favorite: true,
-      );
     }
 
     await _saveFavorites();
     notifyListeners();
+
+    try {
+      await RecommendationService.instance.setFavorite(
+        songId: song.isOnline ? song.onlineVideoId : song.id.toString(),
+        favorite: !wasFavorite,
+      );
+    } catch (error) {
+      debugPrint('[MusicPlayer] No se pudo sincronizar favorito: $error');
+    }
+  }
+
+  Future<void> setFavorite(Song song, bool favorite) async {
+    if (favorite) {
+      _favoriteIds.add(song.id);
+    } else {
+      _favoriteIds.remove(song.id);
+    }
+
+    await _saveFavorites();
+    notifyListeners();
+
+    try {
+      await RecommendationService.instance.setFavorite(
+        songId: song.isOnline ? song.onlineVideoId : song.id.toString(),
+        favorite: favorite,
+      );
+    } catch (error) {
+      debugPrint('[MusicPlayer] No se pudo sincronizar favorito: $error');
+    }
   }
 
   Future<void> _saveFavorites() async {

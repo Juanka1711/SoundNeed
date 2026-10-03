@@ -7,7 +7,6 @@ import '../app_colors.dart';
 import '../artist_catalog_service.dart';
 import '../music_player.dart';
 import '../playlist_actions.dart';
-import '../playlist_manager.dart';
 import '../services/recommendation_service.dart';
 import '../artist_discovery_service.dart';
 import '../services/youtube_audio_service.dart';
@@ -983,10 +982,10 @@ class _ArtistAlbumDiscoverySectionState
         ),
         trailing: PopupMenuButton<String>(
           icon: Icon(
-            widget.player.isFavorite(song)
+            isSongLiked(widget.player, song)
                 ? Icons.favorite_rounded
                 : Icons.more_vert_rounded,
-            color: widget.player.isFavorite(song)
+            color: isSongLiked(widget.player, song)
                 ? const Color(0xFFF43F5E)
                 : Colors.white70,
           ),
@@ -994,9 +993,7 @@ class _ArtistAlbumDiscoverySectionState
             if (action == 'playlist') {
               await addSongToPlaylist(context, widget.player, song);
             } else if (action == 'like') {
-              final liked = !widget.player.isFavorite(song);
-              await widget.player.toggleFavorite(song);
-              await PlaylistManager.instance.setLikedSong(song, liked);
+              await toggleSongLiked(widget.player, song);
             }
           },
           itemBuilder: (_) => const [
@@ -1057,9 +1054,7 @@ class _ArtistAlbumDiscoverySectionState
               if (value == 'save') {
                 await addSongToPlaylist(context, widget.player, song);
               } else if (value == 'like') {
-                final liked = !widget.player.isFavorite(song);
-                await widget.player.toggleFavorite(song);
-                await PlaylistManager.instance.setLikedSong(song, liked);
+                final liked = await toggleSongLiked(widget.player, song);
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(

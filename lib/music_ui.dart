@@ -4,9 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import 'music_player.dart';
-import 'full_player.dart';
 import 'mini_player.dart';
-import 'app_colors.dart';
 import 'sections/home_section.dart';
 import 'sections/songs_section.dart';
 import 'sections/playlists_section.dart';
@@ -15,6 +13,7 @@ import 'sections/artists_section.dart';
 import 'sections/albums_section.dart';
 import 'services/youtube_audio_service.dart';
 import 'services/artwork_palette.dart';
+import 'widgets/soundneed_search_field.dart';
 
 // ============================================================
 // COLORES BASE DE SOUNDNEED
@@ -381,15 +380,11 @@ class _MusicHomePageState extends State<MusicHomePage> {
             children: [
               AppBar(
                 title: _isSearching
-                    ? TextField(
+                    ? SoundNeedSearchField(
                         controller: _searchController,
                         autofocus: true,
-                        style: const TextStyle(color: Colors.white),
-                        textInputAction: TextInputAction.search,
-                        decoration: const InputDecoration(
-                          hintText: 'Buscar canción, artista o álbum...',
-                          border: InputBorder.none,
-                        ),
+                        hintText: 'Canción, artista o álbum',
+                        height: 46,
                       )
                     : const Text(
                         'SoundNeed',

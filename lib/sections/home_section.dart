@@ -5,8 +5,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../music_player.dart';
 import '../app_colors.dart';
+import '../playlist_artwork.dart';
 import '../services/youtube_audio_service.dart';
 import '../playlist_manager.dart';
+import '../widgets/soundneed_search_field.dart';
 import '../artist_catalog_service.dart';
 import '../artist_discovery_service.dart';
 import '../services/recommendation_service.dart';
@@ -433,6 +435,23 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
     animation: _playlistManager,
     builder: (context, _) {
       final items = <_HomePlaylistItem>[];
+      final likedByKey = <String, Song>{};
+      for (final song in _playlistManager.likedSongs) {
+        likedByKey[songKey(song)] = song;
+      }
+      for (final song in widget.player.songs.where(widget.player.isFavorite)) {
+        likedByKey.putIfAbsent(songKey(song), () => song);
+      }
+      if (likedByKey.isNotEmpty) {
+        items.add(
+          _HomePlaylistItem(
+            name: 'Me gusta',
+            songs: likedByKey.values.toList(),
+            color: const Color(0xFFF43F5E),
+            icon: Icons.favorite_rounded,
+          ),
+        );
+      }
       items.addAll(
         _playlistManager.playlists.map(
           (playlist) => _HomePlaylistItem(
@@ -460,46 +479,83 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
             itemCount: visible.length,
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 2,
-              crossAxisSpacing: 9,
-              mainAxisSpacing: 9,
-              childAspectRatio: 2.65,
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 17,
+              childAspectRatio: .80,
             ),
             itemBuilder: (context, index) {
               final item = visible[index];
-              return Material(
-                color: Colors.white.withValues(alpha: .09),
-                borderRadius: BorderRadius.circular(13),
-                clipBehavior: Clip.antiAlias,
-                child: InkWell(
-                  onTap: () {
-                    if (item.songs.isEmpty) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('${item.name} todavía está vacía.'),
-                        ),
-                      );
-                      return;
-                    }
-                    widget.player.playPlaylist(item.songs);
-                  },
-                  child: Row(
-                    children: [
-                      _quickPlaylistArtwork(item),
-                      const SizedBox(width: 9),
-                      Expanded(
-                        child: Text(
-                          item.name,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                          ),
+              return InkWell(
+                borderRadius: BorderRadius.circular(19),
+                onTap: () {
+                  if (item.songs.isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('${item.name} todavía está vacía.'),
+                      ),
+                    );
+                    return;
+                  }
+                  widget.player.playPlaylist(item.songs);
+                },
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(19),
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            PlaylistArtwork(
+                              player: widget.player,
+                              songs: item.songs,
+                              icon: item.icon,
+                              accent: item.color,
+                            ),
+                            Positioned(
+                              right: 10,
+                              bottom: 10,
+                              child: DecoratedBox(
+                                decoration: const BoxDecoration(
+                                  color: Colors.white,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(7),
+                                  child: Icon(
+                                    Icons.play_arrow_rounded,
+                                    color: item.color,
+                                    size: 25,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                      const SizedBox(width: 8),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      item.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Playlist · ${item.songs.length} ${item.songs.length == 1 ? 'canción' : 'canciones'}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white60,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
                 ),
               );
             },
@@ -802,60 +858,32 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
           style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
         ),
         const SizedBox(height: 14),
-        Container(
-          constraints: const BoxConstraints(minHeight: 56),
-          padding: const EdgeInsets.only(left: 17, right: 6),
-          decoration: BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: BorderRadius.circular(32),
-            border: Border.all(color: Colors.white.withValues(alpha: .1)),
-          ),
-          child: Row(
-            children: [
-              const Icon(
-                Icons.podcasts_rounded,
-                color: Colors.white70,
-                size: 21,
-              ),
-              const SizedBox(width: 11),
-              Expanded(
-                child: TextField(
-                  controller: _podcastSearchController,
-                  textInputAction: TextInputAction.search,
-                  onChanged: (query) {
-                    if (query.trim().isEmpty &&
-                        _podcastSearchResults.isNotEmpty) {
-                      setState(() => _podcastSearchResults = []);
-                    }
-                  },
-                  onSubmitted: (_) => _searchPodcasts(),
-                  style: const TextStyle(color: Colors.white, fontSize: 14),
-                  decoration: const InputDecoration(
-                    hintText: 'Buscar podcasts o temas',
-                    hintStyle: TextStyle(color: Colors.white54, fontSize: 14),
-                    border: InputBorder.none,
-                    isCollapsed: true,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              IconButton(
-                tooltip: 'Buscar podcasts',
-                onPressed: _searchingPodcasts ? null : _searchPodcasts,
-                style: IconButton.styleFrom(
-                  backgroundColor: Colors.white,
-                  foregroundColor: Colors.black,
-                  fixedSize: const Size(42, 42),
-                ),
-                icon: _searchingPodcasts
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.search_rounded, size: 21),
-              ),
-            ],
+        SoundNeedSearchField(
+          controller: _podcastSearchController,
+          hintText: 'Buscar podcasts o temas',
+          prefixIcon: Icons.podcasts_rounded,
+          height: 56,
+          onChanged: (query) {
+            if (query.trim().isEmpty && _podcastSearchResults.isNotEmpty) {
+              setState(() => _podcastSearchResults = []);
+            }
+          },
+          onSubmitted: (_) => _searchPodcasts(),
+          suffix: IconButton(
+            tooltip: 'Buscar podcasts',
+            onPressed: _searchingPodcasts ? null : _searchPodcasts,
+            style: IconButton.styleFrom(
+              backgroundColor: Colors.white,
+              foregroundColor: Colors.black,
+              fixedSize: const Size(38, 38),
+            ),
+            icon: _searchingPodcasts
+                ? const SizedBox(
+                    width: 17,
+                    height: 17,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.search_rounded, size: 20),
           ),
         ),
         if (_searchingPodcasts)
@@ -1250,34 +1278,6 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
       ),
     ),
   );
-
-  Widget _quickPlaylistArtwork(_HomePlaylistItem item) {
-    final song = item.songs.isEmpty ? null : item.songs.first;
-    if (song == null) {
-      return Container(
-        width: 58,
-        height: 58,
-        color: item.color,
-        child: Icon(item.icon, color: Colors.white, size: 25),
-      );
-    }
-    return FutureBuilder(
-      future: widget.player.loadArtwork(song),
-      builder: (context, snapshot) {
-        final bytes = snapshot.data;
-        return SizedBox(
-          width: 58,
-          height: 58,
-          child: bytes == null
-              ? ColoredBox(
-                  color: item.color,
-                  child: Icon(item.icon, color: Colors.white, size: 25),
-                )
-              : Image.memory(bytes, fit: BoxFit.cover),
-        );
-      },
-    );
-  }
 
   Widget _buildDiscoverySuggestions() {
     if (_currentChart.isEmpty &&

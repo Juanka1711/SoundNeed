@@ -3,6 +3,37 @@ import 'package:flutter/material.dart';
 import 'music_player.dart';
 import 'playlist_manager.dart';
 
+bool isSongLiked(MusicPlayerController player, Song song) {
+  return player.isFavorite(song) ||
+      PlaylistManager.instance.likedSongs.any(
+        (likedSong) => songKey(likedSong) == songKey(song),
+      );
+}
+
+Future<void> setSongLiked(
+  MusicPlayerController player,
+  Song song,
+  bool liked,
+) async {
+  final manager = PlaylistManager.instance;
+  await manager.initialize();
+  await manager.setLikedSong(song, liked);
+  try {
+    await player.setFavorite(song, liked);
+  } catch (error) {
+    debugPrint('[Playlist] No se pudo sincronizar el favorito local: $error');
+  }
+}
+
+Future<bool> toggleSongLiked(
+  MusicPlayerController player,
+  Song song,
+) async {
+  final liked = !isSongLiked(player, song);
+  await setSongLiked(player, song, liked);
+  return liked;
+}
+
 Future<String?> askPlaylistName(BuildContext context, {String? initialName}) async {
   final controller = TextEditingController(text: initialName ?? '');
   final result = await showDialog<String>(

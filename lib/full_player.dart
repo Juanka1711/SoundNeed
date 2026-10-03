@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import 'lyrics_service.dart';
 import 'music_player.dart';
 import 'playlist_actions.dart';
-import 'playlist_manager.dart';
 
 class FullPlayer extends StatefulWidget {
   final MusicPlayerController player;
@@ -380,7 +379,7 @@ class _FullPlayerState extends State<FullPlayer>
   }
 
   Widget _buildTopBar(dynamic song, double screenHeight) {
-    final favorite = player.isFavorite(song);
+    final favorite = isSongLiked(player, song);
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
@@ -425,9 +424,9 @@ class _FullPlayerState extends State<FullPlayer>
             color: favorite
                 ? Colors.redAccent
                 : Colors.white,
-            onTap: () {
-              player.toggleFavorite(song);
-              setState(() {});
+            onTap: () async {
+              await toggleSongLiked(player, song);
+              if (mounted) setState(() {});
             },
           ),
 
@@ -1252,15 +1251,14 @@ class _FullPlayerState extends State<FullPlayer>
 
                 _optionTile(
                   icon: Icons.favorite_rounded,
-                  title: player.isFavorite(song)
+                  title: isSongLiked(player, song)
                       ? 'Quitar de favoritos'
                       : 'Agregar a favoritos',
-                  onTap: () {
+                  onTap: () async {
                     Navigator.pop(context);
 
-                    player.toggleFavorite(song);
-
-                    setState(() {});
+                    await toggleSongLiked(player, song);
+                    if (mounted) setState(() {});
                   },
                 ),
 
