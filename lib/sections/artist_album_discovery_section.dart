@@ -34,11 +34,14 @@ class ArtistAlbumDiscoverySection extends StatefulWidget {
 }
 
 class _ArtistAlbumDiscoverySectionState
-    extends State<ArtistAlbumDiscoverySection> {
+    extends State<ArtistAlbumDiscoverySection>
+    with WidgetsBindingObserver {
   final _recommendations = RecommendationService.instance;
   List<ArtistPreference> _topArtists = [];
   List<LearnedSong> _mostPlayed = [];
   List<YouTubeSearchResult> _youtubeDiscovery = [];
+  List<MusicChartArtist> _worldArtists = [];
+  List<MusicChartTrack> _worldChart = [];
   String? _selectedArtist;
   _MediaGroup? _selectedAlbum;
   List<YouTubeSearchResult> _artistResults = [];
@@ -48,14 +51,38 @@ class _ArtistAlbumDiscoverySectionState
   bool _loadingDiscovery = true;
   String? _onlineError;
   int _requestId = 0;
+  Timer? _chartRefreshTimer;
+  bool _loadingWorldChart = true;
 
   bool get _isArtists => widget.showArtists;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     unawaited(_loadPersonalRecommendations());
     unawaited(_loadYouTubeDiscovery());
+    unawaited(_loadWorldArtists());
+    if (_isArtists) {
+      _chartRefreshTimer = Timer.periodic(
+        const Duration(hours: 6),
+        (_) => unawaited(_loadWorldArtists(refresh: true)),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _chartRefreshTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (_isArtists && state == AppLifecycleState.resumed) {
+      unawaited(_loadWorldArtists());
+    }
   }
 
   @override
@@ -95,8 +122,29 @@ class _ArtistAlbumDiscoverySectionState
       widget.player.loadSongs(),
       _loadPersonalRecommendations(),
       _loadYouTubeDiscovery(),
+      _loadWorldArtists(refresh: true),
     ]);
     if (_selectedArtist != null) await _refreshArtist(_selectedArtist!);
+  }
+
+  Future<void> _loadWorldArtists({bool refresh = false}) async {
+    if (!_isArtists) return;
+    if (_worldChart.isEmpty && mounted) {
+      setState(() => _loadingWorldChart = true);
+    }
+    try {
+      final service = ArtistDiscoveryService.instance;
+      final chart = await service.loadWorldChart(forceRefresh: refresh);
+      if (!mounted) return;
+      setState(() {
+        _worldChart = chart;
+        _worldArtists = service.worldArtists;
+        _loadingWorldChart = false;
+      });
+    } catch (_) {
+      // El ranking personalizado permanece disponible si falla la red.
+      if (mounted) setState(() => _loadingWorldChart = false);
+    }
   }
 
   Future<void> _refreshArtist(String artist) async {
@@ -211,6 +259,13 @@ class _ArtistAlbumDiscoverySectionState
           (item) => query.isEmpty || item.name.toLowerCase().contains(query),
         )
         .toList();
+    final visibleWorldArtists = _worldArtists
+        .where(
+          (artist) =>
+              query.isEmpty || artist.name.toLowerCase().contains(query),
+        )
+        .toList();
+    final monthlyDays = ArtistDiscoveryService.instance.monthlySnapshotDays;
 
     return RefreshIndicator(
       color: Colors.white,
@@ -220,19 +275,100 @@ class _ArtistAlbumDiscoverySectionState
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
         children: [
           Text(
-            _isArtists ? 'Artistas para ti' : 'Álbumes de tu biblioteca',
+            _isArtists ? 'Artistas' : 'Álbumes de tu biblioteca',
             style: const TextStyle(fontSize: 23, fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 5),
           Text(
             _isArtists
-                ? 'Se actualiza con tu historial y búsquedas de YouTube.'
+                ? 'Tendencias globales y tus artistas.'
                 : 'Ordenados según los artistas que más escuchas.',
             style: const TextStyle(
               color: AppColors.textSecondary,
               fontSize: 13,
             ),
           ),
+          if (_isArtists && _loadingWorldChart && visibleWorldArtists.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 22),
+              child: Center(
+                child: CircularProgressIndicator(color: Colors.white),
+              ),
+            ),
+          if (_isArtists && visibleWorldArtists.isNotEmpty) ...[
+            const SizedBox(height: 22),
+            _sectionHeading('Tendencias de los últimos 30 días', 'Global'),
+            const SizedBox(height: 5),
+            Text(
+              '12 países · $monthlyDays/30 días',
+              style: const TextStyle(
+                color: AppColors.textSecondary,
+                fontSize: 12,
+              ),
+            ),
+            const SizedBox(height: 14),
+            _monthlyArtistFeature(visibleWorldArtists.first),
+            const SizedBox(height: 21),
+            _sectionHeading('Artistas más escuchados', 'Últimos 30 días'),
+            const SizedBox(height: 13),
+            SizedBox(
+              height: 132,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: visibleWorldArtists.take(20).length,
+                separatorBuilder: (_, _) => const SizedBox(width: 14),
+                itemBuilder: (context, index) {
+                  final artist = visibleWorldArtists[index];
+                  return SizedBox(
+                    width: 94,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(18),
+                      onTap: () => _openArtist(artist.name),
+                      child: Column(
+                        children: [
+                          Stack(
+                            children: [
+                              _Artwork(
+                                player: widget.player,
+                                song: null,
+                                artistName: artist.name,
+                                size: 82,
+                                circular: true,
+                                icon: Icons.person_rounded,
+                              ),
+                              Positioned(
+                                right: 0,
+                                bottom: 0,
+                                child: CircleAvatar(
+                                  radius: 13,
+                                  backgroundColor: const Color(0xFF211A37),
+                                  child: Text(
+                                    '${artist.rank}',
+                                    style: const TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            artist.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
           if (_isArtists && visibleArtists.isNotEmpty) ...[
             const SizedBox(height: 22),
             _sectionHeading(
@@ -287,16 +423,14 @@ class _ArtistAlbumDiscoverySectionState
                 child: CircularProgressIndicator(color: Colors.white),
               ),
             ),
-          if (_isArtists && visibleArtists.isEmpty && !_loadingPersonal)
+          if (_isArtists &&
+              visibleArtists.isEmpty &&
+              !_loadingPersonal &&
+              _worldArtists.isEmpty)
             _emptyPersonalHint(),
           if (_isArtists && query.isEmpty) ...[
             const SizedBox(height: 18),
             _sectionHeading('Descubre en YouTube', 'Búsqueda actual'),
-            const SizedBox(height: 5),
-            const Text(
-              'Resultados de búsqueda que se renuevan al actualizar. No son un ranking oficial.',
-              style: TextStyle(color: Colors.white38, fontSize: 11),
-            ),
             const SizedBox(height: 12),
             if (_loadingDiscovery)
               const Center(
@@ -323,15 +457,160 @@ class _ArtistAlbumDiscoverySectionState
           else
             _albumGrid(visibleGroups.toList()),
           const SizedBox(height: 20),
-          if (_isArtists)
-            const Text(
-              'Las búsquedas de YouTube cambian según lo disponible en el momento; no representan un ranking oficial ni confirman la fecha de lanzamiento.',
-              style: TextStyle(color: Colors.white38, fontSize: 11),
-            ),
         ],
       ),
     );
   }
+
+  Widget _monthlyArtistFeature(MusicChartArtist artist) => Material(
+    color: AppColors.card,
+    borderRadius: BorderRadius.circular(24),
+    clipBehavior: Clip.antiAlias,
+    child: InkWell(
+      onTap: () => _openArtist(artist.name),
+      child: SizedBox(
+        height: 238,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (artist.artworkUrl.isNotEmpty)
+              Image.network(
+                artist.artworkUrl,
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) => const ColoredBox(
+                  color: AppColors.card,
+                  child: SizedBox.expand(),
+                ),
+              ),
+            const DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topRight,
+                  end: Alignment.bottomLeft,
+                  colors: [
+                    Color(0xAA542E88),
+                    Color(0xCC171323),
+                    Color(0xF20B0B12),
+                  ],
+                ),
+              ),
+            ),
+            Positioned(
+              right: -36,
+              top: -55,
+              child: Container(
+                width: 190,
+                height: 190,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: .10),
+                    width: 24,
+                  ),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 18, 18, 18),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 11,
+                            vertical: 7,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: .13),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: .16),
+                            ),
+                          ),
+                          child: Text(
+                            'N.º ${artist.rank} · 30 DÍAS',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: .7,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          artist.name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 25,
+                            height: 1.02,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -.5,
+                          ),
+                        ),
+                        const SizedBox(height: 5),
+                        Text(
+                          '${artist.songs.length} temas destacados',
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12,
+                          ),
+                        ),
+                        const SizedBox(height: 13),
+                        FilledButton.icon(
+                          onPressed: artist.songs.isEmpty
+                              ? null
+                              : () => _playWorldTrack(artist.songs.first),
+                          icon: const Icon(Icons.play_arrow_rounded, size: 20),
+                          label: const Text('Escuchar'),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: Colors.white,
+                            foregroundColor: const Color(0xFF171323),
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: .75),
+                        width: 2,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: .35),
+                          blurRadius: 18,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    child: _Artwork(
+                      player: widget.player,
+                      song: null,
+                      artistName: artist.name,
+                      size: 112,
+                      circular: true,
+                      icon: Icons.person_rounded,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 
   Widget _artistProfile(String name) {
     final localSongs = _songsForArtist(name);
@@ -373,6 +652,12 @@ class _ArtistAlbumDiscoverySectionState
               textAlign: TextAlign.center,
               style: const TextStyle(color: AppColors.textSecondary),
             ),
+          ],
+          if (_isArtists && _worldSongsForArtist(name).isNotEmpty) ...[
+            const SizedBox(height: 22),
+            _sectionHeading('Más escuchadas en 30 días', 'Tendencia global'),
+            const SizedBox(height: 10),
+            ..._worldSongsForArtist(name).map(_worldTrackTile),
           ],
           Text(
             '${localSongs.length} canciones en tu biblioteca',
@@ -887,6 +1172,92 @@ class _ArtistAlbumDiscoverySectionState
   List<Song> _songsForArtist(String artist) => widget.songs
       .where((song) => song.artist.toLowerCase() == artist.toLowerCase())
       .toList();
+
+  List<MusicChartTrack> _worldSongsForArtist(String artist) {
+    final monthlyArtist = _worldArtists.where(
+      (entry) => entry.name.toLowerCase() == artist.toLowerCase(),
+    );
+    if (monthlyArtist.isNotEmpty && monthlyArtist.first.songs.isNotEmpty) {
+      return monthlyArtist.first.songs;
+    }
+    return _worldChart
+        .where((track) => track.artist.toLowerCase() == artist.toLowerCase())
+        .take(10)
+        .toList();
+  }
+
+  Widget _worldTrackTile(MusicChartTrack track) => Card(
+    color: AppColors.card,
+    margin: const EdgeInsets.only(bottom: 8),
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+    child: ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
+      leading: SizedBox(
+        width: 44,
+        height: 44,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(9),
+          child: Image.network(
+            track.artworkUrl,
+            fit: BoxFit.cover,
+            errorBuilder: (_, _, _) => const ColoredBox(
+              color: AppColors.surface,
+              child: Icon(Icons.music_note_rounded, color: Colors.white70),
+            ),
+          ),
+        ),
+      ),
+      title: Text(
+        track.title,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontWeight: FontWeight.w700),
+      ),
+      subtitle: Text(
+        'Tema #${track.rank} del artista en los últimos 30 días',
+        style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+      ),
+      trailing: const Icon(Icons.play_circle_fill_rounded, size: 30),
+      onTap: () => _playWorldTrack(track),
+    ),
+  );
+
+  Future<void> _playWorldTrack(MusicChartTrack track) async {
+    try {
+      final results = await YouTubeAudioService.instance.search(
+        '${track.title} ${track.artist} audio',
+      );
+      if (results.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No encontramos esta canción.')),
+          );
+        }
+        return;
+      }
+      final title = track.title.toLowerCase();
+      final match = results.where(
+        (result) => result.title.toLowerCase().contains(title),
+      );
+      final selected = match.isEmpty ? results.first : match.first;
+      final ok = await widget.player.playOnline(selected, playlist: results);
+      if (!ok && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              widget.player.playbackError ?? 'No se pudo reproducir.',
+            ),
+          ),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No se pudo reproducir esta canción.')),
+        );
+      }
+    }
+  }
 
   List<Song> _orderedByListening(List<Song> songs, List<LearnedSong> learned) {
     final scores = {for (final item in learned) item.id: item.playCount};

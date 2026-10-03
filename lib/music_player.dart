@@ -78,6 +78,7 @@ class Song {
   }
 
   bool get isOnline => mimeType == 'youtube';
+  bool get isPodcast => mimeType == 'podcast';
 
   String get onlineVideoId =>
       Uri.tryParse(uri)?.queryParameters['v'] ?? '';
@@ -408,6 +409,12 @@ class MusicPlayerController extends ChangeNotifier {
         await _audioPlayer.setAudioSource(
           AudioSource.uri(
             sourceUri,
+            headers: song.isPodcast
+                ? const {
+                    'User-Agent': 'Mozilla/5.0 (compatible; SoundNeed/1.0)',
+                    'Accept': 'audio/*,application/octet-stream,*/*',
+                  }
+                : null,
             tag: mediaItem,
           ),
         ).timeout(
@@ -510,7 +517,7 @@ class MusicPlayerController extends ChangeNotifier {
   }
 
   void _queueStopListening(Song? song) {
-    if (song == null) return;
+    if (song == null || song.isPodcast) return;
     final position = _audioPlayer.position.inSeconds;
     final duration = _audioPlayer.duration?.inSeconds;
     _enqueueRecommendation(() => RecommendationService.instance.stopListening(
@@ -520,6 +527,7 @@ class MusicPlayerController extends ChangeNotifier {
   }
 
   void _queueStartListening(Song song) {
+    if (song.isPodcast) return;
     _enqueueRecommendation(() => RecommendationService.instance.startListening(
           id: song.isOnline ? song.onlineVideoId : song.id.toString(),
           title: song.title.isEmpty ? song.displayName : song.title,
@@ -809,7 +817,9 @@ class MusicPlayerController extends ChangeNotifier {
     await _audioPlayer.seek(position);
 
     // Si se hace seek al inicio, contarlo como replay
-    if (position.inSeconds < 3 && _currentSong != null) {
+    if (position.inSeconds < 3 &&
+        _currentSong != null &&
+        !_currentSong!.isPodcast) {
       await RecommendationService.instance.registerReplay(
         songId: _currentSong!.id.toString(),
       );
@@ -850,7 +860,7 @@ class MusicPlayerController extends ChangeNotifier {
   }
 
   Future<Uint8List?> loadArtwork(Song song) async {
-    if (song.isOnline) {
+    if (song.isOnline || song.isPodcast) {
       return loadOnlineArtwork(song);
     }
 
@@ -931,7 +941,9 @@ class MusicPlayerController extends ChangeNotifier {
     _progressUpdateTimer = Timer.periodic(
       const Duration(seconds: 5),
       (_) {
-        if (_currentSong != null && _audioPlayer.playing) {
+        if (_currentSong != null &&
+            !_currentSong!.isPodcast &&
+            _audioPlayer.playing) {
           final position = _audioPlayer.position.inSeconds;
           final duration = _audioPlayer.duration?.inSeconds;
 
