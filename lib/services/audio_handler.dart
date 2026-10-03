@@ -253,6 +253,15 @@ class SoundNeedAudioHandler extends BaseAudioHandler with SeekHandler {
   Future<void> play() async {
     if (_disposed) return;
 
+    // Si el player se detuvo, intentar reproducir desde la posición actual
+    if (_player.processingState == ProcessingState.idle ||
+        _player.processingState == ProcessingState.completed) {
+      // Reanudar desde la posición actual si hay una canción cargada
+      if (_player.currentIndex != null && _player.currentIndex! >= 0) {
+        await _player.seek(_player.position);
+      }
+    }
+
     await _player.play();
 
     // Garantizamos que el estado que recibe audio_service

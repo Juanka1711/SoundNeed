@@ -140,6 +140,7 @@ class MusicPlayerController extends ChangeNotifier {
   bool get loadingOnline => _loadingOnline;
   int get queueIndex => _queueIndex;
   AudioPlayer get audioPlayer => _audioPlayer;
+  Stream<Duration> get positionStream => _audioPlayer.positionStream;
 
   MusicPlayerController({required SoundNeedAudioHandler audioHandler})
       : _audioHandler = audioHandler {

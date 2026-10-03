@@ -273,6 +273,12 @@ class SoundNeedWidgetProvider : AppWidgetProvider() {
                     preferences
                 )
 
+                // Abrir la app al tocar el widget
+                views.setOnClickPendingIntent(
+                    R.id.widget_content,
+                    launchAppPendingIntent(context)
+                )
+
                 manager.updateAppWidget(
                     widgetId,
                     views
@@ -348,6 +354,12 @@ class SoundNeedWidgetProvider : AppWidgetProvider() {
                 context,
                 views,
                 preferences
+            )
+
+            // Abrir la app al tocar el widget
+            views.setOnClickPendingIntent(
+                R.id.widget_content,
+                launchAppPendingIntent(context)
             )
 
             manager.updateAppWidget(
@@ -453,6 +465,28 @@ class SoundNeedWidgetProvider : AppWidgetProvider() {
             return PendingIntent.getBroadcast(
                 context,
                 requestCode,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or
+                    PendingIntent.FLAG_IMMUTABLE
+            )
+        }
+
+        // ============================================================
+        // LAUNCH APP
+        // ============================================================
+
+        private fun launchAppPendingIntent(
+            context: Context
+        ): PendingIntent {
+
+            val intent =
+                context.packageManager.getLaunchIntentForPackage(
+                    context.packageName
+                )
+
+            return PendingIntent.getActivity(
+                context,
+                0,
                 intent,
                 PendingIntent.FLAG_UPDATE_CURRENT or
                     PendingIntent.FLAG_IMMUTABLE
