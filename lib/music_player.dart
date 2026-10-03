@@ -3,12 +3,13 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:audio_service/audio_service.dart';
 import 'package:just_audio/just_audio.dart';
-import 'package:just_audio_background/just_audio_background.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 
 import 'services/youtube_audio_service.dart';
+import 'services/audio_handler.dart';
 import 'services/recommendation_service.dart';
 
 class Song {
@@ -89,7 +90,8 @@ class MusicPlayerController extends ChangeNotifier {
   static const int modeRepeatOne = 3;
   static const MethodChannel _channel = MethodChannel('music_player/media');
 
-  final AudioPlayer _audioPlayer = AudioPlayer();
+  final SoundNeedAudioHandler _audioHandler;
+  late final AudioPlayer _audioPlayer;
 
   late SharedPreferences _preferences;
 
@@ -138,7 +140,11 @@ class MusicPlayerController extends ChangeNotifier {
   int get queueIndex => _queueIndex;
   AudioPlayer get audioPlayer => _audioPlayer;
 
-  MusicPlayerController() {
+  MusicPlayerController({required SoundNeedAudioHandler audioHandler})
+      : _audioHandler = audioHandler {
+    _audioPlayer = audioHandler.player;
+    _audioHandler.onSkipToNext = nextSong;
+    _audioHandler.onSkipToPrevious = previousSong;
     _audioPlayer.playerStateStream.listen((state) {
       _isPlaying = state.playing;
       notifyListeners();
@@ -392,22 +398,7 @@ class MusicPlayerController extends ChangeNotifier {
         return;
       }
 
-      final mediaItem = MediaItem(
-        id: song.id.toString(),
-        title: song.title.isEmpty
-            ? song.displayName
-            : song.title,
-        artist: song.artist,
-        album: song.album,
-        duration: song.duration > 0
-            ? Duration(milliseconds: song.duration)
-            : null,
-        artUri: song.isOnline && song.artworkUri.isNotEmpty
-            ? Uri.tryParse(song.artworkUri)
-            : null,
-        playable: true,
-      );
-
+      final mediaItem = _mediaItemFor(song);
       // ============================================================
       // MANEJO ROBUSTO DE ERRORES EN REPRODUCCIÓN
       // ============================================================
@@ -491,6 +482,20 @@ class MusicPlayerController extends ChangeNotifier {
       notifyListeners();
     }
   }
+
+  MediaItem _mediaItemFor(Song song) => MediaItem(
+        id: song.id.toString(),
+        title: song.title.isEmpty ? song.displayName : song.title,
+        artist: song.artist,
+        album: song.album,
+        duration: song.duration > 0
+            ? Duration(milliseconds: song.duration)
+            : null,
+        artUri: song.artworkUri.isNotEmpty
+            ? Uri.tryParse(song.artworkUri)
+            : null,
+        playable: true,
+      );
 
   void _enqueueRecommendation(Future<void> Function() operation) {
     _recommendationQueue = _recommendationQueue.then((_) async {
@@ -940,7 +945,8 @@ class MusicPlayerController extends ChangeNotifier {
   @override
   void dispose() {
     _progressUpdateTimer?.cancel();
-    _audioPlayer.dispose();
+    _audioHandler.onSkipToNext = null;
+    _audioHandler.onSkipToPrevious = null;
     super.dispose();
   }
 }

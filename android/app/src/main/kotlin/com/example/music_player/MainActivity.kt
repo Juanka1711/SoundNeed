@@ -30,7 +30,6 @@ class MainActivity : AudioServiceActivity() {
         private const val CHANNEL = "music_player/media"
         private const val YOUTUBE_CHANNEL = "youtube/extractor"
         private const val NOTIFICATION_PERMISSION_REQUEST_CODE = 200
-
         private val extractorExecutor =
             Executors.newSingleThreadExecutor()
     }

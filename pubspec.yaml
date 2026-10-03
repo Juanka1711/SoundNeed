@@ -36,10 +36,10 @@ dependencies:
   cupertino_icons: ^1.0.8
   just_audio: ^0.10.6
   shared_preferences: ^2.5.5
-  just_audio_background: ^0.0.1-beta.17
   webview_flutter: ^4.13.0
   youtube_explode_dart: ^3.1.0
   http: ^1.2.0
+  audio_service: ^0.18.19
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -76,6 +76,8 @@ flutter_launcher_icons:
   android: true
   ios: false
   image_path: "assets/icon/app_icon.png"
+  adaptive_icon_background: "#000000"
+  adaptive_icon_foreground: "assets/icon/app_icon_foreground.png"
 
 
   # To add assets to your application, add an assets section, like this:

@@ -1,26 +1,33 @@
 import 'package:flutter/material.dart';
-import 'package:just_audio_background/just_audio_background.dart';
+import 'package:audio_service/audio_service.dart';
 import 'music_player.dart';
 import 'music_ui.dart';
+import 'services/audio_handler.dart';
+
+late final SoundNeedAudioHandler soundNeedAudioHandler;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await JustAudioBackground.init(
-    androidNotificationChannelId: 'com.example.music_player.channel.audio',
-    androidNotificationChannelName: 'SoundNeed',
-    androidNotificationChannelDescription:
-        'Controles de reproducción de SoundNeed',
-    androidNotificationOngoing: true,
-    androidShowNotificationBadge: true,
-    androidNotificationIcon: 'mipmap/ic_launcher',
+  soundNeedAudioHandler = await AudioService.init<SoundNeedAudioHandler>(
+    builder: SoundNeedAudioHandler.new,
+    config: const AudioServiceConfig(
+      androidNotificationChannelId: 'com.example.music_player.channel.audio',
+      androidNotificationChannelName: 'SoundNeed',
+      androidNotificationChannelDescription:
+          'Controles de reproducción de SoundNeed',
+      androidNotificationOngoing: false,
+      androidStopForegroundOnPause: false,
+    ),
   );
 
-  runApp(const MusicPlayerApp());
+  runApp(MusicPlayerApp(audioHandler: soundNeedAudioHandler));
 }
 
 class MusicPlayerApp extends StatelessWidget {
-  const MusicPlayerApp({super.key});
+  const MusicPlayerApp({super.key, required this.audioHandler});
+
+  final SoundNeedAudioHandler audioHandler;
 
   // ============================================================
   // COLORES DE SOUNDNEED
@@ -114,13 +121,15 @@ class MusicPlayerApp extends StatelessWidget {
           ),
         ),
       ),
-      home: const SoundNeedHome(),
+      home: SoundNeedHome(audioHandler: audioHandler),
     );
   }
 }
 
 class SoundNeedHome extends StatefulWidget {
-  const SoundNeedHome({super.key});
+  const SoundNeedHome({super.key, required this.audioHandler});
+
+  final SoundNeedAudioHandler audioHandler;
 
   @override
   State<SoundNeedHome> createState() => _SoundNeedHomeState();
@@ -132,7 +141,7 @@ class _SoundNeedHomeState extends State<SoundNeedHome> {
   @override
   void initState() {
     super.initState();
-    _player = MusicPlayerController();
+    _player = MusicPlayerController(audioHandler: widget.audioHandler);
     _player.initialize();
   }
 

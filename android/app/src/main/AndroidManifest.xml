@@ -98,6 +98,27 @@
 
         </receiver>
 
+        <!-- ===================================================== -->
+        <!-- TILE SERVICE (Android 16+)                             -->
+        <!-- ===================================================== -->
+        <service
+            android:name=".SoundNeedTileService"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="SoundNeed"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            tools:targetApi="n">
+
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+
+            <meta-data
+                android:name="android.service.quicksettings.ACTIVE_TILE"
+                android:value="true" />
+
+        </service>
+
         <!-- Flutter -->
         <meta-data
             android:name="flutterEmbedding"
