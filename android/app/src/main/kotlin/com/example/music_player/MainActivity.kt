@@ -29,6 +29,7 @@ class MainActivity : AudioServiceActivity() {
     companion object {
         private const val CHANNEL = "music_player/media"
         private const val YOUTUBE_CHANNEL = "youtube/extractor"
+        private const val WIDGET_CHANNEL = "soundneed/widget"
         private const val NOTIFICATION_PERMISSION_REQUEST_CODE = 200
         private val extractorExecutor =
             Executors.newSingleThreadExecutor()
@@ -95,6 +96,33 @@ class MainActivity : AudioServiceActivity() {
                 else -> {
                     result.notImplemented()
                 }
+            }
+        }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            WIDGET_CHANNEL
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "updatePlayback" -> {
+                    SoundNeedWidgetProvider.updatePlayback(
+                        this,
+                        call.argument<String>("title").orEmpty(),
+                        call.argument<String>("artist").orEmpty(),
+                        call.argument<String>("artUri").orEmpty(),
+                        call.argument<Boolean>("playing") ?: false
+                    )
+                    result.success(null)
+                }
+                "updateProgress" -> {
+                    SoundNeedWidgetProvider.updateProgress(
+                        this,
+                        call.argument<Number>("position")?.toLong() ?: 0L,
+                        call.argument<Number>("duration")?.toLong() ?: 0L
+                    )
+                    result.success(null)
+                }
+                else -> result.notImplemented()
             }
         }
 

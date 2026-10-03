@@ -1,15 +1,23 @@
 import 'dart:async';
 
 import 'package:audio_service/audio_service.dart';
+import 'package:flutter/services.dart';
 import 'package:just_audio/just_audio.dart';
 
 class SoundNeedAudioHandler extends BaseAudioHandler with SeekHandler {
+  static const MethodChannel _widgetChannel =
+      MethodChannel('soundneed/widget');
+
   final AudioPlayer _player = AudioPlayer();
 
   StreamSubscription<PlaybackEvent>? _playbackSub;
   StreamSubscription<SequenceState?>? _sequenceSub;
+  StreamSubscription<Duration>? _positionSub;
 
   bool _disposed = false;
+  MediaItem? _currentMediaItem;
+  String? _lastWidgetSongId;
+  bool? _lastWidgetPlaying;
 
   Future<void> Function()? onSkipToNext;
   Future<void> Function()? onSkipToPrevious;
@@ -62,6 +70,7 @@ class SoundNeedAudioHandler extends BaseAudioHandler with SeekHandler {
             errorMessage: error.toString(),
           ),
         );
+        _syncWidgetState(force: true);
       },
     );
 
@@ -104,11 +113,31 @@ class SoundNeedAudioHandler extends BaseAudioHandler with SeekHandler {
         final tag = sequence[index].tag;
 
         if (tag is MediaItem) {
+          _currentMediaItem = tag;
           mediaItem.add(tag);
+          _syncWidgetState(force: true);
         }
       },
       onError: (Object error, StackTrace stack) {
         // No dejamos que un error de metadata destruya el handler.
+      },
+    );
+
+    // ================================================================
+    // POSITION → WIDGET PROGRESS
+    // ================================================================
+
+    _positionSub = _player.positionStream.listen(
+      (position) {
+        if (_disposed) return;
+
+        final duration = _player.duration;
+        if (duration != null) {
+          _syncWidgetProgress(position, duration);
+        }
+      },
+      onError: (Object error, StackTrace stack) {
+        // No dejamos que un error de posición destruya el handler.
       },
     );
   }
@@ -153,6 +182,46 @@ class SoundNeedAudioHandler extends BaseAudioHandler with SeekHandler {
         updateTime: DateTime.now(),
       ),
     );
+    _syncWidgetState();
+  }
+
+  void _syncWidgetState({bool force = false}) {
+    if (_disposed) return;
+
+    final item = _currentMediaItem;
+    if (item == null) return;
+
+    final isPlaying = _player.playing;
+    if (!force &&
+        item.id == _lastWidgetSongId &&
+        isPlaying == _lastWidgetPlaying) {
+      return;
+    }
+
+    _lastWidgetSongId = item.id;
+    _lastWidgetPlaying = isPlaying;
+
+    unawaited(_widgetChannel.invokeMethod<void>(
+      'updatePlayback',
+      <String, Object?>{
+        'title': item.title,
+        'artist': item.artist ?? '',
+        'artUri': item.artUri?.toString() ?? '',
+        'playing': isPlaying,
+      },
+    ).catchError((Object error) {}));
+  }
+
+  void _syncWidgetProgress(Duration position, Duration duration) {
+    if (_disposed) return;
+
+    unawaited(_widgetChannel.invokeMethod<void>(
+      'updateProgress',
+      <String, Object?>{
+        'position': position.inMilliseconds,
+        'duration': duration.inMilliseconds,
+      },
+    ).catchError((Object error) {}));
   }
 
   AudioProcessingState _mapProcessingState(
@@ -369,6 +438,7 @@ class SoundNeedAudioHandler extends BaseAudioHandler with SeekHandler {
 
     await _playbackSub?.cancel();
     await _sequenceSub?.cancel();
+    await _positionSub?.cancel();
 
     await _player.dispose();
   }

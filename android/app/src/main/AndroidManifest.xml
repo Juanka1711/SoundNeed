@@ -98,6 +98,19 @@
 
         </receiver>
 
+        <!-- Widget de música de la pantalla de inicio -->
+        <receiver
+            android:name=".SoundNeedWidgetProvider"
+            android:exported="true"
+            android:label="SoundNeed">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/soundneed_widget_info" />
+        </receiver>
+
         <!-- ===================================================== -->
         <!-- TILE SERVICE (Android 16+)                             -->
         <!-- ===================================================== -->

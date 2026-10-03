@@ -116,6 +116,7 @@ class MusicPlayerController extends ChangeNotifier {
   final Map<int, Uint8List?> _onlineArtworkCache = {};
 
   bool _loadingOnline = false;
+  bool _controllerDisposed = false;
   int _playToken = 0;
 
   /// Mensaje del último error de reproducción (null si todo fue bien).
@@ -944,9 +945,13 @@ class MusicPlayerController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _controllerDisposed = true;
     _progressUpdateTimer?.cancel();
-    _audioHandler.onSkipToNext = null;
-    _audioHandler.onSkipToPrevious = null;
     super.dispose();
+  }
+
+  @override
+  void notifyListeners() {
+    if (!_controllerDisposed) super.notifyListeners();
   }
 }
