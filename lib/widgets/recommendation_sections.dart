@@ -424,7 +424,7 @@ class RecommendationSectionsState
                 width: size,
                 height: size,
                 fit: BoxFit.cover,
-                gaplessPlayback: true,
+
               ),
             );
           }

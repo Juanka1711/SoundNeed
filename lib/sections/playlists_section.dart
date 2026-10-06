@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import '../music_player.dart';
+import '../player_navigation.dart';
 import '../playlist_artwork.dart';
 import '../playlist_actions.dart';
 import '../playlist_manager.dart';
@@ -369,6 +370,8 @@ class _PlaylistContents extends StatefulWidget {
 
 class _PlaylistContentsState extends State<_PlaylistContents> {
   final TextEditingController _searchController = TextEditingController();
+  final Map<String, String> _lookedUpArtists = {};
+  final Set<String> _artistLookupsStarted = {};
   String _query = '';
 
   @override
@@ -425,6 +428,79 @@ class _PlaylistContentsState extends State<_PlaylistContents> {
     }
   }
 
+  Future<void> _downloadPlaylist(List<Song> songs) async {
+    final failures = await widget.player.downloadPlaylist(songs);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          failures == 0
+              ? 'Descarga de la playlist completada.'
+              : 'Playlist descargada con $failures ${failures == 1 ? 'error' : 'errores'}.',
+        ),
+      ),
+    );
+  }
+
+  void _scheduleArtistLookups(List<Song> songs) {
+    final pending = songs.where((song) {
+      final key = songKey(song);
+      return song.artist == 'Artista desconocido' &&
+          !_lookedUpArtists.containsKey(key) &&
+          _artistLookupsStarted.add(key);
+    }).toList();
+    if (pending.isEmpty) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      for (final song in pending) {
+        unawaited(_lookupArtist(song));
+      }
+    });
+  }
+
+  Future<void> _lookupArtist(Song song) async {
+    final key = songKey(song);
+    try {
+      final results = await YouTubeAudioService.instance.search(song.title);
+      final queryWords = _artistLookupWords(song.title);
+      YouTubeSearchResult? best;
+      var bestScore = 0.0;
+      for (final result in results) {
+        final resultWords = _artistLookupWords(result.title);
+        if (queryWords.isEmpty || resultWords.isEmpty) continue;
+        final overlap = queryWords.intersection(resultWords).length;
+        final score = overlap / queryWords.length;
+        if (score > bestScore) {
+          best = result;
+          bestScore = score;
+        }
+      }
+      if (best == null || bestScore < .65) return;
+
+      final metadata = await YouTubeAudioService.instance.getVideoMetadata(
+        best.videoId,
+      );
+      final artist = metadata['artist']?.trim().isNotEmpty == true
+          ? metadata['artist']!.trim()
+          : best.artist.trim();
+      if (artist.isEmpty ||
+          artist.toLowerCase() == 'youtube' ||
+          artist.toLowerCase() == '<unknown>') {
+        return;
+      }
+      if (mounted) setState(() => _lookedUpArtists[key] = artist);
+    } catch (error) {
+      debugPrint('[SoundNeed] No se pudo recuperar el artista de ${song.title}: $error');
+    }
+  }
+
+  Set<String> _artistLookupWords(String value) => value
+      .toLowerCase()
+      .replaceAll(RegExp(r'[_–—|•]'), ' ')
+      .replaceAll(RegExp(r'[^a-z0-9áéíóúüñ ]'), '')
+      .split(RegExp(r'\s+'))
+      .where((word) => word.length > 1)
+      .toSet();
+
   @override
   Widget build(BuildContext context) {
     final manager = PlaylistManager.instance;
@@ -437,6 +513,7 @@ class _PlaylistContentsState extends State<_PlaylistContents> {
         final songs = widget.showLikedSongs
             ? _likedSongs(manager)
             : (playlist?.songs ?? const <Song>[]);
+        _scheduleArtistLookups(songs);
         final title = widget.showLikedSongs
             ? 'Me gusta'
             : (playlist?.name ?? 'Playlist');
@@ -612,16 +689,57 @@ class _PlaylistContentsState extends State<_PlaylistContents> {
                   ),
                 ),
                 const SizedBox(width: 10),
-                IconButton.filledTonal(
-                  tooltip: 'Reproducir aleatorio',
-                  onPressed: songs.isEmpty
-                      ? null
-                      : () => widget.player.playPlaylist(songs, shuffle: true),
-                  style: IconButton.styleFrom(
-                    fixedSize: const Size(50, 50),
-                    foregroundColor: accent,
-                  ),
-                  icon: const Icon(Icons.shuffle_rounded),
+                Builder(
+                  builder: (context) {
+                    final downloadableCount = songs
+                        .where((song) =>
+                            song.isOnline ||
+                            song.isPodcast ||
+                            song.uri.startsWith('http://') ||
+                            song.uri.startsWith('https://'))
+                        .length;
+                    final isDownloading = widget.player.isDownloadingPlaylist;
+                    final progress = widget.player.playlistDownloadProgress;
+                    return IconButton.filledTonal(
+                      tooltip: isDownloading
+                          ? 'Descargando ${widget.player.playlistDownloadFinished >= widget.player.playlistDownloadTotal ? widget.player.playlistDownloadTotal : widget.player.playlistDownloadFinished + 1}/${widget.player.playlistDownloadTotal}'
+                          : 'Descargar playlist',
+                      onPressed: songs.isEmpty ||
+                              downloadableCount == 0 ||
+                              isDownloading ||
+                              widget.player.isDownloading
+                          ? null
+                          : () => _downloadPlaylist(songs),
+                      style: IconButton.styleFrom(
+                        fixedSize: const Size(50, 50),
+                        foregroundColor: accent,
+                      ),
+                      icon: SizedBox(
+                        width: 27,
+                        height: 27,
+                        child: Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            if (isDownloading)
+                              SizedBox.expand(
+                                child: CircularProgressIndicator(
+                                  value: progress,
+                                  strokeWidth: 2.5,
+                                  color: accent,
+                                  backgroundColor: accent.withValues(alpha: .18),
+                                ),
+                              ),
+                            Icon(
+                              isDownloading
+                                  ? Icons.downloading_rounded
+                                  : Icons.download_rounded,
+                              size: 20,
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
                 ),
                 const SizedBox(width: 10),
                 IconButton.filled(
@@ -718,14 +836,21 @@ class _PlaylistContentsState extends State<_PlaylistContents> {
                         overflow: TextOverflow.ellipsis,
                       ),
                       subtitle: Text(
-                        song.artist == '<unknown>' || song.artist.isEmpty
-                            ? 'Artista desconocido'
-                            : song.artist,
+                        _lookedUpArtists[songKey(song)] ??
+                            (song.artist == 'Artista desconocido' &&
+                                    _artistLookupsStarted.contains(songKey(song))
+                                ? 'Buscando artista…'
+                                : song.artist),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
-                      onTap: () =>
-                          widget.player.playPlaylist(songs, startIndex: index),
+                      onTap: () {
+                        if (current) {
+                          selectSongOrOpenPlayer(context, widget.player, song);
+                        } else {
+                          widget.player.playPlaylist(songs, startIndex: index);
+                        }
+                      },
                       trailing: IconButton(
                         tooltip: widget.showLikedSongs
                             ? 'Quitar de Me gusta'
@@ -1150,19 +1275,43 @@ class _SongArtwork extends StatefulWidget {
 
 class _SongArtworkState extends State<_SongArtwork> {
   late Future<Uint8List?> _artworkFuture;
+  late int _artworkRevision;
 
   @override
   void initState() {
     super.initState();
+    _artworkRevision = widget.player.artworkRevision;
+    widget.player.addListener(_onPlayerChanged);
     _artworkFuture = widget.player.loadArtwork(widget.song);
   }
 
   @override
   void didUpdateWidget(covariant _SongArtwork oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (songKey(oldWidget.song) != songKey(widget.song)) {
+    if (oldWidget.player != widget.player) {
+      oldWidget.player.removeListener(_onPlayerChanged);
+      widget.player.addListener(_onPlayerChanged);
+      _artworkRevision = widget.player.artworkRevision;
+    }
+    if (oldWidget.player != widget.player ||
+        songKey(oldWidget.song) != songKey(widget.song)) {
       _artworkFuture = widget.player.loadArtwork(widget.song);
     }
+  }
+
+  void _onPlayerChanged() {
+    if (_artworkRevision == widget.player.artworkRevision) return;
+    _artworkRevision = widget.player.artworkRevision;
+    if (!mounted) return;
+    setState(() {
+      _artworkFuture = widget.player.loadArtwork(widget.song);
+    });
+  }
+
+  @override
+  void dispose() {
+    widget.player.removeListener(_onPlayerChanged);
+    super.dispose();
   }
 
   @override

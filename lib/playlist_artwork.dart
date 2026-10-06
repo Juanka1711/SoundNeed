@@ -27,21 +27,42 @@ class PlaylistArtwork extends StatefulWidget {
 class _PlaylistArtworkState extends State<PlaylistArtwork> {
   late List<Song> _covers;
   late List<Future<Uint8List?>> _artwork;
+  late int _artworkRevision;
 
   @override
   void initState() {
     super.initState();
+    _artworkRevision = widget.player.artworkRevision;
+    widget.player.addListener(_onPlayerChanged);
     _loadArtwork();
   }
 
   @override
   void didUpdateWidget(covariant PlaylistArtwork oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.player != widget.player) {
+      oldWidget.player.removeListener(_onPlayerChanged);
+      widget.player.addListener(_onPlayerChanged);
+      _artworkRevision = widget.player.artworkRevision;
+    }
     final oldKeys = oldWidget.songs.take(4).map(songKey).join('|');
     final newKeys = widget.songs.take(4).map(songKey).join('|');
     if (oldWidget.player != widget.player || oldKeys != newKeys) {
       _loadArtwork();
     }
+  }
+
+  void _onPlayerChanged() {
+    if (_artworkRevision == widget.player.artworkRevision) return;
+    _artworkRevision = widget.player.artworkRevision;
+    if (!mounted) return;
+    setState(_loadArtwork);
+  }
+
+  @override
+  void dispose() {
+    widget.player.removeListener(_onPlayerChanged);
+    super.dispose();
   }
 
   void _loadArtwork() {

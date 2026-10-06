@@ -368,7 +368,7 @@ class YouTubeAudioService {
           'videoId': videoId,
         },
       ).timeout(
-        const Duration(seconds: 45),
+        const Duration(seconds: 20),
       );
 
       // --------------------------------------------------------
@@ -504,6 +504,21 @@ class YouTubeAudioService {
       debugPrint('$st');
 
       return null;
+    }
+  }
+
+  /// Obtiene los metadatos publicados por la página original del video.
+  Future<Map<String, String>> getVideoMetadata(String videoId) async {
+    try {
+      final metadata = await _youtubeChannel.invokeMapMethod<String, dynamic>(
+        'getVideoMetadata',
+        {'videoId': videoId},
+      ).timeout(const Duration(seconds: 20));
+      if (metadata == null) return const {};
+      return metadata.map((key, value) => MapEntry(key, value?.toString().trim() ?? ''));
+    } catch (error) {
+      debugPrint('[YouTubeAudioService] No se pudieron leer metadatos del video: $error');
+      return const {};
     }
   }
 

@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import 'music_player.dart';
+import 'player_navigation.dart';
 import 'mini_player.dart';
 import 'sections/home_section.dart';
 import 'sections/songs_section.dart';
@@ -55,6 +56,9 @@ class _MusicHomePageState extends State<MusicHomePage> {
   List<Song> _filteredSongs = [];
 
   bool _isSearching = false;
+  bool _appBarVisible = true;
+  double _scrollDeltaSinceDirectionChange = 0;
+  static const double _appBarScrollThreshold = 28;
   String _searchText = '';
 
   ArtworkPalette _appPalette = ArtworkPalette.neutral;
@@ -137,6 +141,9 @@ class _MusicHomePageState extends State<MusicHomePage> {
 
   Widget _buildAppBackdrop() {
     final palette = _appPalette;
+    final baseColor = palette.isArtworkDerived
+        ? Color.lerp(palette.dark, AppColors.background, 0.58)!
+        : palette.dark;
 
     return Positioned.fill(
       child: IgnorePointer(
@@ -146,7 +153,7 @@ class _MusicHomePageState extends State<MusicHomePage> {
             AnimatedContainer(
               duration: const Duration(milliseconds: 1100),
               curve: Curves.easeInOutCubic,
-              color: palette.dark,
+              color: baseColor,
             ),
             if (palette.isArtworkDerived)
               LayoutBuilder(
@@ -165,8 +172,8 @@ class _MusicHomePageState extends State<MusicHomePage> {
                           decoration: BoxDecoration(
                             gradient: RadialGradient(
                               colors: [
-                                palette.primary.withValues(alpha: 0.34),
-                                palette.primary.withValues(alpha: 0.13),
+                                palette.primary.withValues(alpha: 0.18),
+                                palette.primary.withValues(alpha: 0.07),
                                 palette.primary.withValues(alpha: 0),
                               ],
                               stops: const [0, 0.48, 1],
@@ -185,8 +192,8 @@ class _MusicHomePageState extends State<MusicHomePage> {
                           decoration: BoxDecoration(
                             gradient: RadialGradient(
                               colors: [
-                                palette.secondary.withValues(alpha: 0.19),
-                                palette.secondary.withValues(alpha: 0.07),
+                                palette.secondary.withValues(alpha: 0.08),
+                                palette.secondary.withValues(alpha: 0.03),
                                 palette.secondary.withValues(alpha: 0),
                               ],
                               stops: const [0, 0.52, 1],
@@ -326,6 +333,47 @@ class _MusicHomePageState extends State<MusicHomePage> {
     });
   }
 
+  bool _handleMainScroll(ScrollNotification notification) {
+    if (_isSearching || notification.metrics.axis != Axis.vertical) {
+      return false;
+    }
+
+    // Only follow the section's main vertical list; nested lists and tiny
+    // scroll reversals should not make the app bar flicker.
+    if (notification.depth != 0) return false;
+
+    if (notification is ScrollStartNotification) {
+      _scrollDeltaSinceDirectionChange = 0;
+    } else if (notification is ScrollUpdateNotification) {
+      final delta = notification.scrollDelta ?? 0;
+      if (delta == 0) return false;
+
+      final changedDirection =
+          _scrollDeltaSinceDirectionChange != 0 &&
+          delta.sign != _scrollDeltaSinceDirectionChange.sign;
+      if (changedDirection) _scrollDeltaSinceDirectionChange = 0;
+      _scrollDeltaSinceDirectionChange += delta;
+
+      if (_scrollDeltaSinceDirectionChange >= _appBarScrollThreshold &&
+          _appBarVisible) {
+        setState(() => _appBarVisible = false);
+        _scrollDeltaSinceDirectionChange = 0;
+      } else if (_scrollDeltaSinceDirectionChange <= -_appBarScrollThreshold &&
+          !_appBarVisible) {
+        setState(() => _appBarVisible = true);
+        _scrollDeltaSinceDirectionChange = 0;
+      }
+    } else if (notification is OverscrollNotification &&
+        notification.metrics.pixels <= notification.metrics.minScrollExtent &&
+        !_appBarVisible) {
+      setState(() => _appBarVisible = true);
+      _scrollDeltaSinceDirectionChange = 0;
+    } else if (notification is ScrollEndNotification) {
+      _scrollDeltaSinceDirectionChange = 0;
+    }
+    return false;
+  }
+
   // ==========================================================
   // SETTINGS
   // ==========================================================
@@ -376,84 +424,105 @@ class _MusicHomePageState extends State<MusicHomePage> {
         fit: StackFit.expand,
         children: [
           _buildAppBackdrop(),
-          Column(
-            children: [
-              AppBar(
-                title: _isSearching
-                    ? SoundNeedSearchField(
-                        controller: _searchController,
-                        autofocus: true,
-                        hintText: 'Canción, artista o álbum',
-                        height: 46,
-                      )
-                    : const Text(
-                        'SoundNeed',
-                        style: TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                actions: [
-                  // ==================================================
-                  // BUSCAR
-                  // ==================================================
+          SafeArea(
+            top: true,
+            bottom: false,
+            child: Column(
+              children: [
+                AnimatedSize(
+                  duration: const Duration(milliseconds: 220),
+                  curve: Curves.easeOutCubic,
+                  alignment: Alignment.topCenter,
+                  child: _appBarVisible
+                      ? AppBar(
+                          title: _isSearching
+                              ? SoundNeedSearchField(
+                                  controller: _searchController,
+                                  autofocus: true,
+                                  hintText: 'Canción, artista o álbum',
+                                  height: 46,
+                                )
+                              : const Text(
+                                  'SoundNeed',
+                                  style: TextStyle(fontWeight: FontWeight.bold),
+                                ),
+                          actions: [
+                            // ==================================================
+                            // BUSCAR
+                            // ==================================================
 
-                  IconButton(
-                    tooltip: 'Buscar',
-                    onPressed: _toggleSearch,
-                    icon: Icon(
-                      _isSearching ? Icons.close : Icons.search,
-                      color: Colors.white,
-                    ),
-                  ),
+                            IconButton(
+                              tooltip: 'Buscar',
+                              onPressed: _toggleSearch,
+                              icon: Icon(
+                                _isSearching ? Icons.close : Icons.search,
+                                color: Colors.white,
+                              ),
+                            ),
 
-                  // ==================================================
-                  // COLA
-                  // ==================================================
-                  IconButton(
-                    tooltip: 'Cola',
-                    onPressed: _showQueue,
-                    icon: const Icon(
-                      Icons.queue_music_outlined,
-                      color: Colors.white,
-                    ),
-                  ),
+                            // ==================================================
+                            // COLA
+                            // ==================================================
+                            IconButton(
+                              tooltip: 'Cola',
+                              onPressed: _showQueue,
+                              icon: const Icon(
+                                Icons.queue_music_outlined,
+                                color: Colors.white,
+                              ),
+                            ),
 
-                  // ==================================================
-                  // AJUSTES
-                  // ==================================================
-                  IconButton(
-                    tooltip: 'Ajustes',
-                    onPressed: _showSettings,
-                    icon: const Icon(
-                      Icons.settings_outlined,
-                      color: Colors.white,
-                    ),
-                  ),
-                ],
-              ),
-
-              // ======================================================
-              // BODY
-              // ======================================================
-              Expanded(
-                child: Column(
-                  children: [
-                    // Navegación fija y completa.
-                    _buildFloatingSections(),
-
-                    // Contenido
-                    Expanded(child: _buildCurrentSection()),
-
-                    // Keep the mini player above Android's gesture area so
-                    // it never appears to float over the system navigation.
-                    if (widget.player.currentSong != null)
-                      SafeArea(
-                        top: false,
-                        minimum: const EdgeInsets.only(bottom: 4),
-                        child: MiniPlayer(player: widget.player),
-                      ),
-                  ],
+                            // ==================================================
+                            // AJUSTES
+                            // ==================================================
+                            IconButton(
+                              tooltip: 'Ajustes',
+                              onPressed: _showSettings,
+                              icon: const Icon(
+                                Icons.settings_outlined,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ],
+                        )
+                      : const SizedBox.shrink(),
                 ),
-              ),
-            ],
+
+                // ======================================================
+                // BODY
+                // ======================================================
+                Expanded(
+                  child: Column(
+                    children: [
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 220),
+                        curve: Curves.easeOutCubic,
+                        height: _appBarVisible ? 0 : 2,
+                      ),
+                      // Navegación fija y completa.
+                      _buildFloatingSections(),
+
+                      // Contenido
+                      Expanded(
+                        child: NotificationListener<ScrollNotification>(
+                          onNotification: _handleMainScroll,
+                          child: _buildCurrentSection(),
+                        ),
+                      ),
+
+                      // Keep the mini player above Android's gesture area so
+                      // it never appears to float over the system navigation.
+                      if (widget.player.currentSong != null)
+                        SafeArea(
+                          top: false,
+                          minimum: const EdgeInsets.only(bottom: 4),
+                          child: MiniPlayer(player: widget.player),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -554,15 +623,13 @@ class _MusicHomePageState extends State<MusicHomePage> {
                 ? Colors.white
                 : Colors.white.withValues(alpha: 0.08),
           ),
-          boxShadow: selected
-              ? [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.28),
-                    blurRadius: 10,
-                    offset: const Offset(0, 4),
-                  ),
-                ]
-              : null,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: selected ? 0.28 : 0.18),
+              blurRadius: selected ? 10 : 8,
+              offset: Offset(0, selected ? 4 : 3),
+            ),
+          ],
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -614,7 +681,7 @@ class _MusicHomePageState extends State<MusicHomePage> {
         return PlaylistsSection(player: widget.player);
 
       case MusicSection.folders:
-        return const FoldersSection();
+        return FoldersSection(player: widget.player);
 
       case MusicSection.artists:
         return ArtistsSection(
@@ -648,7 +715,6 @@ class _MusicHomePageState extends State<MusicHomePage> {
               width: size,
               height: size,
               fit: BoxFit.cover,
-              gaplessPlayback: true,
             ),
           );
         }
@@ -672,6 +738,7 @@ class _MusicHomePageState extends State<MusicHomePage> {
   // ==========================================================
 
   void _showQueue() {
+    final pageContext = context;
     showModalBottomSheet(
       context: context,
       backgroundColor: AppColors.surface,
@@ -744,8 +811,9 @@ class _MusicHomePageState extends State<MusicHomePage> {
                                 Navigator.pop(context);
 
                                 widget.player.setQueueIndex(index);
-
-                                await widget.player.playSong(
+                                await selectSongOrOpenPlayer(
+                                  pageContext,
+                                  widget.player,
                                   song,
                                   createQueue: false,
                                 );

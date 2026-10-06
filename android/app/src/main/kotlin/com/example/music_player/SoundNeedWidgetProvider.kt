@@ -18,6 +18,7 @@ import android.graphics.RectF
 import android.graphics.Shader
 import android.net.Uri
 import android.view.KeyEvent
+import android.view.View
 import android.widget.RemoteViews
 import com.ryanheise.audioservice.MediaButtonReceiver
 import java.io.File
@@ -76,6 +77,9 @@ class SoundNeedWidgetProvider : AppWidgetProvider() {
             val previousArtUri =
                 preferences.getString(KEY_ART_URI, "")
 
+            val artworkCacheMissing =
+                cachedArtworkFile(context, artUri)?.exists() != true
+
             preferences.edit()
                 .putString(KEY_TITLE, title)
                 .putString(KEY_ARTIST, artist)
@@ -99,7 +103,7 @@ class SoundNeedWidgetProvider : AppWidgetProvider() {
                     context,
                     manager,
                     widgetId,
-                    refreshArtwork = previousArtUri != artUri
+                    refreshArtwork = previousArtUri != artUri || artworkCacheMissing
                 )
             }
         }
@@ -238,6 +242,8 @@ class SoundNeedWidgetProvider : AppWidgetProvider() {
 
             if (!hasSong) {
 
+                views.setViewVisibility(R.id.widget_root, View.GONE)
+
                 views.setTextViewText(
                     R.id.widget_title,
                     ""
@@ -290,6 +296,8 @@ class SoundNeedWidgetProvider : AppWidgetProvider() {
             // ========================================================
             // CON CANCIÓN
             // ========================================================
+
+            views.setViewVisibility(R.id.widget_root, View.VISIBLE)
 
             views.setTextViewText(
                 R.id.widget_title,
@@ -423,7 +431,7 @@ class SoundNeedWidgetProvider : AppWidgetProvider() {
                 R.id.widget_play_pause,
                 mediaButtonPendingIntent(
                     context,
-                    KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+                    if (playing) KeyEvent.KEYCODE_MEDIA_PAUSE else KeyEvent.KEYCODE_MEDIA_PLAY,
                     101
                 )
             )
@@ -563,6 +571,15 @@ class SoundNeedWidgetProvider : AppWidgetProvider() {
                         }
                             ?: return@execute
 
+                    val artworkBitmap = if (
+                        uri.host?.contains("ytimg.com", ignoreCase = true) == true &&
+                        bitmap.height > bitmap.width / 2
+                    ) {
+                        cropLetterbox(bitmap)
+                    } else {
+                        bitmap
+                    }
+
                     val file =
                         cachedArtworkFile(
                             context,
@@ -572,7 +589,7 @@ class SoundNeedWidgetProvider : AppWidgetProvider() {
 
                     file.outputStream().use {
 
-                        bitmap.compress(
+                        artworkBitmap.compress(
                             Bitmap.CompressFormat.PNG,
                             100,
                             it
@@ -712,7 +729,43 @@ class SoundNeedWidgetProvider : AppWidgetProvider() {
 
             return File(
                 context.cacheDir,
-                "soundneed_widget_${artUri.hashCode()}.png"
+                "soundneed_widget_v2_${artUri.hashCode()}.png"
+            )
+        }
+
+        private fun cropLetterbox(bitmap: Bitmap): Bitmap {
+            val maxCrop = (bitmap.height * 0.30f).toInt()
+            val sampleCount = 32
+
+            fun isDarkRow(y: Int): Boolean {
+                var darkPixels = 0
+                for (sample in 0 until sampleCount) {
+                    val x = sample * (bitmap.width - 1) / (sampleCount - 1)
+                    val color = bitmap.getPixel(x, y)
+                    if (
+                        Color.red(color) <= 20 &&
+                        Color.green(color) <= 20 &&
+                        Color.blue(color) <= 20
+                    ) {
+                        darkPixels++
+                    }
+                }
+                return darkPixels >= sampleCount * 0.94f
+            }
+
+            var top = 0
+            while (top < maxCrop && isDarkRow(top)) top++
+
+            var bottom = 0
+            while (bottom < maxCrop && isDarkRow(bitmap.height - bottom - 1)) bottom++
+
+            if (top + bottom < bitmap.height * 0.04f) return bitmap
+            return Bitmap.createBitmap(
+                bitmap,
+                0,
+                top,
+                bitmap.width,
+                bitmap.height - top - bottom
             )
         }
 

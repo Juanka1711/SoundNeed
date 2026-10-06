@@ -2,14 +2,31 @@ package com.example.music_player
 
 import android.Manifest
 import android.content.ContentUris
+import android.content.ContentValues
+import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
+import android.media.MediaScannerConnection
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.Uri
+import android.net.NetworkRequest
 import android.os.Build
+import android.os.Environment
+import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.util.Log
 import java.io.ByteArrayOutputStream
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -18,6 +35,7 @@ import com.ryanheise.audioservice.AudioServiceActivity
 
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import io.flutter.plugin.common.EventChannel
 
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.stream.AudioStream
@@ -25,13 +43,39 @@ import org.schabi.newpipe.extractor.stream.AudioStream
 class MainActivity : AudioServiceActivity() {
 
     private var newPipeInitialized = false
+    private var networkEventSink: EventChannel.EventSink? = null
+    private var downloadProgressSink: EventChannel.EventSink? = null
+    private var connectivityManager: ConnectivityManager? = null
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            publishNetworkState()
+        }
+
+        override fun onLost(network: Network) {
+            publishNetworkState()
+        }
+
+        override fun onCapabilitiesChanged(
+            network: Network,
+            networkCapabilities: NetworkCapabilities
+        ) {
+            publishNetworkState()
+        }
+    }
+    private var pendingFolderPickerResult: MethodChannel.Result? = null
 
     companion object {
         private const val CHANNEL = "music_player/media"
         private const val YOUTUBE_CHANNEL = "youtube/extractor"
         private const val WIDGET_CHANNEL = "soundneed/widget"
         private const val NOTIFICATION_PERMISSION_REQUEST_CODE = 200
+        private const val PICK_MUSIC_FOLDER_REQUEST_CODE = 201
+        private const val MUSIC_FOLDERS_PREFS = "soundneed_music_folders"
+        private const val MUSIC_FOLDERS_KEY = "paths"
+        private const val DOWNLOAD_ARTWORKS_KEY = "artwork_files"
         private val extractorExecutor =
+            Executors.newSingleThreadExecutor()
+        private val downloadExecutor =
             Executors.newSingleThreadExecutor()
     }
 
@@ -79,6 +123,77 @@ class MainActivity : AudioServiceActivity() {
                     result.success(getSongs())
                 }
 
+                "getMusicFolders" -> {
+                    result.success(getSelectedMusicFolders())
+                }
+
+                "pickMusicFolder" -> {
+                    if (pendingFolderPickerResult != null) {
+                        result.error("PICKER_BUSY", "Ya hay un selector abierto", null)
+                        return@setMethodCallHandler
+                    }
+                    pendingFolderPickerResult = result
+                    val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+                    }
+                    startActivityForResult(intent, PICK_MUSIC_FOLDER_REQUEST_CODE)
+                }
+
+                "removeMusicFolder" -> {
+                    val path = call.argument<String>("path").orEmpty()
+                    val preferences = getSharedPreferences(MUSIC_FOLDERS_PREFS, Context.MODE_PRIVATE)
+                    val paths = preferences.getStringSet(MUSIC_FOLDERS_KEY, emptySet())
+                        ?.toMutableSet() ?: mutableSetOf()
+                    paths.remove(path)
+                    preferences.edit().putStringSet(MUSIC_FOLDERS_KEY, paths).apply()
+                    result.success(true)
+                }
+
+                "downloadAudio" -> {
+                    val audioUrl = call.argument<String>("url").orEmpty()
+                    val title = call.argument<String>("title").orEmpty()
+                    val artist = call.argument<String>("artist").orEmpty()
+                    val duration = call.argument<Number>("duration")?.toLong() ?: 0L
+                    val artwork = call.argument<ByteArray>("artwork")
+                    if (audioUrl.isBlank() || title.isBlank()) {
+                        result.error("INVALID_DOWNLOAD", "Faltan datos de la canción.", null)
+                        return@setMethodCallHandler
+                    }
+
+                    downloadExecutor.execute {
+                        try {
+                            val savedAudio = downloadAudioFile(
+                                audioUrl,
+                                title,
+                                artist,
+                                duration,
+                                artwork = artwork,
+                                onProgress = { received, total ->
+                                    val progress = if (total > 0L) {
+                                        received.toDouble() / total.toDouble()
+                                    } else null
+                                    runOnUiThread {
+                                        downloadProgressSink?.success(
+                                            mapOf("progress" to progress)
+                                        )
+                                    }
+                                }
+                            )
+                            runOnUiThread { result.success(savedAudio) }
+                        } catch (error: Exception) {
+                            Log.e("SoundNeedDownload", "Error descargando audio", error)
+                            runOnUiThread {
+                                result.error(
+                                    "DOWNLOAD_FAILED",
+                                    error.message ?: "No se pudo descargar el audio.",
+                                    null
+                                )
+                            }
+                        }
+                    }
+                }
+
                 // ============================================================
                 // OBTENER PORTADA
                 // ============================================================
@@ -90,6 +205,30 @@ class MainActivity : AudioServiceActivity() {
                         result.success(null)
                     } else {
                         result.success(getArtwork(albumId))
+                    }
+                }
+
+                "cacheOnlineArtwork" -> {
+                    val key = call.argument<String>("key").orEmpty()
+                    val bytes = call.argument<ByteArray>("bytes")
+                    if (key.isBlank() || bytes == null || bytes.isEmpty()) {
+                        result.success(null)
+                    } else {
+                        try {
+                            val artworkFile = File(
+                                cacheDir,
+                                "soundneed_media_art_${key.hashCode()}.png"
+                            )
+                            artworkFile.outputStream().use { it.write(bytes) }
+                            result.success(Uri.fromFile(artworkFile).toString())
+                        } catch (error: Exception) {
+                            result.error(
+                                "ARTWORK_CACHE_FAILED",
+                                error.message,
+                                null
+                            )
+                        }
+
                     }
                 }
 
@@ -126,6 +265,51 @@ class MainActivity : AudioServiceActivity() {
             }
         }
 
+        EventChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "soundneed/network"
+        ).setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                networkEventSink = events
+                connectivityManager =
+                    getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+                try {
+                    connectivityManager?.registerNetworkCallback(
+                        NetworkRequest.Builder()
+                            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                            .build(),
+                        networkCallback
+                    )
+                } catch (_: Exception) {
+                    // Conservamos la reproducción aunque Android rechace el callback.
+                }
+                publishNetworkState()
+            }
+
+            override fun onCancel(arguments: Any?) {
+                try {
+                    connectivityManager?.unregisterNetworkCallback(networkCallback)
+                } catch (_: Exception) {
+                    // Puede que el callback ya estuviera cancelado.
+                }
+                networkEventSink = null
+                connectivityManager = null
+            }
+        })
+
+        EventChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "soundneed/download_progress"
+        ).setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                downloadProgressSink = events
+            }
+
+            override fun onCancel(arguments: Any?) {
+                downloadProgressSink = null
+            }
+        })
+
         // ============================================================
         // CANAL YOUTUBE EXTRACTOR
         // ============================================================
@@ -136,6 +320,31 @@ class MainActivity : AudioServiceActivity() {
         ).setMethodCallHandler { call, result ->
 
             when (call.method) {
+
+                "getVideoMetadata" -> {
+                    val videoId = call.argument<String>("videoId").orEmpty()
+                    if (videoId.isBlank()) {
+                        result.success(null)
+                        return@setMethodCallHandler
+                    }
+                    extractorExecutor.execute {
+                        try {
+                            initializeNewPipe()
+                            val extractor = NewPipe.getService("YouTube")
+                                .getStreamExtractor("https://www.youtube.com/watch?v=$videoId")
+                            extractor.fetchPage()
+                            val metadata = mapOf(
+                                "title" to extractor.name,
+                                "artist" to extractor.uploaderName,
+                                "thumbnail" to extractor.thumbnails.firstOrNull()?.url.orEmpty()
+                            )
+                            runOnUiThread { result.success(metadata) }
+                        } catch (error: Exception) {
+                            Log.w("SoundNeedYouTube", "No se pudieron obtener metadatos", error)
+                            runOnUiThread { result.success(null) }
+                        }
+                    }
+                }
 
                 "getAudioUrl" -> {
 
@@ -197,6 +406,62 @@ class MainActivity : AudioServiceActivity() {
         }
     }
 
+    @Deprecated("Deprecated in Android")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != PICK_MUSIC_FOLDER_REQUEST_CODE) return
+
+        val pendingResult = pendingFolderPickerResult ?: return
+        pendingFolderPickerResult = null
+        val uri = data?.data
+        if (resultCode != RESULT_OK || uri == null) {
+            pendingResult.success(null)
+            return
+        }
+
+        try {
+            val readPermission = data.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION
+            if (readPermission != 0) {
+                contentResolver.takePersistableUriPermission(uri, readPermission)
+            }
+            val path = folderPathFromTreeUri(uri)
+            if (path == null) {
+                pendingResult.error(
+                    "UNSUPPORTED_FOLDER",
+                    "Selecciona una carpeta del almacenamiento del dispositivo.",
+                    null
+                )
+                return
+            }
+
+            val preferences = getSharedPreferences(MUSIC_FOLDERS_PREFS, Context.MODE_PRIVATE)
+            val paths = preferences.getStringSet(MUSIC_FOLDERS_KEY, emptySet())
+                ?.toMutableSet() ?: mutableSetOf()
+            paths.add(path)
+            preferences.edit().putStringSet(MUSIC_FOLDERS_KEY, paths).apply()
+            pendingResult.success(
+                mapOf("path" to path, "name" to (File(path).name.ifBlank { path }))
+            )
+        } catch (error: Exception) {
+            pendingResult.error("FOLDER_PICK_FAILED", error.message, null)
+        }
+    }
+
+    private fun publishNetworkState() {
+        val manager =
+            getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val connected = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val network = manager.activeNetwork
+            val capabilities = manager.getNetworkCapabilities(network)
+            capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true &&
+                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        } else {
+            @Suppress("DEPRECATION")
+            manager.activeNetworkInfo?.isConnected == true
+        }
+        runOnUiThread { networkEventSink?.success(connected) }
+    }
+
     // ============================================================
     // INICIALIZAR NEWPIPE (UNA SOLA VEZ)
     // ============================================================
@@ -234,11 +499,16 @@ class MainActivity : AudioServiceActivity() {
             ) == PackageManager.PERMISSION_GRANTED
 
         } else {
-
-            ContextCompat.checkSelfPermission(
+            val readGranted = ContextCompat.checkSelfPermission(
                 this,
                 Manifest.permission.READ_EXTERNAL_STORAGE
             ) == PackageManager.PERMISSION_GRANTED
+            val writeGranted = Build.VERSION.SDK_INT > Build.VERSION_CODES.P ||
+                ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE
+                ) == PackageManager.PERMISSION_GRANTED
+            readGranted && writeGranted
         }
     }
 
@@ -263,21 +533,24 @@ class MainActivity : AudioServiceActivity() {
             }
 
         } else {
-
-            if (
-                ContextCompat.checkSelfPermission(
+            val permissions = mutableListOf<String>()
+            if (ContextCompat.checkSelfPermission(
                     this,
                     Manifest.permission.READ_EXTERNAL_STORAGE
                 ) != PackageManager.PERMISSION_GRANTED
             ) {
-
-                ActivityCompat.requestPermissions(
+                permissions.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+            }
+            if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
+                ContextCompat.checkSelfPermission(
                     this,
-                    arrayOf(
-                        Manifest.permission.READ_EXTERNAL_STORAGE
-                    ),
-                    100
-                )
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                permissions.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            }
+            if (permissions.isNotEmpty()) {
+                ActivityCompat.requestPermissions(this, permissions.toTypedArray(), 100)
             }
         }
     }
@@ -311,6 +584,434 @@ class MainActivity : AudioServiceActivity() {
     // ============================================================
     // OBTENER CANCIONES DESDE MEDIASTORE
     // ============================================================
+
+    private fun folderPathFromTreeUri(uri: Uri): String? {
+        if (uri.authority != "com.android.externalstorage.documents") return null
+        val documentId = DocumentsContract.getTreeDocumentId(uri)
+        val separator = documentId.indexOf(':')
+        if (separator <= 0) return null
+
+        val volume = documentId.substring(0, separator)
+        val relativePath = documentId.substring(separator + 1).trim('/')
+        val root = if (volume.equals("primary", ignoreCase = true)) {
+            Environment.getExternalStorageDirectory()
+        } else {
+            File("/storage", volume)
+        }
+        return if (relativePath.isEmpty()) root.absolutePath
+        else File(root, relativePath).absolutePath
+    }
+
+    private fun getSelectedMusicFolders(): List<Map<String, String>> {
+        val paths = getSharedPreferences(MUSIC_FOLDERS_PREFS, Context.MODE_PRIVATE)
+            .getStringSet(MUSIC_FOLDERS_KEY, emptySet()) ?: emptySet()
+        return paths.sorted().map { path ->
+            mapOf("path" to path, "name" to (File(path).name.ifBlank { path }))
+        }
+    }
+
+    private fun registerSoundNeedFolder() {
+        val musicDirectory =
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC)
+        val folderPath = File(musicDirectory, "SoundNeed").absolutePath
+        val preferences = getSharedPreferences(MUSIC_FOLDERS_PREFS, Context.MODE_PRIVATE)
+        val paths = preferences.getStringSet(MUSIC_FOLDERS_KEY, emptySet())
+            ?.toMutableSet() ?: mutableSetOf()
+        paths.add(folderPath)
+        preferences.edit().putStringSet(MUSIC_FOLDERS_KEY, paths).apply()
+    }
+
+    private fun saveDownloadedArtwork(audioKey: String, bytes: ByteArray?): String? {
+        if (bytes == null || bytes.isEmpty()) return null
+        return try {
+            val artworkFile = File(filesDir, "soundneed_download_art_${audioKey.hashCode()}.jpg")
+            artworkFile.outputStream().use { it.write(bytes) }
+            val artworkUri = Uri.fromFile(artworkFile).toString()
+            val preferences = getSharedPreferences(MUSIC_FOLDERS_PREFS, Context.MODE_PRIVATE)
+            val mappings = preferences.getStringSet(DOWNLOAD_ARTWORKS_KEY, emptySet())
+                ?.filterNot { it.startsWith("$audioKey|") }
+                ?.toMutableSet() ?: mutableSetOf()
+            mappings.add("$audioKey|$artworkUri")
+            preferences.edit().putStringSet(DOWNLOAD_ARTWORKS_KEY, mappings).apply()
+            artworkUri
+        } catch (error: Exception) {
+            Log.w("SoundNeedDownload", "No se pudo guardar la portada", error)
+            null
+        }
+    }
+
+    private fun downloadedArtworkFor(vararg keys: String): String? {
+        val mappings = getSharedPreferences(MUSIC_FOLDERS_PREFS, Context.MODE_PRIVATE)
+            .getStringSet(DOWNLOAD_ARTWORKS_KEY, emptySet()) ?: return null
+        for (key in keys) {
+            val mapping = mappings.firstOrNull { it.startsWith("$key|") } ?: continue
+            return mapping.substringAfter('|')
+        }
+        return null
+    }
+
+    private fun safeDownloadName(value: String): String {
+        val sanitized = value
+            .replace(Regex("[^\\p{L}\\p{N}._ -]"), "_")
+            .trim()
+            .trim('.')
+        return sanitized.take(100).ifBlank { "SoundNeed audio" }
+    }
+
+    private fun downloadAudioFile(
+        audioUrl: String,
+        title: String,
+        artist: String,
+        duration: Long,
+        artwork: ByteArray?,
+        onProgress: (Long, Long) -> Unit
+    ): Map<String, String> {
+        val startTime = System.currentTimeMillis()
+        Log.d("SoundNeedDownload", "INICIANDO descarga -> $audioUrl")
+
+        val connection = (URL(audioUrl).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 15_000
+            readTimeout = 30_000
+            instanceFollowRedirects = true
+            setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android) SoundNeed/1.0")
+            setRequestProperty("Accept", "audio/*,application/octet-stream,*/*")
+        }
+
+        try {
+            val responseCode = connection.responseCode
+            val httpTime = System.currentTimeMillis() - startTime
+            Log.d("SoundNeedDownload", "Respuesta HTTP=$responseCode en ${httpTime}ms")
+
+            if (responseCode !in 200..299) {
+                throw IllegalStateException("HTTP $responseCode: El servidor respondió con error.")
+            }
+            val contentLength = connection.contentLengthLong
+            Log.d("SoundNeedDownload", "Tamaño=$contentLength bytes")
+
+            val acceptRanges = connection.getHeaderField("Accept-Ranges")
+            val supportsRange = acceptRanges == "bytes"
+            Log.d("SoundNeedDownload", "Accept-Ranges: $acceptRanges (soporta Range: $supportsRange)")
+
+            val mimeType = connection.contentType
+                ?.substringBefore(';')
+                ?.trim()
+                ?.takeIf { it.startsWith("audio/") || it == "video/mp4" }
+                ?: "audio/mp4"
+            val urlExtension = URL(audioUrl).path.substringAfterLast('.', "")
+                .lowercase()
+                .takeIf { it.matches(Regex("[a-z0-9]{2,5}")) }
+            val extension = when (mimeType.lowercase()) {
+                "audio/mpeg" -> "mp3"
+                "audio/webm" -> "webm"
+                "audio/ogg" -> "ogg"
+                "audio/aac" -> "aac"
+                "audio/mp4", "video/mp4" -> "m4a"
+                else -> urlExtension ?: "m4a"
+            }
+            val displayName = "${safeDownloadName(title)}.$extension"
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val values = ContentValues().apply {
+                    put(MediaStore.Audio.Media.DISPLAY_NAME, displayName)
+                    put(MediaStore.Audio.Media.TITLE, title)
+                    put(MediaStore.Audio.Media.ARTIST, artist.ifBlank { "Artista desconocido" })
+                    put(MediaStore.Audio.Media.MIME_TYPE, mimeType)
+                    put(MediaStore.Audio.Media.RELATIVE_PATH, "Music/SoundNeed")
+                    put(MediaStore.Audio.Media.IS_MUSIC, 1)
+                    if (duration > 0) put(MediaStore.Audio.Media.DURATION, duration)
+                    put(MediaStore.Audio.Media.IS_PENDING, 1)
+                }
+                val collection = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+                val savedUri = contentResolver.insert(collection, values)
+                    ?: throw IllegalStateException("No se pudo crear el archivo de audio.")
+                try {
+                    val output = contentResolver.openOutputStream(savedUri, "w")
+                        ?: throw IllegalStateException("No se pudo escribir el archivo.")
+
+                    // Intentar descarga paralela primero si el servidor soporta Range y el archivo es grande
+                    var downloadSuccess = false
+                    if (supportsRange && contentLength > 2 * 1024 * 1024) {
+                        try {
+                            Log.d("SoundNeedDownload", "Intentando descarga paralela (4 conexiones)")
+                            downloadParallel(audioUrl, output, contentLength, startTime, onProgress)
+                            downloadSuccess = true
+                        } catch (parallelError: Exception) {
+                            Log.w("SoundNeedDownload", "Descarga paralela falló: ${parallelError.message}")
+                            Log.d("SoundNeedDownload", "Fallback a descarga normal (1 conexión)")
+                            // Fallback a descarga normal
+                            val bufferedInput = java.io.BufferedInputStream(
+                                connection.inputStream,
+                                1024 * 1024
+                            )
+                            val bufferedOutput = java.io.BufferedOutputStream(
+                                output,
+                                1024 * 1024
+                            )
+
+                            bufferedInput.use { input ->
+                                bufferedOutput.use { out ->
+                                    copyDownload(input, out, contentLength, startTime, onProgress)
+                                }
+                            }
+                            downloadSuccess = true
+                        }
+                    } else {
+                        // Usar streams bufferizados para mejor rendimiento
+                        val bufferedInput = java.io.BufferedInputStream(
+                            connection.inputStream,
+                            1024 * 1024 // 1MB buffer
+                        )
+                        val bufferedOutput = java.io.BufferedOutputStream(
+                            output,
+                            1024 * 1024 // 1MB buffer
+                        )
+
+                        bufferedInput.use { input ->
+                            bufferedOutput.use { out ->
+                                copyDownload(input, out, contentLength, startTime, onProgress)
+                            }
+                        }
+                        downloadSuccess = true
+                    }
+
+                    if (!downloadSuccess) {
+                        throw IllegalStateException("La descarga falló en todos los intentos.")
+                    }
+
+                    contentResolver.update(
+                        savedUri,
+                        ContentValues().apply {
+                            put(MediaStore.Audio.Media.IS_PENDING, 0)
+                        },
+                        null,
+                        null
+                    )
+                } catch (error: Exception) {
+                    contentResolver.delete(savedUri, null, null)
+                    throw error
+                }
+                registerSoundNeedFolder()
+                val artworkUri = saveDownloadedArtwork(savedUri.toString(), artwork)
+                return mapOf(
+                    "uri" to savedUri.toString(),
+                    "folderPath" to File(
+                        Environment.getExternalStoragePublicDirectory(
+                            Environment.DIRECTORY_MUSIC
+                        ),
+                        "SoundNeed"
+                    ).absolutePath,
+                    "name" to displayName,
+                    "artworkUri" to artworkUri.orEmpty()
+                )
+            }
+
+            if (ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                throw IllegalStateException(
+                    "Falta permiso de almacenamiento para guardar canciones en este Android."
+                )
+            }
+
+            val folder = File(
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC),
+                "SoundNeed"
+            )
+            if (!folder.exists() && !folder.mkdirs()) {
+                throw IllegalStateException("No se pudo crear Música/SoundNeed.")
+            }
+            val file = File(folder, displayName)
+
+            // Usar streams bufferizados
+            val bufferedInput = java.io.BufferedInputStream(
+                connection.inputStream,
+                1024 * 1024
+            )
+            val bufferedOutput = java.io.BufferedOutputStream(
+                file.outputStream(),
+                1024 * 1024
+            )
+
+            bufferedInput.use { input ->
+                bufferedOutput.use { output ->
+                    copyDownload(input, output, contentLength, startTime, onProgress)
+                }
+            }
+            registerSoundNeedFolder()
+
+            val scanCompleted = CountDownLatch(1)
+            MediaScannerConnection.scanFile(
+                this,
+                arrayOf(file.absolutePath),
+                arrayOf(mimeType)
+            ) { _, _ -> scanCompleted.countDown() }
+            scanCompleted.await(10, TimeUnit.SECONDS)
+            val scannedUri = contentResolver.query(
+                MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                arrayOf(MediaStore.Audio.Media._ID),
+                "${MediaStore.Audio.Media.DATA} = ?",
+                arrayOf(file.absolutePath),
+                null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    ContentUris.withAppendedId(
+                        MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                        cursor.getLong(0)
+                    ).toString()
+                } else null
+            }
+            val artworkUri = saveDownloadedArtwork(
+                scannedUri ?: file.absolutePath,
+                artwork
+            )
+
+            return mapOf(
+                "uri" to Uri.fromFile(file).toString(),
+                "folderPath" to folder.absolutePath,
+                "name" to displayName,
+                "artworkUri" to artworkUri.orEmpty()
+            )
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun copyDownload(
+        input: java.io.InputStream,
+        output: java.io.OutputStream,
+        totalBytes: Long,
+        startTime: Long,
+        onProgress: (Long, Long) -> Unit
+    ) {
+        val buffer = ByteArray(1024 * 1024) // 1MB buffer
+        var copied = 0L
+        var lastUpdate = System.currentTimeMillis()
+        var lastLogUpdate = startTime
+
+        while (true) {
+            val count = input.read(buffer)
+            if (count < 0) break
+            output.write(buffer, 0, count)
+            copied += count
+            val now = System.currentTimeMillis()
+
+            // Actualizar progreso cada 100ms
+            if (now - lastUpdate >= 100L) {
+                onProgress(copied, totalBytes)
+                lastUpdate = now
+            }
+
+            // Loggear velocidad cada 1 segundo
+            if (now - lastLogUpdate >= 1000L) {
+                val elapsed = (now - startTime).coerceAtLeast(1L)
+                val bytesPerSecond = copied * 1000L / elapsed
+                Log.d(
+                    "SoundNeedDownload",
+                    "Descargando: $copied/$totalBytes bytes - ${bytesPerSecond / 1024} KB/s"
+                )
+                lastLogUpdate = now
+            }
+        }
+        output.flush()
+        onProgress(copied, totalBytes)
+
+        val totalTime = System.currentTimeMillis() - startTime
+        val avgSpeed = copied * 1000L / totalTime.coerceAtLeast(1L)
+        Log.d(
+            "SoundNeedDownload",
+            "Descarga completada: $copied bytes en ${totalTime}ms - Promedio: ${avgSpeed / 1024} KB/s"
+        )
+    }
+
+    private fun downloadParallel(
+        audioUrl: String,
+        output: java.io.OutputStream,
+        totalBytes: Long,
+        startTime: Long,
+        onProgress: (Long, Long) -> Unit
+    ) {
+        val numConnections = 4
+        val chunkSize = totalBytes / numConnections
+        val chunks = Array(numConnections) { ByteArray(0) }
+        val completed = AtomicInteger(0)
+        val totalCopied = AtomicLong(0)
+        val executor = Executors.newFixedThreadPool(numConnections)
+
+        try {
+            val futures = (0 until numConnections).map { index ->
+                executor.submit {
+                    val startByte = index * chunkSize
+                    val endByte = if (index == numConnections - 1) totalBytes - 1 else (startByte + chunkSize - 1)
+
+                    Log.d("SoundNeedDownload", "Conexión ${index + 1}: bytes $startByte-$endByte")
+
+                    val conn = URL(audioUrl).openConnection() as HttpURLConnection
+                    conn.setRequestProperty("Range", "bytes=$startByte-$endByte")
+                    conn.connectTimeout = 15_000
+                    conn.readTimeout = 30_000
+                    conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android) SoundNeed/1.0")
+
+                    val responseCode = conn.responseCode
+                    if (responseCode !in 200..299 && responseCode != 206) {
+                        throw IllegalStateException("Conexión ${index + 1} falló: HTTP $responseCode")
+                    }
+
+                    val buffer = ByteArray(256 * 1024) // 256KB buffer por conexión
+                    val baos = java.io.ByteArrayOutputStream()
+                    var copied = 0L
+
+                    conn.inputStream.use { input ->
+                        while (true) {
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            baos.write(buffer, 0, count)
+                            copied += count
+
+                            val newTotal = totalCopied.addAndGet(count.toLong())
+                            onProgress(newTotal, totalBytes)
+                        }
+                    }
+
+                    chunks[index] = baos.toByteArray()
+                    completed.incrementAndGet()
+                    Log.d("SoundNeedDownload", "Conexión ${index + 1} completada: ${copied} bytes")
+                }
+            }
+
+            // Esperar a que todas las conexiones terminen
+            futures.forEach { it.get() }
+
+            // Escribir en orden
+            var lastUpdate = System.currentTimeMillis()
+            var written = 0L
+            chunks.forEach { chunk ->
+                output.write(chunk)
+                written += chunk.size
+                val now = System.currentTimeMillis()
+                if (now - lastUpdate >= 1000L) {
+                    val elapsed = (now - startTime).coerceAtLeast(1L)
+                    val bytesPerSecond = written * 1000L / elapsed
+                    Log.d(
+                        "SoundNeedDownload",
+                        "Escribiendo: $written/$totalBytes bytes - ${bytesPerSecond / 1024} KB/s"
+                    )
+                    lastUpdate = now
+                }
+            }
+            output.flush()
+
+            val totalTime = System.currentTimeMillis() - startTime
+            val avgSpeed = totalBytes * 1000L / totalTime.coerceAtLeast(1L)
+            Log.d(
+                "SoundNeedDownload",
+                "Descarga paralela completada: $totalBytes bytes en ${totalTime}ms - Promedio: ${avgSpeed / 1024} KB/s"
+            )
+        } finally {
+            executor.shutdown()
+        }
+    }
 
     private fun getSongs(): List<Map<String, Any?>> {
 
@@ -359,6 +1060,7 @@ class MainActivity : AudioServiceActivity() {
             "Ringtones",
             "Alarms"
         )
+        val selectedFolders = getSelectedMusicFolders().map { it.getValue("path") }
 
         contentResolver.query(
             collection,
@@ -480,7 +1182,12 @@ class MainActivity : AudioServiceActivity() {
                     dataPath.contains(folder, ignoreCase = true)
                 }
 
-                if (isInExcludedFolder) {
+                val isInSelectedFolder = selectedFolders.any { folder ->
+                    dataPath.equals(folder, ignoreCase = true) ||
+                        dataPath.startsWith(folder.trimEnd('/') + "/", ignoreCase = true)
+                }
+
+                if (isInExcludedFolder && !isInSelectedFolder) {
                     continue
                 }
 
@@ -491,7 +1198,8 @@ class MainActivity : AudioServiceActivity() {
                     )
 
                 val artworkUri =
-                    if (albumId != null && albumId > 0) {
+                    downloadedArtworkFor(contentUri.toString(), dataPath)
+                        ?: if (albumId != null && albumId > 0) {
                         "content://media/external/audio/albumart/$albumId"
                     } else {
                         ""
@@ -509,8 +1217,9 @@ class MainActivity : AudioServiceActivity() {
                         "mimeType" to mimeType,
                         "size" to size,
                         "uri" to contentUri.toString(),
+                        "folderPath" to dataPath.substringBeforeLast('/', ""),
                         "artworkUri" to artworkUri,
-                        "isMusic" to isMusic
+                        "isMusic" to (isMusic || isInSelectedFolder)
                     )
                 )
             }

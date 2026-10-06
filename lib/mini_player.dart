@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+
 import 'music_player.dart';
 import 'full_player.dart';
 
@@ -22,10 +23,12 @@ class AppColors {
 
 class MiniPlayer extends StatefulWidget {
   final MusicPlayerController player;
+  final bool openFullPlayerOnTap;
 
   const MiniPlayer({
     super.key,
     required this.player,
+    this.openFullPlayerOnTap = true,
   });
 
   @override
@@ -58,9 +61,7 @@ class _MiniPlayerState extends State<MiniPlayer> {
 
     widget.player.addListener(_onPlayerChanged);
 
-    _updateThemeFromArtwork(
-      force: true,
-    );
+    _updateThemeFromArtwork(force: true);
   }
 
   @override
@@ -79,9 +80,7 @@ class _MiniPlayerState extends State<MiniPlayer> {
     final song = widget.player.currentSong;
 
     if (song != null && song.id != _lastSongId) {
-      _updateThemeFromArtwork(
-        force: true,
-      );
+      _updateThemeFromArtwork(force: true);
     }
 
     setState(() {});
@@ -91,9 +90,7 @@ class _MiniPlayerState extends State<MiniPlayer> {
   // EXTRAER TEMA DE LA PORTADA
   // ==========================================================
 
-  Future<void> _updateThemeFromArtwork({
-    bool force = false,
-  }) async {
+  Future<void> _updateThemeFromArtwork({bool force = false}) async {
     final song = widget.player.currentSong;
 
     if (song == null) return;
@@ -119,9 +116,7 @@ class _MiniPlayerState extends State<MiniPlayer> {
         return;
       }
 
-      final colors = await _extractArtworkTheme(
-        artwork,
-      );
+      final colors = await _extractArtworkTheme(artwork);
 
       if (!mounted) return;
 
@@ -145,9 +140,7 @@ class _MiniPlayerState extends State<MiniPlayer> {
   // ANALIZAR TODA LA IMAGEN
   // ==========================================================
 
-  Future<_ArtworkTheme> _extractArtworkTheme(
-    Uint8List bytes,
-  ) async {
+  Future<_ArtworkTheme> _extractArtworkTheme(Uint8List bytes) async {
     final codec = await ui.instantiateImageCodec(
       bytes,
       targetWidth: 24,
@@ -172,11 +165,7 @@ class _MiniPlayerState extends State<MiniPlayer> {
 
     final List<_ColorSample> samples = [];
 
-    for (
-      int offset = 0;
-      offset + 3 < data.lengthInBytes;
-      offset += 4
-    ) {
+    for (int offset = 0; offset + 3 < data.lengthInBytes; offset += 4) {
       final r = data.getUint8(offset);
       final g = data.getUint8(offset + 1);
       final b = data.getUint8(offset + 2);
@@ -186,12 +175,7 @@ class _MiniPlayerState extends State<MiniPlayer> {
         continue;
       }
 
-      final color = Color.fromARGB(
-        255,
-        r,
-        g,
-        b,
-      );
+      final color = Color.fromARGB(255, r, g, b);
 
       final hsl = HSLColor.fromColor(color);
 
@@ -209,24 +193,14 @@ class _MiniPlayerState extends State<MiniPlayer> {
 
       // Preferimos colores con cierta saturación
       // y luminosidad intermedia.
-      final saturationScore =
-          hsl.saturation.clamp(0.0, 1.0);
+      final saturationScore = hsl.saturation.clamp(0.0, 1.0);
 
       final lightnessScore =
-          1.0 -
-          ((hsl.lightness - 0.52).abs() / 0.52)
-              .clamp(0.0, 1.0);
+          1.0 - ((hsl.lightness - 0.52).abs() / 0.52).clamp(0.0, 1.0);
 
-      final score =
-          saturationScore * 0.65 +
-          lightnessScore * 0.35;
+      final score = saturationScore * 0.65 + lightnessScore * 0.35;
 
-      samples.add(
-        _ColorSample(
-          color: color,
-          score: score,
-        ),
-      );
+      samples.add(_ColorSample(color: color, score: score));
     }
 
     if (samples.isEmpty) {
@@ -238,27 +212,17 @@ class _MiniPlayerState extends State<MiniPlayer> {
     }
 
     // Ordenamos por relevancia visual.
-    samples.sort(
-      (a, b) => b.score.compareTo(a.score),
-    );
+    samples.sort((a, b) => b.score.compareTo(a.score));
 
-    final primary =
-        _prepareThemeColor(
-      samples.first.color,
-    );
+    final primary = _prepareThemeColor(samples.first.color);
 
     // Buscar un segundo color suficientemente diferente.
     Color secondary = primary;
 
     for (final sample in samples.skip(1)) {
-      final candidate =
-          _prepareThemeColor(sample.color);
+      final candidate = _prepareThemeColor(sample.color);
 
-      if (_colorDistance(
-            primary,
-            candidate,
-          ) >
-          0.18) {
+      if (_colorDistance(primary, candidate) > 0.18) {
         secondary = candidate;
         break;
       }
@@ -267,36 +231,22 @@ class _MiniPlayerState extends State<MiniPlayer> {
     // Si no encontramos uno diferente,
     // usamos una variación del principal.
     if (secondary == primary) {
-      final hsl = HSLColor.fromColor(
-        primary,
-      );
+      final hsl = HSLColor.fromColor(primary);
 
       secondary = hsl
-          .withLightness(
-            (hsl.lightness + 0.12)
-                .clamp(0.0, 1.0),
-          )
+          .withLightness((hsl.lightness + 0.12).clamp(0.0, 1.0))
           .toColor();
     }
 
     // Fondo oscuro derivado del color principal.
-    final darkHsl = HSLColor.fromColor(
-      primary,
-    );
+    final darkHsl = HSLColor.fromColor(primary);
 
     final dark = darkHsl
         .withLightness(0.07)
-        .withSaturation(
-          (darkHsl.saturation * 0.75)
-              .clamp(0.0, 1.0),
-        )
+        .withSaturation((darkHsl.saturation * 0.75).clamp(0.0, 1.0))
         .toColor();
 
-    return _ArtworkTheme(
-      primary: primary,
-      secondary: secondary,
-      dark: dark,
-    );
+    return _ArtworkTheme(primary: primary, secondary: secondary, dark: dark);
   }
 
   // ==========================================================
@@ -326,35 +276,22 @@ class _MiniPlayerState extends State<MiniPlayer> {
       lightness = 0.62;
     }
 
-    return hsl
-        .withSaturation(saturation)
-        .withLightness(lightness)
-        .toColor();
+    return hsl.withSaturation(saturation).withLightness(lightness).toColor();
   }
 
   // ==========================================================
   // DISTANCIA ENTRE COLORES
   // ==========================================================
 
-  double _colorDistance(
-    Color a,
-    Color b,
-  ) {
+  double _colorDistance(Color a, Color b) {
     final ahsl = HSLColor.fromColor(a);
     final bhsl = HSLColor.fromColor(b);
 
-    final hueDistance =
-        (ahsl.hue - bhsl.hue).abs() / 360.0;
+    final hueDistance = (ahsl.hue - bhsl.hue).abs() / 360.0;
 
-    final saturationDistance =
-        (ahsl.saturation -
-                bhsl.saturation)
-            .abs();
+    final saturationDistance = (ahsl.saturation - bhsl.saturation).abs();
 
-    final lightnessDistance =
-        (ahsl.lightness -
-                bhsl.lightness)
-            .abs();
+    final lightnessDistance = (ahsl.lightness - bhsl.lightness).abs();
 
     return hueDistance * 0.5 +
         saturationDistance * 0.3 +
@@ -403,12 +340,7 @@ class _MiniPlayerState extends State<MiniPlayer> {
     }
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        10,
-        0,
-        10,
-        10,
-      ),
+      padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
       child: GestureDetector(
         // ======================================================
         // GESTOS
@@ -418,8 +350,7 @@ class _MiniPlayerState extends State<MiniPlayer> {
         // ======================================================
 
         onHorizontalDragEnd: (details) {
-          final velocity =
-              details.primaryVelocity ?? 0;
+          final velocity = details.primaryVelocity ?? 0;
 
           if (velocity < -250) {
             widget.player.nextSong();
@@ -429,77 +360,51 @@ class _MiniPlayerState extends State<MiniPlayer> {
         },
 
         child: AnimatedContainer(
-          duration: const Duration(
-            milliseconds: 450,
-          ),
+          duration: const Duration(milliseconds: 450),
           curve: Curves.easeOutCubic,
 
           // ====================================================
           // FORMA DE SEMICÍRCULO / CÁPSULA
           // ====================================================
-
           decoration: BoxDecoration(
-            borderRadius:
-                BorderRadius.circular(36),
+            borderRadius: BorderRadius.circular(36),
 
             // ==================================================
             // FONDO DINÁMICO
             // ==================================================
-
             gradient: LinearGradient(
               begin: Alignment.centerLeft,
               end: Alignment.centerRight,
               colors: [
                 _themeDark,
-                Color.lerp(
-                  _themeDark,
-                  _themeColor,
-                  0.20,
-                )!,
-                Color.lerp(
-                  _themeDark,
-                  _themeSecondary,
-                  0.12,
-                )!,
+                Color.lerp(_themeDark, _themeColor, 0.20)!,
+                Color.lerp(_themeDark, _themeSecondary, 0.12)!,
               ],
             ),
 
-            border: Border.all(
-              color:
-                  _themeColor.withOpacity(0.20),
-              width: 1,
-            ),
+            border: Border.all(color: _themeColor.withOpacity(0.20), width: 1),
 
             // ==================================================
             // SOMBRA
             // ==================================================
-
             boxShadow: [
               BoxShadow(
-                color:
-                    _themeColor.withOpacity(0.16),
+                color: _themeColor.withOpacity(0.16),
                 blurRadius: 24,
                 spreadRadius: -5,
-                offset: const Offset(
-                  0,
-                  8,
-                ),
+                offset: const Offset(0, 8),
               ),
               const BoxShadow(
                 color: Colors.black54,
                 blurRadius: 16,
                 spreadRadius: -5,
-                offset: Offset(
-                  0,
-                  7,
-                ),
+                offset: Offset(0, 7),
               ),
             ],
           ),
 
           child: ClipRRect(
-            borderRadius:
-                BorderRadius.circular(36),
+            borderRadius: BorderRadius.circular(36),
 
             child: Stack(
               children: [
@@ -515,8 +420,7 @@ class _MiniPlayerState extends State<MiniPlayer> {
                   child: DecoratedBox(
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: _themeColor
-                          .withOpacity(0.08),
+                      color: _themeColor.withOpacity(0.08),
                     ),
                   ),
                 ),
@@ -524,10 +428,8 @@ class _MiniPlayerState extends State<MiniPlayer> {
                 // ==============================================
                 // CONTENIDO
                 // ==============================================
-
                 Padding(
-                  padding:
-                      const EdgeInsets.symmetric(
+                  padding: const EdgeInsets.symmetric(
                     horizontal: 9,
                     vertical: 8,
                   ),
@@ -538,93 +440,63 @@ class _MiniPlayerState extends State<MiniPlayer> {
                       // ========================================
 
                       GestureDetector(
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) =>
-                                  FullPlayer(
-                                player:
-                                    widget.player,
-                              ),
-                            ),
-                          );
-                        },
-                        child:
-                            _buildArtwork(
-                          song,
-                          size: 58,
-                        ),
+                        onTap: widget.openFullPlayerOnTap
+                            ? () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) =>
+                                        FullPlayer(player: widget.player),
+                                  ),
+                                );
+                              }
+                            : null,
+                        child: _buildArtwork(song, size: 58),
                       ),
 
-                      const SizedBox(
-                        width: 12,
-                      ),
+                      const SizedBox(width: 12),
 
                       // ========================================
                       // INFORMACIÓN
                       // ========================================
-
                       Expanded(
                         child: GestureDetector(
-                          onTap: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder:
-                                    (context) =>
-                                        FullPlayer(
-                                  player:
-                                      widget.player,
-                                ),
-                              ),
-                            );
-                          },
+                          onTap: widget.openFullPlayerOnTap
+                              ? () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) =>
+                                          FullPlayer(player: widget.player),
+                                    ),
+                                  );
+                                }
+                              : null,
                           child: Column(
-                            mainAxisAlignment:
-                                MainAxisAlignment
-                                    .center,
-                            crossAxisAlignment:
-                                CrossAxisAlignment
-                                    .start,
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
                                 song.title.isEmpty
-                                    ? song
-                                        .displayName
+                                    ? song.displayName
                                     : song.title,
                                 maxLines: 1,
-                                overflow:
-                                    TextOverflow
-                                        .ellipsis,
-                                style:
-                                    const TextStyle(
-                                  color:
-                                      Colors.white,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Colors.white,
                                   fontSize: 14,
-                                  fontWeight:
-                                      FontWeight.w700,
+                                  fontWeight: FontWeight.w700,
                                 ),
                               ),
-                              const SizedBox(
-                                height: 3,
-                              ),
+                              const SizedBox(height: 3),
                               Text(
-                                song.artist
-                                        .isEmpty
+                                song.artist.isEmpty
                                     ? 'Artista desconocido'
                                     : song.artist,
                                 maxLines: 1,
-                                overflow:
-                                    TextOverflow
-                                        .ellipsis,
-                                style:
-                                    TextStyle(
-                                  color: Colors
-                                      .white
-                                      .withOpacity(
-                                    0.60,
-                                  ),
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.60),
                                   fontSize: 12,
                                 ),
                               ),
@@ -633,24 +505,18 @@ class _MiniPlayerState extends State<MiniPlayer> {
                         ),
                       ),
 
-                      const SizedBox(
-                        width: 4,
-                      ),
+                      const SizedBox(width: 4),
 
                       // ========================================
                       // ÚNICO BOTÓN DE MODO
                       // ========================================
-
                       _buildModeButton(),
 
-                      const SizedBox(
-                        width: 3,
-                      ),
+                      const SizedBox(width: 3),
 
                       // ========================================
                       // PLAY / PAUSE + PROGRESO
                       // ========================================
-
                       _buildProgressPlayButton(),
                     ],
                   ),
@@ -668,38 +534,28 @@ class _MiniPlayerState extends State<MiniPlayer> {
   // ==========================================================
 
   Widget _buildModeButton() {
-    final active = widget.player.playbackMode != MusicPlayerController.modeNormal;
+    final active =
+        widget.player.playbackMode != MusicPlayerController.modeNormal;
 
     return Material(
       color: Colors.transparent,
       shape: const CircleBorder(),
       child: InkWell(
-        customBorder:
-            const CircleBorder(),
+        customBorder: const CircleBorder(),
         onTap: _changePlayMode,
         child: SizedBox(
           width: 44,
           height: 44,
           child: AnimatedSwitcher(
-            duration: const Duration(
-              milliseconds: 180,
-            ),
-            transitionBuilder:
-                (child, animation) {
-              return ScaleTransition(
-                scale: animation,
-                child: child,
-              );
+            duration: const Duration(milliseconds: 180),
+            transitionBuilder: (child, animation) {
+              return ScaleTransition(scale: animation, child: child);
             },
             child: Icon(
               _playModeIcon,
-              key: ValueKey(
-                widget.player.playbackMode,
-              ),
+              key: ValueKey(widget.player.playbackMode),
               size: 21,
-              color: active
-                  ? _themeColor
-                  : Colors.white60,
+              color: active ? _themeColor : Colors.white60,
             ),
           ),
         ),
@@ -713,38 +569,22 @@ class _MiniPlayerState extends State<MiniPlayer> {
 
   Widget _buildProgressPlayButton() {
     return StreamBuilder<Duration>(
-      stream: widget
-          .player
-          .audioPlayer
-          .positionStream,
+      stream: widget.player.audioPlayer.positionStream,
       builder: (context, snapshot) {
-        final position =
-            snapshot.data ?? Duration.zero;
+        final position = snapshot.data ?? Duration.zero;
 
         final duration =
             widget.player.audioPlayer.duration ??
-                Duration(
-                  milliseconds:
-                      widget.player.currentSong
-                              ?.duration ??
-                          0,
-                );
+            Duration(milliseconds: widget.player.currentSong?.duration ?? 0);
 
-        final total =
-            duration.inMilliseconds;
+        final total = duration.inMilliseconds;
 
         double progress = 0;
 
         if (total > 0) {
-          progress =
-              position.inMilliseconds /
-                  total;
+          progress = position.inMilliseconds / total;
 
-          progress =
-              progress.clamp(
-            0.0,
-            1.0,
-          );
+          progress = progress.clamp(0.0, 1.0);
         }
 
         return SizedBox(
@@ -760,75 +600,49 @@ class _MiniPlayerState extends State<MiniPlayer> {
               SizedBox(
                 width: 46,
                 height: 46,
-                child:
-                    CircularProgressIndicator(
+                child: CircularProgressIndicator(
                   value: 1,
                   strokeWidth: 3,
-                  color: Colors.white
-                      .withOpacity(
-                    0.10,
-                  ),
+                  color: Colors.white.withOpacity(0.10),
                 ),
               ),
 
               // ================================================
               // PROGRESO
               // ================================================
-
               SizedBox(
                 width: 46,
                 height: 46,
-                child:
-                    CircularProgressIndicator(
+                child: CircularProgressIndicator(
                   value: progress,
                   strokeWidth: 3.5,
                   color: _themeColor,
-                  strokeCap:
-                      StrokeCap.round,
+                  strokeCap: StrokeCap.round,
                 ),
               ),
 
               // ================================================
               // BOTÓN
               // ================================================
-
               Material(
                 color: Colors.transparent,
-                shape:
-                    const CircleBorder(),
+                shape: const CircleBorder(),
                 child: InkWell(
-                  customBorder:
-                      const CircleBorder(),
-                  onTap: widget
-                      .player
-                      .togglePlayPause,
+                  customBorder: const CircleBorder(),
+                  onTap: widget.player.togglePlayPause,
                   child: SizedBox(
                     width: 38,
                     height: 38,
                     child: AnimatedSwitcher(
-                      duration:
-                          const Duration(
-                        milliseconds: 150,
-                      ),
-                      transitionBuilder:
-                          (
-                        child,
-                        animation,
-                      ) {
-                        return ScaleTransition(
-                          scale: animation,
-                          child: child,
-                        );
+                      duration: const Duration(milliseconds: 150),
+                      transitionBuilder: (child, animation) {
+                        return ScaleTransition(scale: animation, child: child);
                       },
                       child: Icon(
                         widget.player.isPlaying
                             ? Icons.pause_rounded
-                            : Icons
-                                .play_arrow_rounded,
-                        key: ValueKey(
-                          widget.player
-                              .isPlaying,
-                        ),
+                            : Icons.play_arrow_rounded,
+                        key: ValueKey(widget.player.isPlaying),
                         size: 25,
                         color: Colors.white,
                       ),
@@ -847,33 +661,26 @@ class _MiniPlayerState extends State<MiniPlayer> {
   // PORTADA
   // ==========================================================
 
-  Widget _buildArtwork(
-    Song song, {
-    double size = 58,
-  }) {
+  Widget _buildArtwork(Song song, {double size = 58}) {
     return FutureBuilder<Uint8List?>(
       future: widget.player.loadArtwork(song),
       builder: (context, snapshot) {
-        if (snapshot.hasData &&
-            snapshot.data != null) {
+        if (snapshot.hasData && snapshot.data != null) {
           return Container(
             width: size,
             height: size,
             decoration: BoxDecoration(
-              borderRadius:
-                  BorderRadius.circular(18),
+              borderRadius: BorderRadius.circular(18),
               boxShadow: [
                 BoxShadow(
-                  color: _themeColor
-                      .withOpacity(0.25),
+                  color: _themeColor.withOpacity(0.25),
                   blurRadius: 12,
                   spreadRadius: -3,
                 ),
               ],
             ),
             child: ClipRRect(
-              borderRadius:
-                  BorderRadius.circular(18),
+              borderRadius: BorderRadius.circular(18),
               child: Image.memory(
                 snapshot.data!,
                 width: size,
@@ -886,21 +693,13 @@ class _MiniPlayerState extends State<MiniPlayer> {
         }
 
         return AnimatedContainer(
-          duration:
-              const Duration(
-            milliseconds: 350,
-          ),
+          duration: const Duration(milliseconds: 350),
           width: size,
           height: size,
           decoration: BoxDecoration(
-            color: _themeColor
-                .withOpacity(0.16),
-            borderRadius:
-                BorderRadius.circular(18),
-            border: Border.all(
-              color: _themeColor
-                  .withOpacity(0.28),
-            ),
+            color: _themeColor.withOpacity(0.16),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: _themeColor.withOpacity(0.28)),
           ),
           child: Icon(
             Icons.music_note_rounded,
@@ -937,8 +736,5 @@ class _ColorSample {
   final Color color;
   final double score;
 
-  const _ColorSample({
-    required this.color,
-    required this.score,
-  });
+  const _ColorSample({required this.color, required this.score});
 }

@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@drawable/soundneed_widget_background">
@@ -30,6 +31,8 @@
             android:layout_width="50dp"
             android:layout_height="50dp"
             android:scaleType="centerCrop"
+            android:background="@drawable/soundneed_widget_artwork_rounded"
+            android:clipToOutline="true"
             android:contentDescription="Portada de la canción"
             android:src="@drawable/soundneed_widget_placeholder" />
 

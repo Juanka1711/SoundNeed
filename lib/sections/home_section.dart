@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../music_player.dart';
+import '../player_navigation.dart';
 import '../app_colors.dart';
 import '../playlist_artwork.dart';
 import '../services/youtube_audio_service.dart';
@@ -1102,6 +1103,11 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
   );
 
   Future<void> _playContinuedSong(Song song) async {
+    if (widget.player.currentSong?.id == song.id &&
+        widget.player.currentSong?.uri == song.uri) {
+      await selectSongOrOpenPlayer(context, widget.player, song);
+      return;
+    }
     if (!song.isOnline) {
       await widget.player.playSong(song);
       return;
@@ -1908,7 +1914,7 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
         borderRadius: BorderRadius.circular(16),
         child: InkWell(
           borderRadius: BorderRadius.circular(16),
-          onTap: () => player.playSong(song),
+          onTap: () => selectSongOrOpenPlayer(context, player, song),
           child: Padding(
             padding: const EdgeInsets.all(12),
             child: Row(
@@ -1977,7 +1983,6 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
               width: size,
               height: size,
               fit: BoxFit.cover,
-              gaplessPlayback: true,
             ),
           );
         }
@@ -2013,6 +2018,19 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
         child: InkWell(
           borderRadius: BorderRadius.circular(16),
           onTap: () async {
+            // Precargar URL en segundo plano
+            unawaited(widget.player.preloadYoutubeUrl(result.videoId));
+
+            final selectedSong = Song.fromYouTube(result);
+            if (widget.player.currentSong?.id == selectedSong.id &&
+                widget.player.currentSong?.uri == selectedSong.uri) {
+              await selectSongOrOpenPlayer(
+                context,
+                widget.player,
+                selectedSong,
+              );
+              return;
+            }
             final messenger = ScaffoldMessenger.of(context);
 
             debugPrint(

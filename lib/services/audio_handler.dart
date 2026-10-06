@@ -5,8 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:just_audio/just_audio.dart';
 
 class SoundNeedAudioHandler extends BaseAudioHandler with SeekHandler {
-  static const MethodChannel _widgetChannel =
-      MethodChannel('soundneed/widget');
+  static const MethodChannel _widgetChannel = MethodChannel('soundneed/widget');
 
   final AudioPlayer _player = AudioPlayer();
 
@@ -18,11 +17,48 @@ class SoundNeedAudioHandler extends BaseAudioHandler with SeekHandler {
   MediaItem? _currentMediaItem;
   String? _lastWidgetSongId;
   bool? _lastWidgetPlaying;
+  final Map<String, MediaItem> _artworkOverrides = {};
 
   Future<void> Function()? onSkipToNext;
   Future<void> Function()? onSkipToPrevious;
+  Future<void> Function()? onPlayRequested;
+  Future<void> Function()? onStopRequested;
 
   AudioPlayer get player => _player;
+  MediaItem? get currentMediaItem => _currentMediaItem;
+
+  /// Publica inmediatamente la canción seleccionada, aunque su fuente online
+  /// todavía esté resolviéndose.
+  void setPendingMediaItem(MediaItem item) {
+    _currentMediaItem = item;
+    mediaItem.add(item);
+    _lastWidgetSongId = null;
+    _syncWidgetState(force: true);
+    unawaited(
+      _widgetChannel
+          .invokeMethod<void>('updateProgress', const <String, Object?>{
+            'position': 0,
+            'duration': 0,
+          })
+          .catchError((Object error) {}),
+    );
+  }
+
+  /// Fuerza al widget a reintentar la portada cuando vuelve la conexión.
+  void refreshWidgetArtwork() {
+    _lastWidgetSongId = null;
+    _syncWidgetState(force: true);
+  }
+
+  void updateMediaItemArtwork(MediaItem item) {
+    _artworkOverrides[item.id] = item;
+    if (_currentMediaItem?.id == item.id) {
+      _currentMediaItem = item;
+      mediaItem.add(item);
+      _lastWidgetSongId = null;
+      _syncWidgetState(force: true);
+    }
+  }
 
   SoundNeedAudioHandler() {
     _init();
@@ -32,10 +68,7 @@ class SoundNeedAudioHandler extends BaseAudioHandler with SeekHandler {
     // Estado inicial de la MediaSession.
     playbackState.add(
       PlaybackState(
-        controls: const [
-          MediaControl.play,
-          MediaControl.stop,
-        ],
+        controls: const [MediaControl.play, MediaControl.stop],
         systemActions: const {
           MediaAction.seek,
           MediaAction.seekForward,
@@ -104,17 +137,16 @@ class SoundNeedAudioHandler extends BaseAudioHandler with SeekHandler {
 
         final index = state.currentIndex;
 
-        if (index == null ||
-            index < 0 ||
-            index >= sequence.length) {
+        if (index == null || index < 0 || index >= sequence.length) {
           return;
         }
 
         final tag = sequence[index].tag;
 
         if (tag is MediaItem) {
-          _currentMediaItem = tag;
-          mediaItem.add(tag);
+          final current = _artworkOverrides[tag.id] ?? tag;
+          _currentMediaItem = current;
+          mediaItem.add(current);
           _syncWidgetState(force: true);
         }
       },
@@ -147,9 +179,7 @@ class SoundNeedAudioHandler extends BaseAudioHandler with SeekHandler {
   // ================================================================
 
   void _publishPlaybackState(PlaybackEvent event) {
-    final processingState = _mapProcessingState(
-      _player.processingState,
-    );
+    final processingState = _mapProcessingState(_player.processingState);
 
     final isPlaying = _player.playing;
 
@@ -168,11 +198,7 @@ class SoundNeedAudioHandler extends BaseAudioHandler with SeekHandler {
           MediaAction.seekForward,
           MediaAction.seekBackward,
         },
-        androidCompactActionIndices: const [
-          0,
-          1,
-          2,
-        ],
+        androidCompactActionIndices: const [0, 1, 2],
         processingState: processingState,
         playing: isPlaying,
         updatePosition: _player.position,
@@ -201,32 +227,32 @@ class SoundNeedAudioHandler extends BaseAudioHandler with SeekHandler {
     _lastWidgetSongId = item.id;
     _lastWidgetPlaying = isPlaying;
 
-    unawaited(_widgetChannel.invokeMethod<void>(
-      'updatePlayback',
-      <String, Object?>{
-        'title': item.title,
-        'artist': item.artist ?? '',
-        'artUri': item.artUri?.toString() ?? '',
-        'playing': isPlaying,
-      },
-    ).catchError((Object error) {}));
+    unawaited(
+      _widgetChannel
+          .invokeMethod<void>('updatePlayback', <String, Object?>{
+            'title': item.title,
+            'artist': item.artist ?? '',
+            'artUri': item.artUri?.toString() ?? '',
+            'playing': isPlaying,
+          })
+          .catchError((Object error) {}),
+    );
   }
 
   void _syncWidgetProgress(Duration position, Duration duration) {
     if (_disposed) return;
 
-    unawaited(_widgetChannel.invokeMethod<void>(
-      'updateProgress',
-      <String, Object?>{
-        'position': position.inMilliseconds,
-        'duration': duration.inMilliseconds,
-      },
-    ).catchError((Object error) {}));
+    unawaited(
+      _widgetChannel
+          .invokeMethod<void>('updateProgress', <String, Object?>{
+            'position': position.inMilliseconds,
+            'duration': duration.inMilliseconds,
+          })
+          .catchError((Object error) {}),
+    );
   }
 
-  AudioProcessingState _mapProcessingState(
-    ProcessingState state,
-  ) {
+  AudioProcessingState _mapProcessingState(ProcessingState state) {
     switch (state) {
       case ProcessingState.idle:
         return AudioProcessingState.idle;
@@ -253,10 +279,19 @@ class SoundNeedAudioHandler extends BaseAudioHandler with SeekHandler {
   Future<void> play() async {
     if (_disposed) return;
 
-    // Si el player se detuvo, intentar reproducir desde la posición actual
-    if (_player.processingState == ProcessingState.idle ||
-        _player.processingState == ProcessingState.completed) {
-      // Reanudar desde la posición actual si hay una canción cargada
+    final callback = onPlayRequested;
+    if (callback != null) {
+      await callback();
+      return;
+    }
+
+    if (_player.processingState == ProcessingState.completed) {
+      // Una canción terminada solo puede volver a sonar desde el principio.
+      if (_player.currentIndex != null && _player.currentIndex! >= 0) {
+        await _player.seek(Duration.zero);
+      }
+    } else if (_player.processingState == ProcessingState.idle) {
+      // Si el player quedó idle con una fuente cargada, conservar la posición.
       if (_player.currentIndex != null && _player.currentIndex! >= 0) {
         await _player.seek(_player.position);
       }
@@ -311,12 +346,34 @@ class SoundNeedAudioHandler extends BaseAudioHandler with SeekHandler {
     if (_disposed) return;
 
     await _player.stop();
+    await onStopRequested?.call();
+    _currentMediaItem = null;
+    mediaItem.add(null);
+    queue.add(const []);
+    _lastWidgetSongId = null;
+    _lastWidgetPlaying = false;
+    unawaited(
+      _widgetChannel
+          .invokeMethod<void>('updatePlayback', const <String, Object?>{
+            'title': '',
+            'artist': '',
+            'artUri': '',
+            'playing': false,
+          })
+          .catchError((Object error) {}),
+    );
+    unawaited(
+      _widgetChannel
+          .invokeMethod<void>('updateProgress', const <String, Object?>{
+            'position': 0,
+            'duration': 0,
+          })
+          .catchError((Object error) {}),
+    );
 
     playbackState.add(
       PlaybackState(
-        controls: const [
-          MediaControl.play,
-        ],
+        controls: const [MediaControl.play],
         systemActions: const {
           MediaAction.seek,
           MediaAction.seekForward,
@@ -406,9 +463,7 @@ class SoundNeedAudioHandler extends BaseAudioHandler with SeekHandler {
       return;
     }
 
-    await _player.seek(
-      target > duration ? duration : target,
-    );
+    await _player.seek(target > duration ? duration : target);
   }
 
   // ================================================================
@@ -419,12 +474,9 @@ class SoundNeedAudioHandler extends BaseAudioHandler with SeekHandler {
   Future<void> rewind() async {
     if (_disposed) return;
 
-    final target =
-        _player.position - const Duration(seconds: 10);
+    final target = _player.position - const Duration(seconds: 10);
 
-    await _player.seek(
-      target.isNegative ? Duration.zero : target,
-    );
+    await _player.seek(target.isNegative ? Duration.zero : target);
   }
 
   // ================================================================

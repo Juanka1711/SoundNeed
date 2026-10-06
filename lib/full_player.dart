@@ -5,15 +5,13 @@ import 'package:flutter/material.dart';
 
 import 'lyrics_service.dart';
 import 'music_player.dart';
+import 'mini_player.dart';
 import 'playlist_actions.dart';
 
 class FullPlayer extends StatefulWidget {
   final MusicPlayerController player;
 
-  const FullPlayer({
-    super.key,
-    required this.player,
-  });
+  const FullPlayer({super.key, required this.player});
 
   @override
   State<FullPlayer> createState() => _FullPlayerState();
@@ -47,30 +45,18 @@ class _FullPlayerState extends State<FullPlayer>
       duration: const Duration(milliseconds: 720),
     );
 
-    _songScale = Tween<double>(
-      begin: 0.82,
-      end: 1.0,
-    ).animate(
+    _songScale = Tween<double>(begin: 0.82, end: 1.0).animate(
       CurvedAnimation(
         parent: _songAnimationController,
         curve: Curves.easeOutCubic,
       ),
     );
 
-    _songOpacity = Tween<double>(
-      begin: 0.0,
-      end: 1.0,
-    ).animate(
-      CurvedAnimation(
-        parent: _songAnimationController,
-        curve: Curves.easeOut,
-      ),
+    _songOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _songAnimationController, curve: Curves.easeOut),
     );
 
-    _songWidth = Tween<double>(
-      begin: 0.72,
-      end: 1.0,
-    ).animate(
+    _songWidth = Tween<double>(begin: 0.72, end: 1.0).animate(
       CurvedAnimation(
         parent: _songAnimationController,
         curve: Curves.easeOutBack,
@@ -115,10 +101,13 @@ class _FullPlayerState extends State<FullPlayer>
 
     final title = song.title.toString().trim();
     final displayName = song.displayName.toString().trim();
-    final missingTitle = title.isEmpty ||
-        const {'sin título', 'untitled', 'unknown title'}.contains(
-          title.toLowerCase(),
-        );
+    final missingTitle =
+        title.isEmpty ||
+        const {
+          'sin título',
+          'untitled',
+          'unknown title',
+        }.contains(title.toLowerCase());
     final future = LyricsService.instance.getLyrics(
       title: missingTitle && displayName.isNotEmpty ? displayName : title,
       artist: song.artist.toString(),
@@ -127,6 +116,7 @@ class _FullPlayerState extends State<FullPlayer>
       duration: song.duration is int && song.duration > 0
           ? Duration(milliseconds: song.duration as int)
           : player.audioPlayer.duration,
+      isOnline: song.isOnline == true,
     );
     _lyricsFutures[songId] = future;
     future.then((lyrics) {
@@ -154,9 +144,15 @@ class _FullPlayerState extends State<FullPlayer>
     } catch (_) {}
   }
 
-  Future<(Color, Color, Color)> _extractArtworkTheme(
-    Uint8List bytes,
-  ) async {
+  Future<(Color, Color, Color)> _themeForLyricsSong(dynamic song) async {
+    final bytes = await player.loadArtwork(song);
+    if (bytes == null || bytes.isEmpty) {
+      return (Colors.white, Colors.white70, const Color(0xFF080808));
+    }
+    return _extractArtworkTheme(bytes);
+  }
+
+  Future<(Color, Color, Color)> _extractArtworkTheme(Uint8List bytes) async {
     try {
       final codec = await ui.instantiateImageCodec(
         bytes,
@@ -172,11 +168,7 @@ class _FullPlayerState extends State<FullPlayer>
       );
 
       if (byteData == null) {
-        return (
-          Colors.white,
-          Colors.white70,
-          const Color(0xFF080808),
-        );
+        return (Colors.white, Colors.white70, const Color(0xFF080808));
       }
 
       final pixels = byteData.buffer.asUint8List();
@@ -191,12 +183,7 @@ class _FullPlayerState extends State<FullPlayer>
 
         if (a < 100) continue;
 
-        final color = Color.fromARGB(
-          a,
-          r,
-          g,
-          b,
-        );
+        final color = Color.fromARGB(a, r, g, b);
 
         final hsl = HSLColor.fromColor(color);
 
@@ -210,11 +197,7 @@ class _FullPlayerState extends State<FullPlayer>
       }
 
       if (candidates.isEmpty) {
-        return (
-          Colors.white,
-          Colors.white70,
-          const Color(0xFF080808),
-        );
+        return (Colors.white, Colors.white70, const Color(0xFF080808));
       }
 
       Color primary = candidates.first;
@@ -264,22 +247,12 @@ class _FullPlayerState extends State<FullPlayer>
       final primaryHsl = HSLColor.fromColor(primary);
 
       final dark = primaryHsl
-          .withLightness(
-            (primaryHsl.lightness * 0.20).clamp(0.035, 0.16),
-          )
+          .withLightness((primaryHsl.lightness * 0.20).clamp(0.035, 0.16))
           .toColor();
 
-      return (
-        primary,
-        secondary,
-        dark,
-      );
+      return (primary, secondary, dark);
     } catch (_) {
-      return (
-        Colors.white,
-        Colors.white70,
-        const Color(0xFF080808),
-      );
+      return (Colors.white, Colors.white70, const Color(0xFF080808));
     }
   }
 
@@ -333,10 +306,7 @@ class _FullPlayerState extends State<FullPlayer>
         body: Center(
           child: Text(
             'No hay ninguna canción',
-            style: TextStyle(
-              color: Colors.white70,
-              fontSize: 16,
-            ),
+            style: TextStyle(color: Colors.white70, fontSize: 16),
           ),
         ),
       );
@@ -354,25 +324,20 @@ class _FullPlayerState extends State<FullPlayer>
         curve: Curves.easeOutCubic,
         color: _themeDark.withOpacity(1 - (_dismissProgress * 0.25)),
         child: Scaffold(
-        backgroundColor: Colors.transparent,
-        body: SafeArea(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              return Column(
-                children: [
-                  _buildTopBar(song, screenHeight),
+          backgroundColor: Colors.transparent,
+          body: SafeArea(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return Column(
+                  children: [
+                    _buildTopBar(song, screenHeight),
 
-                  Expanded(
-                    child: _buildPlayerContent(
-                      context,
-                      song,
-                    ),
-                  ),
-                ],
-              );
-            },
+                    Expanded(child: _buildPlayerContent(context, song)),
+                  ],
+                );
+              },
+            ),
           ),
-        ),
         ),
       ),
     );
@@ -387,14 +352,17 @@ class _FullPlayerState extends State<FullPlayer>
       onVerticalDragUpdate: (details) {
         if (details.delta.dy > 0) {
           setState(() {
-            _dismissProgress = (_dismissProgress + details.delta.dy / screenHeight)
-                .clamp(0.0, 0.75);
+            _dismissProgress =
+                (_dismissProgress + details.delta.dy / screenHeight).clamp(
+                  0.0,
+                  0.75,
+                );
           });
         }
       },
       onVerticalDragEnd: (details) {
-        final shouldDismiss = _dismissProgress > 0.18 ||
-            (details.primaryVelocity ?? 0) > 850;
+        final shouldDismiss =
+            _dismissProgress > 0.18 || (details.primaryVelocity ?? 0) > 850;
         if (shouldDismiss) {
           Navigator.of(context).pop();
         } else {
@@ -409,70 +377,60 @@ class _FullPlayerState extends State<FullPlayer>
         _dismissProgress = 0;
       }),
       child: Padding(
-      padding: const EdgeInsets.fromLTRB(
-        14,
-        8,
-        14,
-        0,
-      ),
-      child: Row(
-        children: [
-          _glassButton(
-            icon: favorite
-                ? Icons.favorite_rounded
-                : Icons.favorite_border_rounded,
-            color: favorite
-                ? Colors.redAccent
-                : Colors.white,
-            onTap: () async {
-              await toggleSongLiked(player, song);
-              if (mounted) setState(() {});
-            },
-          ),
+        padding: const EdgeInsets.fromLTRB(14, 8, 14, 0),
+        child: Row(
+          children: [
+            _glassButton(
+              icon: favorite
+                  ? Icons.favorite_rounded
+                  : Icons.favorite_border_rounded,
+              color: favorite ? Colors.redAccent : Colors.white,
+              onTap: () async {
+                await toggleSongLiked(player, song);
+                if (mounted) setState(() {});
+              },
+            ),
 
-          const Spacer(),
+            const Spacer(),
 
-          _glassButton(
-            icon: Icons.more_horiz_rounded,
-            onTap: () => _showMoreOptions(context, song),
-          ),
-        ],
-      ),
+            _glassButton(
+              icon: Icons.more_horiz_rounded,
+              onTap: () => _showMoreOptions(context, song),
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildPlayerContent(
-    BuildContext context,
-    dynamic song,
-  ) {
+  Widget _buildPlayerContent(BuildContext context, dynamic song) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 0, 14, 18),
       child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const SizedBox(height: 4),
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const SizedBox(height: 4),
 
-            _buildArtwork(song),
+          _buildArtwork(song),
 
-            const SizedBox(height: 18),
+          const SizedBox(height: 18),
 
-            _buildDynamicSongInfo(song),
+          _buildDynamicSongInfo(song),
 
-            const SizedBox(height: 14),
+          const SizedBox(height: 14),
 
-            _buildProgress(),
+          _buildProgress(),
 
-            const SizedBox(height: 6),
+          const SizedBox(height: 6),
 
-            _buildMainControls(),
+          _buildMainControls(),
 
-            const SizedBox(height: 14),
+          const SizedBox(height: 14),
 
-            _buildSecondaryControls(),
+          _buildSecondaryControls(),
 
-            const SizedBox(height: 8),
-          ],
+          const SizedBox(height: 8),
+        ],
       ),
     );
   }
@@ -488,10 +446,10 @@ class _FullPlayerState extends State<FullPlayer>
             final screenWidth = MediaQuery.of(context).size.width;
 
             final availableHeight = MediaQuery.sizeOf(context).height;
-            final size = (screenWidth * 0.82).clamp(
-              180.0,
-              390.0,
-            ).clamp(0.0, availableHeight * 0.40).toDouble();
+            final size = (screenWidth * 0.82)
+                .clamp(180.0, 390.0)
+                .clamp(0.0, availableHeight * 0.40)
+                .toDouble();
 
             return GestureDetector(
               behavior: HitTestBehavior.opaque,
@@ -500,9 +458,11 @@ class _FullPlayerState extends State<FullPlayer>
               onVerticalDragUpdate: (details) {
                 if (details.delta.dy > 0) {
                   setState(() {
-                    _dismissProgress = (_dismissProgress +
-                            details.delta.dy / MediaQuery.sizeOf(context).height)
-                        .clamp(0.0, 0.75);
+                    _dismissProgress =
+                        (_dismissProgress +
+                                details.delta.dy /
+                                    MediaQuery.sizeOf(context).height)
+                            .clamp(0.0, 0.75);
                   });
                 }
               },
@@ -524,39 +484,39 @@ class _FullPlayerState extends State<FullPlayer>
               child: Hero(
                 tag: 'full_player_artwork_${song.id}',
                 child: Container(
-                width: size,
-                height: size,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(28),
-                  boxShadow: [
-                    BoxShadow(
-                      color: _themeColor.withOpacity(0.24),
-                      blurRadius: 45,
-                      spreadRadius: 2,
-                      offset: const Offset(0, 18),
-                    ),
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.55),
-                      blurRadius: 30,
-                      offset: const Offset(0, 16),
-                    ),
-                  ],
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: bytes != null
-                    ? Image.memory(
-                        bytes,
-                        fit: BoxFit.cover,
-                        gaplessPlayback: true,
-                      )
-                    : Container(
-                        color: Colors.white.withOpacity(0.05),
-                        child: Icon(
-                          Icons.music_note_rounded,
-                          size: 72,
-                          color: Colors.white.withOpacity(0.25),
-                        ),
+                  width: size,
+                  height: size,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(28),
+                    boxShadow: [
+                      BoxShadow(
+                        color: _themeColor.withOpacity(0.24),
+                        blurRadius: 45,
+                        spreadRadius: 2,
+                        offset: const Offset(0, 18),
                       ),
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.55),
+                        blurRadius: 30,
+                        offset: const Offset(0, 16),
+                      ),
+                    ],
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: bytes != null
+                      ? Image.memory(
+                          bytes,
+                          fit: BoxFit.cover,
+                          gaplessPlayback: true,
+                        )
+                      : Container(
+                          color: Colors.white.withOpacity(0.05),
+                          child: Icon(
+                            Icons.music_note_rounded,
+                            size: 72,
+                            color: Colors.white.withOpacity(0.25),
+                          ),
+                        ),
                 ),
               ),
             );
@@ -580,9 +540,7 @@ class _FullPlayerState extends State<FullPlayer>
             child: FractionallySizedBox(
               widthFactor: _songWidth.value,
               child: Container(
-                constraints: const BoxConstraints(
-                  minHeight: 68,
-                ),
+                constraints: const BoxConstraints(minHeight: 68),
                 padding: const EdgeInsets.symmetric(
                   horizontal: 20,
                   vertical: 12,
@@ -590,21 +548,14 @@ class _FullPlayerState extends State<FullPlayer>
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(28),
                   color: Colors.white.withOpacity(0.055),
-                  border: Border.all(
-                    color: Colors.white.withOpacity(0.075),
-                  ),
+                  border: Border.all(color: Colors.white.withOpacity(0.075)),
                 ),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     AnimatedSwitcher(
-                      duration: const Duration(
-                        milliseconds: 380,
-                      ),
-                      transitionBuilder: (
-                        child,
-                        animation,
-                      ) {
+                      duration: const Duration(milliseconds: 380),
+                      transitionBuilder: (child, animation) {
                         return FadeTransition(
                           opacity: animation,
                           child: ScaleTransition(
@@ -615,9 +566,7 @@ class _FullPlayerState extends State<FullPlayer>
                       },
                       child: Text(
                         title,
-                        key: ValueKey(
-                          'title_${song.id}',
-                        ),
+                        key: ValueKey('title_${song.id}'),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         textAlign: TextAlign.center,
@@ -633,16 +582,10 @@ class _FullPlayerState extends State<FullPlayer>
                     const SizedBox(height: 3),
 
                     AnimatedSwitcher(
-                      duration: const Duration(
-                        milliseconds: 420,
-                      ),
+                      duration: const Duration(milliseconds: 420),
                       child: Text(
-                        artist.isEmpty
-                            ? 'Artista desconocido'
-                            : artist,
-                        key: ValueKey(
-                          'artist_${song.id}',
-                        ),
+                        artist.isEmpty ? 'Artista desconocido' : artist,
+                        key: ValueKey('artist_${song.id}'),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         textAlign: TextAlign.center,
@@ -670,8 +613,8 @@ class _FullPlayerState extends State<FullPlayer>
       builder: (context, snapshot) {
         final position = snapshot.data ?? Duration.zero;
 
-        final duration = player.audioPlayer.duration ??
-            const Duration(seconds: 1);
+        final duration =
+            player.audioPlayer.duration ?? const Duration(seconds: 1);
 
         final totalMs = duration.inMilliseconds;
         final currentMs = position.inMilliseconds;
@@ -689,20 +632,14 @@ class _FullPlayerState extends State<FullPlayer>
                 inactiveTrackColor: Colors.white.withOpacity(0.12),
                 thumbColor: _themeColor,
                 overlayColor: _themeColor.withOpacity(0.12),
-                thumbShape: const RoundSliderThumbShape(
-                  enabledThumbRadius: 5,
-                ),
-                overlayShape: const RoundSliderOverlayShape(
-                  overlayRadius: 15,
-                ),
+                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
+                overlayShape: const RoundSliderOverlayShape(overlayRadius: 15),
               ),
               child: Slider(
                 value: value,
                 onChanged: (newValue) {
                   final target = Duration(
-                    milliseconds: (
-                      duration.inMilliseconds * newValue
-                    ).round(),
+                    milliseconds: (duration.inMilliseconds * newValue).round(),
                   );
 
                   player.seek(target);
@@ -711,12 +648,9 @@ class _FullPlayerState extends State<FullPlayer>
             ),
 
             Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 4,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 4),
               child: Row(
-                mainAxisAlignment:
-                    MainAxisAlignment.spaceBetween,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
                     player.formatDuration(position.inMilliseconds),
@@ -775,44 +709,69 @@ class _FullPlayerState extends State<FullPlayer>
       builder: (context, snapshot) {
         final playing = snapshot.data ?? false;
 
-        return Semantics(
-          button: true,
-          label: playing ? 'Pausar' : 'Reproducir',
-          child: Material(
-            color: Colors.transparent,
-            shape: const CircleBorder(),
-            child: InkWell(
-              customBorder: const CircleBorder(),
-              onTap: player.togglePlayPause,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 240),
-                curve: Curves.easeOutCubic,
-                width: 72,
-                height: 72,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: _themeColor,
-                  boxShadow: [
-                    BoxShadow(
-                      color: _themeColor.withOpacity(0.38),
-                      blurRadius: 26,
-                      spreadRadius: 3,
+        return AnimatedBuilder(
+          animation: player,
+          builder: (context, _) => Semantics(
+            button: true,
+            label: player.isDownloading
+                ? 'Descargando canción'
+                : (playing ? 'Pausar' : 'Reproducir'),
+            child: SizedBox(
+              width: 84,
+              height: 84,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  if (player.isDownloading)
+                    SizedBox(
+                      width: 82,
+                      height: 82,
+                      child: CircularProgressIndicator(
+                        value: player.downloadProgress,
+                        strokeWidth: 3,
+                        color: _themeColor,
+                        backgroundColor: Colors.white.withOpacity(0.20),
+                      ),
                     ),
-                  ],
-                ),
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 180),
-                  transitionBuilder: (child, animation) => ScaleTransition(
-                    scale: animation,
-                    child: child,
+                  Material(
+                    color: Colors.transparent,
+                    shape: const CircleBorder(),
+                    child: InkWell(
+                      customBorder: const CircleBorder(),
+                      onTap: player.togglePlayPause,
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 240),
+                        curve: Curves.easeOutCubic,
+                        width: 72,
+                        height: 72,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: _themeColor,
+                          boxShadow: [
+                            BoxShadow(
+                              color: _themeColor.withOpacity(0.38),
+                              blurRadius: 26,
+                              spreadRadius: 3,
+                            ),
+                          ],
+                        ),
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 180),
+                          transitionBuilder: (child, animation) =>
+                              ScaleTransition(scale: animation, child: child),
+                          child: Icon(
+                            playing
+                                ? Icons.pause_rounded
+                                : Icons.play_arrow_rounded,
+                            key: ValueKey(playing),
+                            color: Colors.black,
+                            size: 39,
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
-                  child: Icon(
-                    playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                    key: ValueKey(playing),
-                    color: Colors.black,
-                    size: 39,
-                  ),
-                ),
+                ],
               ),
             ),
           ),
@@ -837,11 +796,7 @@ class _FullPlayerState extends State<FullPlayer>
           const SizedBox(width: 10),
 
           // LETRAS — ELEMENTO CENTRAL
-          Flexible(
-            child: _buildLyricsCapsule(
-              player.currentSong,
-            ),
-          ),
+          Flexible(child: _buildLyricsCapsule(player.currentSong)),
 
           const SizedBox(width: 10),
 
@@ -866,15 +821,9 @@ class _FullPlayerState extends State<FullPlayer>
         decoration: BoxDecoration(
           color: _themeColor.withOpacity(0.10),
           borderRadius: BorderRadius.circular(18),
-          border: Border.all(
-            color: _themeColor.withOpacity(0.22),
-          ),
+          border: Border.all(color: _themeColor.withOpacity(0.22)),
         ),
-        child: Icon(
-          _playModeIcon,
-          size: 20,
-          color: _themeColor,
-        ),
+        child: Icon(_playModeIcon, size: 20, color: _themeColor),
       ),
     );
   }
@@ -891,31 +840,20 @@ class _FullPlayerState extends State<FullPlayer>
         curve: Curves.easeInOutCubic,
         width: hasLyrics ? double.infinity : null,
         height: 42,
-        padding: const EdgeInsets.symmetric(
-          horizontal: 14,
-        ),
+        padding: const EdgeInsets.symmetric(horizontal: 14),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(21),
           color: Colors.white.withOpacity(0.065),
-          border: Border.all(
-            color: Colors.white.withOpacity(0.09),
-          ),
+          border: Border.all(color: Colors.white.withOpacity(0.09)),
           boxShadow: [
-            BoxShadow(
-              color: _themeColor.withOpacity(0.07),
-              blurRadius: 18,
-            ),
+            BoxShadow(color: _themeColor.withOpacity(0.07), blurRadius: 18),
           ],
         ),
         child: Row(
           mainAxisSize: hasLyrics ? MainAxisSize.max : MainAxisSize.min,
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              Icons.text_fields_rounded,
-              size: 17,
-              color: _themeColor,
-            ),
+            Icon(Icons.lyrics_rounded, size: 17, color: _themeColor),
 
             const SizedBox(width: 7),
 
@@ -966,7 +904,9 @@ class _FullPlayerState extends State<FullPlayer>
           if (lyrics.lines[i].timestamp > position) break;
           activeIndex = i;
         }
-        final line = activeIndex >= 0 ? lyrics.lines[activeIndex].text : 'Letras sincronizadas';
+        final line = activeIndex >= 0
+            ? lyrics.lines[activeIndex].text
+            : 'Letras sincronizadas';
 
         return AnimatedSwitcher(
           duration: const Duration(milliseconds: 420),
@@ -1014,15 +954,9 @@ class _FullPlayerState extends State<FullPlayer>
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(18),
             color: Colors.white.withOpacity(0.055),
-            border: Border.all(
-              color: Colors.white.withOpacity(0.07),
-            ),
+            border: Border.all(color: Colors.white.withOpacity(0.07)),
           ),
-          child: Icon(
-            icon,
-            color: color,
-            size: 21,
-          ),
+          child: Icon(icon, color: color, size: 21),
         ),
       ),
     );
@@ -1036,11 +970,7 @@ class _FullPlayerState extends State<FullPlayer>
     return IconButton(
       onPressed: onTap,
       splashRadius: 25,
-      icon: Icon(
-        icon,
-        color: Colors.white,
-        size: size,
-      ),
+      icon: Icon(icon, color: Colors.white, size: size),
     );
   }
 
@@ -1059,24 +989,15 @@ class _FullPlayerState extends State<FullPlayer>
           decoration: BoxDecoration(
             color: Colors.white.withOpacity(0.055),
             borderRadius: BorderRadius.circular(18),
-            border: Border.all(
-              color: Colors.white.withOpacity(0.07),
-            ),
+            border: Border.all(color: Colors.white.withOpacity(0.07)),
           ),
-          child: Icon(
-            icon,
-            color: Colors.white.withOpacity(0.88),
-            size: 21,
-          ),
+          child: Icon(icon, color: Colors.white.withOpacity(0.88), size: 21),
         ),
       ),
     );
   }
 
-  void _openLyrics(
-    BuildContext context,
-    dynamic song,
-  ) {
+  void _openLyrics(BuildContext context, dynamic song) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -1087,7 +1008,8 @@ class _FullPlayerState extends State<FullPlayer>
         return _LyricsSheet(
           player: player,
           song: song,
-          lyricsFuture: _loadLyrics(song),
+          loadLyricsForSong: _loadLyrics,
+          loadThemeForSong: _themeForLyricsSong,
           themeColor: _themeColor,
           themeDark: _themeDark,
         );
@@ -1103,16 +1025,9 @@ class _FullPlayerState extends State<FullPlayer>
         return Container(
           decoration: BoxDecoration(
             color: _themeDark,
-            borderRadius: const BorderRadius.vertical(
-              top: Radius.circular(30),
-            ),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
           ),
-          padding: const EdgeInsets.fromLTRB(
-            20,
-            12,
-            20,
-            30,
-          ),
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 30),
           child: SafeArea(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -1130,10 +1045,7 @@ class _FullPlayerState extends State<FullPlayer>
 
                 Row(
                   children: [
-                    Icon(
-                      Icons.queue_music_rounded,
-                      color: _themeColor,
-                    ),
+                    Icon(Icons.queue_music_rounded, color: _themeColor),
 
                     const SizedBox(width: 10),
 
@@ -1167,8 +1079,7 @@ class _FullPlayerState extends State<FullPlayer>
 
                       Expanded(
                         child: Text(
-                          player.currentSong?.title
-                                  .toString() ??
+                          player.currentSong?.title.toString() ??
                               'Canción actual',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -1189,10 +1100,7 @@ class _FullPlayerState extends State<FullPlayer>
     );
   }
 
-  void _showMoreOptions(
-    BuildContext context,
-    dynamic song,
-  ) {
+  void _showMoreOptions(BuildContext context, dynamic song) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -1200,16 +1108,9 @@ class _FullPlayerState extends State<FullPlayer>
         return Container(
           decoration: BoxDecoration(
             color: _themeDark,
-            borderRadius: const BorderRadius.vertical(
-              top: Radius.circular(30),
-            ),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
           ),
-          padding: const EdgeInsets.fromLTRB(
-            18,
-            12,
-            18,
-            24,
-          ),
+          padding: const EdgeInsets.fromLTRB(18, 12, 18, 24),
           child: SafeArea(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -1230,8 +1131,7 @@ class _FullPlayerState extends State<FullPlayer>
                   title: 'Descargar',
                   onTap: () {
                     Navigator.pop(context);
-
-                    // Conectar aquí tu servicio real de descarga.
+                    _downloadSong(song);
                   },
                 ),
 
@@ -1241,11 +1141,7 @@ class _FullPlayerState extends State<FullPlayer>
                   onTap: () {
                     Navigator.pop(context);
 
-                    addSongToPlaylist(
-                      context,
-                      player,
-                      song,
-                    );
+                    addSongToPlaylist(context, player, song);
                   },
                 ),
 
@@ -1279,6 +1175,14 @@ class _FullPlayerState extends State<FullPlayer>
     );
   }
 
+  Future<void> _downloadSong(dynamic song) async {
+    try {
+      await player.downloadSong(song as Song);
+    } catch (error) {
+      debugPrint('[SoundNeed] No se pudo descargar la canción: $error');
+    }
+  }
+
   Widget _optionTile({
     required IconData icon,
     required String title,
@@ -1286,10 +1190,7 @@ class _FullPlayerState extends State<FullPlayer>
   }) {
     return ListTile(
       onTap: onTap,
-      contentPadding: const EdgeInsets.symmetric(
-        horizontal: 8,
-        vertical: 3,
-      ),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       leading: Container(
         width: 42,
         height: 42,
@@ -1297,11 +1198,7 @@ class _FullPlayerState extends State<FullPlayer>
           color: Colors.white.withOpacity(0.055),
           borderRadius: BorderRadius.circular(14),
         ),
-        child: Icon(
-          icon,
-          color: Colors.white,
-          size: 21,
-        ),
+        child: Icon(icon, color: Colors.white, size: 21),
       ),
       title: Text(
         title,
@@ -1314,10 +1211,7 @@ class _FullPlayerState extends State<FullPlayer>
     );
   }
 
-  void _showSongInfo(
-    BuildContext context,
-    dynamic song,
-  ) {
+  void _showSongInfo(BuildContext context, dynamic song) {
     final duration = player.audioPlayer.duration;
 
     showModalBottomSheet(
@@ -1327,16 +1221,9 @@ class _FullPlayerState extends State<FullPlayer>
         return Container(
           decoration: BoxDecoration(
             color: _themeDark,
-            borderRadius: const BorderRadius.vertical(
-              top: Radius.circular(30),
-            ),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
           ),
-          padding: const EdgeInsets.fromLTRB(
-            22,
-            16,
-            22,
-            30,
-          ),
+          padding: const EdgeInsets.fromLTRB(22, 16, 22, 30),
           child: SafeArea(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -1367,10 +1254,7 @@ class _FullPlayerState extends State<FullPlayer>
                 Text(
                   song.artist.toString(),
                   textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: _themeSecondary,
-                    fontSize: 14,
-                  ),
+                  style: TextStyle(color: _themeSecondary, fontSize: 14),
                 ),
 
                 const SizedBox(height: 20),
@@ -1378,10 +1262,7 @@ class _FullPlayerState extends State<FullPlayer>
                 if (duration != null)
                   Text(
                     'Duración · ${player.formatDuration(duration.inMilliseconds)}',
-                    style: const TextStyle(
-                      color: Colors.white54,
-                      fontSize: 13,
-                    ),
+                    style: const TextStyle(color: Colors.white54, fontSize: 13),
                   ),
               ],
             ),
@@ -1395,14 +1276,16 @@ class _FullPlayerState extends State<FullPlayer>
 class _LyricsSheet extends StatefulWidget {
   final MusicPlayerController player;
   final dynamic song;
-  final Future<LyricsData?> lyricsFuture;
+  final Future<LyricsData?> Function(dynamic song) loadLyricsForSong;
+  final Future<(Color, Color, Color)> Function(dynamic song) loadThemeForSong;
   final Color themeColor;
   final Color themeDark;
 
   const _LyricsSheet({
     required this.player,
     required this.song,
-    required this.lyricsFuture,
+    required this.loadLyricsForSong,
+    required this.loadThemeForSong,
     required this.themeColor,
     required this.themeDark,
   });
@@ -1413,6 +1296,56 @@ class _LyricsSheet extends StatefulWidget {
 
 class _LyricsSheetState extends State<_LyricsSheet> {
   int _lastActiveLine = -1;
+  late dynamic _currentSong;
+  late Future<LyricsData?> _lyricsFuture;
+  late Color _themeColor;
+  late Color _themeDark;
+  int _songChangeToken = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentSong = widget.player.currentSong ?? widget.song;
+    _lyricsFuture = widget.loadLyricsForSong(_currentSong);
+    _themeColor = widget.themeColor;
+    _themeDark = widget.themeDark;
+    widget.player.addListener(_onPlayerChanged);
+  }
+
+  @override
+  void dispose() {
+    widget.player.removeListener(_onPlayerChanged);
+    super.dispose();
+  }
+
+  void _onPlayerChanged() {
+    final song = widget.player.currentSong;
+    if (song == null ||
+        (song.id == _currentSong.id && song.uri == _currentSong.uri)) {
+      return;
+    }
+
+    final token = ++_songChangeToken;
+    setState(() {
+      _currentSong = song;
+      _lyricsFuture = widget.loadLyricsForSong(song);
+      _themeColor = Colors.white;
+      _themeDark = const Color(0xFF080808);
+      _lastActiveLine = -1;
+    });
+    _updateTheme(song, token);
+  }
+
+  Future<void> _updateTheme(dynamic song, int token) async {
+    try {
+      final colors = await widget.loadThemeForSong(song);
+      if (!mounted || token != _songChangeToken) return;
+      setState(() {
+        _themeColor = colors.$1;
+        _themeDark = colors.$3;
+      });
+    } catch (_) {}
+  }
 
   int _activeLine(List<LyricLine> lines, Duration position) {
     var active = -1;
@@ -1443,20 +1376,18 @@ class _LyricsSheetState extends State<_LyricsSheet> {
   @override
   Widget build(BuildContext context) {
     return DraggableScrollableSheet(
-      initialChildSize: 0.72,
+      initialChildSize: 0.94,
       minChildSize: 0.40,
-      maxChildSize: 0.94,
+      maxChildSize: 0.98,
       expand: false,
       builder: (context, controller) {
-        return Container(
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 350),
+          curve: Curves.easeOutCubic,
           decoration: BoxDecoration(
-            color: widget.themeDark,
-            borderRadius: const BorderRadius.vertical(
-              top: Radius.circular(34),
-            ),
-            border: Border.all(
-              color: Colors.white.withOpacity(0.07),
-            ),
+            color: _themeDark,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(34)),
+            border: Border.all(color: Colors.white.withOpacity(0.07)),
           ),
           child: Column(
             children: [
@@ -1471,11 +1402,11 @@ class _LyricsSheetState extends State<_LyricsSheet> {
                 ),
               ),
 
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
 
-              _buildHeader(),
+              MiniPlayer(player: widget.player, openFullPlayerOnTap: false),
 
-              const SizedBox(height: 10),
+              const SizedBox(height: 8),
 
               Expanded(child: _buildLyricsBody(controller)),
             ],
@@ -1487,12 +1418,10 @@ class _LyricsSheetState extends State<_LyricsSheet> {
 
   Widget _buildLyricsBody(ScrollController sheetController) {
     return FutureBuilder<LyricsData?>(
-      future: widget.lyricsFuture,
+      future: _lyricsFuture,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
-          return Center(
-            child: CircularProgressIndicator(color: widget.themeColor),
-          );
+          return Center(child: CircularProgressIndicator(color: _themeColor));
         }
 
         final lyrics = snapshot.data;
@@ -1511,6 +1440,9 @@ class _LyricsSheetState extends State<_LyricsSheet> {
 
         if (!lyrics.hasSyncedLyrics) {
           return SingleChildScrollView(
+            key: ValueKey(
+              'plain_lyrics_${_currentSong.id}_${_currentSong.uri}',
+            ),
             controller: sheetController,
             padding: const EdgeInsets.fromLTRB(28, 16, 28, 36),
             child: Text(
@@ -1533,6 +1465,9 @@ class _LyricsSheetState extends State<_LyricsSheet> {
             final active = _activeLine(lyrics.lines, position);
             _scrollToLine(active, sheetController);
             return ListView.builder(
+              key: ValueKey(
+                'synced_lyrics_${_currentSong.id}_${_currentSong.uri}',
+              ),
               controller: sheetController,
               padding: const EdgeInsets.fromLTRB(24, 28, 24, 52),
               itemExtent: 68,
@@ -1546,7 +1481,7 @@ class _LyricsSheetState extends State<_LyricsSheet> {
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   decoration: BoxDecoration(
                     color: isActive
-                        ? widget.themeColor.withOpacity(0.10)
+                        ? _themeColor.withOpacity(0.10)
                         : Colors.transparent,
                     borderRadius: BorderRadius.circular(18),
                   ),
@@ -1558,10 +1493,11 @@ class _LyricsSheetState extends State<_LyricsSheet> {
                       duration: const Duration(milliseconds: 220),
                       curve: Curves.easeOut,
                       style: TextStyle(
-                        color: isActive ? Colors.white : Colors.white38,
+                        color: isActive ? _themeColor : Colors.white38,
                         fontSize: isActive ? 20 : 16,
-                        fontWeight:
-                            isActive ? FontWeight.w700 : FontWeight.w500,
+                        fontWeight: isActive
+                            ? FontWeight.w700
+                            : FontWeight.w500,
                         height: 1.35,
                       ),
                       child: Center(
@@ -1580,60 +1516,6 @@ class _LyricsSheetState extends State<_LyricsSheet> {
           },
         );
       },
-    );
-  }
-
-  Widget _buildHeader() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 22,
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-              color: widget.themeColor.withOpacity(0.12),
-              borderRadius: BorderRadius.circular(13),
-            ),
-            child: Icon(
-              Icons.text_fields_rounded,
-              color: widget.themeColor,
-              size: 20,
-            ),
-          ),
-
-          const SizedBox(width: 11),
-
-          Expanded(
-            child: Column(
-              crossAxisAlignment:
-                  CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Letras',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-
-                Text(
-                  widget.song.title.toString(),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white54,
-                    fontSize: 11,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
     );
   }
 }
