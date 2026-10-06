@@ -370,51 +370,18 @@ class _ArtistAlbumDiscoverySectionState
             _sectionHeading('Artistas más escuchados', 'Últimos 30 días'),
             const SizedBox(height: 13),
             SizedBox(
-              height: 132,
+              height: 158,
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
                 itemCount: visibleWorldArtists.take(20).length,
-                separatorBuilder: (_, _) => const SizedBox(width: 14),
+                separatorBuilder: (_, _) => const SizedBox(width: 11),
                 itemBuilder: (context, index) {
                   final artist = visibleWorldArtists[index];
-                  return SizedBox(
-                    width: 94,
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(18),
-                      onTap: () => _openArtist(artist.name),
-                      child: Column(
-                        children: [
-                          Stack(
-                            children: [
-                              _artistAvatar(artist.name, size: 82),
-                              Positioned(
-                                right: 0,
-                                bottom: 0,
-                                child: CircleAvatar(
-                                  radius: 13,
-                                  backgroundColor: widget.palette.primary,
-                                  child: Text(
-                                    '${artist.rank}',
-                                    style: const TextStyle(
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            artist.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(fontWeight: FontWeight.w600),
-                          ),
-                        ],
-                      ),
-                    ),
+                  return _artistDiscoveryCard(
+                    name: artist.name,
+                    label: 'N.º ${artist.rank}',
+                    song: null,
+                    onTap: () => _openArtist(artist.name),
                   );
                 },
               ),
@@ -428,37 +395,19 @@ class _ArtistAlbumDiscoverySectionState
             ),
             const SizedBox(height: 13),
             SizedBox(
-              height: 132,
+              height: 158,
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
                 itemCount: visibleArtists.length,
-                separatorBuilder: (_, _) => const SizedBox(width: 14),
+                separatorBuilder: (_, _) => const SizedBox(width: 11),
                 itemBuilder: (context, index) {
                   final artist = visibleArtists[index];
                   final local = _songsForArtist(artist.name);
-                  return SizedBox(
-                    width: 94,
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(18),
-                      onTap: () => _openArtist(artist.name),
-                      child: Column(
-                        children: [
-                          _artistAvatar(
-                            artist.name,
-                            song: local.isEmpty ? null : local.first,
-                            size: 82,
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            artist.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(fontWeight: FontWeight.w600),
-                          ),
-                        ],
-                      ),
-                    ),
+                  return _artistDiscoveryCard(
+                    name: artist.name,
+                    label: '${local.length} ${local.length == 1 ? 'tema' : 'temas'}',
+                    song: local.isEmpty ? null : local.first,
+                    onTap: () => _openArtist(artist.name),
                   );
                 },
               ),
@@ -630,30 +579,13 @@ class _ArtistAlbumDiscoverySectionState
                     ),
                   ),
                   const SizedBox(width: 12),
-                  Container(
-                    padding: const EdgeInsets.all(4),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: Colors.white.withValues(alpha: .75),
-                        width: 2,
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: .35),
-                          blurRadius: 18,
-                          offset: const Offset(0, 8),
-                        ),
-                      ],
-                    ),
-                    child: _Artwork(
-                      player: widget.player,
-                      song: null,
-                      artistName: artist.name,
-                      size: 112,
-                      circular: true,
-                      icon: Icons.person_rounded,
-                    ),
+                  _Artwork(
+                    player: widget.player,
+                    song: null,
+                    artistName: artist.name,
+                    size: 112,
+                    circular: true,
+                    icon: Icons.person_rounded,
                   ),
                 ],
               ),
@@ -726,73 +658,120 @@ class _ArtistAlbumDiscoverySectionState
             onBack: () => setState(() => _selectedArtist = null),
             onRefresh: _loadingOnline ? null : () => _refreshArtist(name),
           ),
-          const SizedBox(height: 16),
-          Center(
-            child: Container(
-              width: 160,
-              height: 160,
-              padding: const EdgeInsets.all(4),
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [widget.palette.secondary, widget.palette.primary],
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.fromLTRB(18, 22, 18, 18),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(28),
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  widget.palette.primary.withValues(alpha: .27),
+                  Color.lerp(AppColors.card, widget.palette.dark, .45)!,
+                  AppColors.card,
+                ],
+              ),
+              border: Border.all(
+                color: widget.palette.secondary.withValues(alpha: .18),
+              ),
+            ),
+            child: Column(
+              children: [
+                _Artwork(
+                  player: widget.player,
+                  song: sample,
+                  artistName: name,
+                  size: 154,
+                  circular: true,
+                  icon: Icons.person_rounded,
                 ),
-              ),
-              child: _Artwork(
-                player: widget.player,
-                song: sample,
-                artistName: name,
-                size: 152,
-                circular: true,
-                icon: Icons.person_rounded,
-              ),
+                const SizedBox(height: 15),
+                Text(
+                  name,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 27,
+                    height: 1.08,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: -.6,
+                  ),
+                ),
+                const SizedBox(height: 13),
+                Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    _artistStatChip(
+                      Icons.library_music_rounded,
+                      '${localSongs.length} ${localSongs.length == 1 ? 'canción' : 'canciones'}',
+                    ),
+                    if (_artistCatalog?.name.toLowerCase() == name.toLowerCase() &&
+                        _artistCatalog?.fanCount != null)
+                      _artistStatChip(
+                        Icons.people_alt_rounded,
+                        '${_formatFans(_artistCatalog!.fanCount!)} seguidores',
+                      ),
+                    if (_worldSongsForArtist(name).isNotEmpty)
+                      _artistStatChip(
+                        Icons.trending_up_rounded,
+                        'En tendencia',
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: localSongs.isEmpty
+                            ? null
+                            : () => widget.player.playPlaylist(localSongs),
+                        icon: const Icon(Icons.play_arrow_rounded),
+                        label: const Text('Reproducir'),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: widget.palette.primary,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 13),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(17),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    IconButton.filledTonal(
+                      tooltip: 'Reproducir aleatorio',
+                      onPressed: localSongs.isEmpty
+                          ? null
+                          : () => widget.player.playPlaylist(
+                              localSongs,
+                              shuffle: true,
+                            ),
+                      style: IconButton.styleFrom(
+                        minimumSize: const Size(50, 50),
+                        backgroundColor: Colors.white.withValues(alpha: .09),
+                        foregroundColor: widget.palette.secondary,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                      icon: const Icon(Icons.shuffle_rounded),
+                    ),
+                  ],
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 15),
-          if (_artistCatalog?.name.toLowerCase() == name.toLowerCase() &&
-              _artistCatalog?.fanCount != null) ...[
-            const SizedBox(height: 6),
-            Text(
-              '${_formatFans(_artistCatalog!.fanCount!)} seguidores en Deezer',
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: AppColors.textSecondary),
-            ),
-          ],
           if (_isArtists && _worldSongsForArtist(name).isNotEmpty) ...[
             const SizedBox(height: 22),
             _sectionHeading('Más escuchadas en 30 días', 'Tendencia global'),
             const SizedBox(height: 10),
             ..._worldSongsForArtist(name).map(_worldTrackTile),
           ],
-          Text(
-            '${localSongs.length} canciones en tu biblioteca',
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: AppColors.textSecondary),
-          ),
-          const SizedBox(height: 17),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              FilledButton.icon(
-                onPressed: localSongs.isEmpty
-                    ? null
-                    : () => widget.player.playPlaylist(localSongs),
-                icon: const Icon(Icons.play_arrow_rounded),
-                label: const Text('Reproducir'),
-              ),
-              const SizedBox(width: 10),
-              IconButton.filledTonal(
-                tooltip: 'Aleatorio',
-                onPressed: localSongs.isEmpty
-                    ? null
-                    : () =>
-                          widget.player.playPlaylist(localSongs, shuffle: true),
-                icon: const Icon(Icons.shuffle_rounded),
-              ),
-            ],
-          ),
           if (localSongs.isNotEmpty) ...[
             const SizedBox(height: 25),
             _sectionHeading('De tu biblioteca', 'Más escuchadas'),
@@ -872,24 +851,11 @@ class _ArtistAlbumDiscoverySectionState
           ),
           const SizedBox(height: 18),
           Center(
-            child: Container(
-              width: 218,
-              height: 218,
-              padding: const EdgeInsets.all(4),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(25),
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [widget.palette.primary, widget.palette.secondary],
-                ),
-              ),
-              child: _Artwork(
-                player: widget.player,
-                song: songs.first,
-                size: 210,
-                icon: Icons.album_rounded,
-              ),
+            child: _Artwork(
+              player: widget.player,
+              song: songs.first,
+              size: 218,
+              icon: Icons.album_rounded,
             ),
           ),
           const SizedBox(height: 16),
@@ -927,27 +893,97 @@ class _ArtistAlbumDiscoverySectionState
         accent: widget.palette.primary,
       );
 
-  Widget _artistAvatar(String name, {Song? song, double size = 82}) =>
-      Container(
-        width: size,
-        height: size,
-        padding: const EdgeInsets.all(2.5),
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [widget.palette.secondary, widget.palette.primary],
+  Widget _artistDiscoveryCard({
+    required String name,
+    required String label,
+    required Song? song,
+    required VoidCallback onTap,
+  }) =>
+      SizedBox(
+        width: 116,
+        child: Material(
+          color: Color.lerp(AppColors.card, widget.palette.primary, .055),
+          borderRadius: BorderRadius.circular(21),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(9, 10, 9, 9),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  _artistAvatar(name, song: song, size: 78),
+                  const SizedBox(height: 8),
+                  Text(
+                    name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: widget.palette.primary.withValues(alpha: .16),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: widget.palette.secondary,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
-        child: _Artwork(
-          player: widget.player,
-          song: song,
-          artistName: name,
-          size: size - 5,
-          circular: true,
-          icon: Icons.person_rounded,
+      );
+
+  Widget _artistStatChip(IconData icon, String text) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+    decoration: BoxDecoration(
+      color: Colors.white.withValues(alpha: .07),
+      borderRadius: BorderRadius.circular(18),
+      border: Border.all(color: Colors.white.withValues(alpha: .08)),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 14, color: widget.palette.secondary),
+        const SizedBox(width: 5),
+        Text(
+          text,
+          style: const TextStyle(
+            color: AppColors.textSecondary,
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+          ),
         ),
+      ],
+    ),
+  );
+
+  Widget _artistAvatar(String name, {Song? song, double size = 82}) =>
+      _Artwork(
+        player: widget.player,
+        song: song,
+        artistName: name,
+        size: size,
+        circular: true,
+        icon: Icons.person_rounded,
       );
 
   Widget _artistTile(_MediaGroup group) => Padding(
