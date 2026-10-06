@@ -9,12 +9,20 @@ import '../playlist_artwork.dart';
 import '../playlist_actions.dart';
 import '../playlist_manager.dart';
 import '../services/youtube_audio_service.dart';
+import '../services/artwork_palette.dart';
 import '../widgets/soundneed_search_field.dart';
+import '../widgets/section_spotlight.dart';
+import '../widgets/soundneed_empty_state.dart';
 
 class PlaylistsSection extends StatefulWidget {
-  const PlaylistsSection({super.key, required this.player});
+  const PlaylistsSection({
+    super.key,
+    required this.player,
+    required this.palette,
+  });
 
   final MusicPlayerController player;
+  final ArtworkPalette palette;
 
   @override
   State<PlaylistsSection> createState() => _PlaylistsSectionState();
@@ -115,22 +123,24 @@ class _PlaylistsSectionState extends State<PlaylistsSection> {
         return ListView(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
           children: [
-            Row(
-              children: [
-                const Expanded(
-                  child: Text(
-                    'Tus playlists',
-                    style: TextStyle(fontSize: 23, fontWeight: FontWeight.bold),
-                  ),
+            SectionSpotlight(
+              eyebrow: 'TU MÚSICA',
+              title: 'Tus playlists',
+              subtitle:
+                  '${manager.playlists.length + 1} colecciones listas para sonar',
+              icon: Icons.queue_music_rounded,
+              palette: widget.palette,
+              action: IconButton.filledTonal(
+                tooltip: 'Crear playlist',
+                onPressed: _create,
+                style: IconButton.styleFrom(
+                  backgroundColor: Colors.white,
+                  foregroundColor: Colors.black,
+                  fixedSize: const Size(44, 44),
                 ),
-                IconButton(
-                  tooltip: 'Crear playlist',
-                  onPressed: _create,
-                  icon: const Icon(Icons.add_circle_outline, size: 28),
-                ),
-              ],
+                icon: const Icon(Icons.add_rounded),
+              ),
             ),
-            const SizedBox(height: 14),
             LayoutBuilder(
               builder: (context, constraints) {
                 final width = (constraints.maxWidth - 12) / 2;
@@ -256,7 +266,10 @@ class _PlaylistTile extends StatelessWidget {
       children: [
         Material(
           color: const Color(0xFF1D1D2B),
-          borderRadius: BorderRadius.circular(18),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+            side: BorderSide(color: accent.withValues(alpha: .22)),
+          ),
           clipBehavior: Clip.antiAlias,
           child: InkWell(
             onTap: onTap,
@@ -489,7 +502,9 @@ class _PlaylistContentsState extends State<_PlaylistContents> {
       }
       if (mounted) setState(() => _lookedUpArtists[key] = artist);
     } catch (error) {
-      debugPrint('[SoundNeed] No se pudo recuperar el artista de ${song.title}: $error');
+      debugPrint(
+        '[SoundNeed] No se pudo recuperar el artista de ${song.title}: $error',
+      );
     }
   }
 
@@ -600,13 +615,7 @@ class _PlaylistContentsState extends State<_PlaylistContents> {
                     .toDouble(),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(22),
-                  boxShadow: [
-                    BoxShadow(
-                      color: accent.withValues(alpha: .22),
-                      blurRadius: 28,
-                      offset: const Offset(0, 12),
-                    ),
-                  ],
+                  border: Border.all(color: accent.withValues(alpha: .25)),
                 ),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(22),
@@ -692,11 +701,13 @@ class _PlaylistContentsState extends State<_PlaylistContents> {
                 Builder(
                   builder: (context) {
                     final downloadableCount = songs
-                        .where((song) =>
-                            song.isOnline ||
-                            song.isPodcast ||
-                            song.uri.startsWith('http://') ||
-                            song.uri.startsWith('https://'))
+                        .where(
+                          (song) =>
+                              song.isOnline ||
+                              song.isPodcast ||
+                              song.uri.startsWith('http://') ||
+                              song.uri.startsWith('https://'),
+                        )
                         .length;
                     final isDownloading = widget.player.isDownloadingPlaylist;
                     final progress = widget.player.playlistDownloadProgress;
@@ -704,7 +715,8 @@ class _PlaylistContentsState extends State<_PlaylistContents> {
                       tooltip: isDownloading
                           ? 'Descargando ${widget.player.playlistDownloadFinished >= widget.player.playlistDownloadTotal ? widget.player.playlistDownloadTotal : widget.player.playlistDownloadFinished + 1}/${widget.player.playlistDownloadTotal}'
                           : 'Descargar playlist',
-                      onPressed: songs.isEmpty ||
+                      onPressed:
+                          songs.isEmpty ||
                               downloadableCount == 0 ||
                               isDownloading ||
                               widget.player.isDownloading
@@ -726,7 +738,9 @@ class _PlaylistContentsState extends State<_PlaylistContents> {
                                   value: progress,
                                   strokeWidth: 2.5,
                                   color: accent,
-                                  backgroundColor: accent.withValues(alpha: .18),
+                                  backgroundColor: accent.withValues(
+                                    alpha: .18,
+                                  ),
                                 ),
                               ),
                             Icon(
@@ -789,17 +803,23 @@ class _PlaylistContentsState extends State<_PlaylistContents> {
             ),
             const SizedBox(height: 17),
             if (filteredSongs.isEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 34),
-                child: Text(
-                  _query.isNotEmpty
-                      ? 'No encontramos canciones con “$_query”.'
-                      : widget.showLikedSongs
-                      ? 'Las canciones que marques con el corazón aparecerán aquí.'
-                      : 'Agrega canciones para llenar esta playlist.',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.white60),
-                ),
+              SoundNeedEmptyState(
+                icon: _query.isNotEmpty
+                    ? Icons.search_off_rounded
+                    : widget.showLikedSongs
+                    ? Icons.favorite_border_rounded
+                    : Icons.queue_music_rounded,
+                title: _query.isNotEmpty
+                    ? 'Sin coincidencias'
+                    : widget.showLikedSongs
+                    ? 'Tu colección empieza aquí'
+                    : 'Esta playlist está vacía',
+                message: _query.isNotEmpty
+                    ? 'Prueba buscar por otro título o artista.'
+                    : widget.showLikedSongs
+                    ? 'Las canciones que marques con Me gusta aparecerán aquí.'
+                    : 'Agrega canciones y crea una lista para cada momento.',
+                accent: accent,
               )
             else
               ...filteredSongs.map((song) {
@@ -838,7 +858,9 @@ class _PlaylistContentsState extends State<_PlaylistContents> {
                       subtitle: Text(
                         _lookedUpArtists[songKey(song)] ??
                             (song.artist == 'Artista desconocido' &&
-                                    _artistLookupsStarted.contains(songKey(song))
+                                    _artistLookupsStarted.contains(
+                                      songKey(song),
+                                    )
                                 ? 'Buscando artista…'
                                 : song.artist),
                         maxLines: 1,

@@ -114,6 +114,7 @@ class ArtistDiscoveryService {
   Future<List<MusicChartTrack>>? _worldChartPending;
   List<Map<String, dynamic>> _worldSnapshots = const [];
   bool _worldSnapshotsLoaded = false;
+  final Map<String, YouTubeSearchResult> _resolvedChartResults = {};
 
   Future<List<MusicChartTrack>> loadCurrentChart({
     bool forceRefresh = false,
@@ -160,6 +161,133 @@ class ArtistDiscoveryService {
   List<MusicChartTrack> get chart => List.unmodifiable(_chart);
 
   List<MusicChartTrack> get worldChart => List.unmodifiable(_worldChart);
+
+  /// Resuelve una cola con una búsqueda individual por cada tema del chart.
+  /// Evita llenar la cola con versiones del mismo tema y portadas distintas.
+  Future<List<YouTubeSearchResult>> resolvePlaybackQueue(
+    List<MusicChartTrack> tracks, {
+    required MusicChartTrack startWith,
+    YouTubeSearchResult? firstResult,
+    int limit = 6,
+  }) async {
+    if (tracks.isEmpty) return const [];
+
+    final startIndex = tracks.indexWhere(
+      (track) =>
+          track.id == startWith.id &&
+          track.title == startWith.title &&
+          track.artist == startWith.artist,
+    );
+    final ordered = startIndex < 0
+        ? <MusicChartTrack>[startWith, ...tracks]
+        : <MusicChartTrack>[
+            ...tracks.skip(startIndex),
+            ...tracks.take(startIndex),
+          ];
+
+    String normalize(String value) => value
+        .toLowerCase()
+        .replaceAll(
+          RegExp(r'\b(topic|official|audio|video|lyrics?)\b'),
+          ' ',
+        )
+        .replaceAll(RegExp(r'[^a-z0-9áéíóúüñ]+'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+
+    double titleMatch(String resultTitle, String wantedTitle) {
+      final result = normalize(resultTitle);
+      final wanted = normalize(wantedTitle);
+      if (result.isEmpty || wanted.isEmpty) return 0;
+      if (result == wanted) return 1;
+      if (result.contains(wanted) || wanted.contains(result)) return 0.92;
+      final resultWords = result
+          .split(' ')
+          .where((word) => word.length > 1)
+          .toSet();
+      final wantedWords = wanted
+          .split(' ')
+          .where((word) => word.length > 1)
+          .toSet();
+      if (wantedWords.isEmpty) return 0;
+      return resultWords.intersection(wantedWords).length / wantedWords.length;
+    }
+
+    double artistMatch(
+      String resultTitle,
+      String resultArtist,
+      MusicChartTrack track,
+    ) {
+      final result = normalize('$resultTitle $resultArtist');
+      final wanted = normalize(track.artist);
+      if (result.isEmpty || wanted.isEmpty) return 0;
+      if (result.contains(wanted) || wanted.contains(result)) return 0.15;
+      final resultWords = result.split(' ').where((word) => word.length > 1).toSet();
+      final wantedWords = wanted.split(' ').where((word) => word.length > 1).toSet();
+      if (wantedWords.isEmpty) return 0;
+      final overlap = resultWords.intersection(wantedWords).length;
+      return overlap == 0 ? 0 : 0.08 * overlap / wantedWords.length;
+    }
+
+    final uniqueTracks = <MusicChartTrack>[];
+    final trackKeys = <String>{};
+    for (final track in ordered) {
+      final key = '${normalize(track.title)}|${normalize(track.artist)}';
+      if (track.title.trim().isEmpty || !trackKeys.add(key)) continue;
+      uniqueTracks.add(track);
+      if (uniqueTracks.length >= limit) break;
+    }
+
+    Future<(MusicChartTrack, YouTubeSearchResult?)> resolve(
+      MusicChartTrack track,
+    ) async {
+      final key = '${normalize(track.title)}|${normalize(track.artist)}';
+      if (key ==
+              '${normalize(startWith.title)}|${normalize(startWith.artist)}' &&
+          firstResult != null) {
+        _resolvedChartResults[key] = firstResult;
+        return (track, firstResult);
+      }
+      final cached = _resolvedChartResults[key];
+      if (cached != null) return (track, cached);
+      try {
+        final results = await YouTubeAudioService.instance.search(
+          '${track.title} ${track.artist} audio',
+        );
+        YouTubeSearchResult? best;
+        var bestScore = 0.0;
+        for (final result in results) {
+          final titleScore = titleMatch(result.title, track.title);
+          final score =
+              titleScore + artistMatch(result.title, result.artist, track);
+          if (score > bestScore) {
+            best = result;
+            bestScore = score;
+          }
+        }
+        if (best != null && bestScore >= 0.55) {
+          _resolvedChartResults[key] = best;
+          return (track, best);
+        }
+      } catch (_) {
+        // Una búsqueda fallida no cancela el resto de la cola.
+      }
+      return (track, null);
+    }
+
+    final resolved = await Future.wait(uniqueTracks.map(resolve));
+    final seenVideoIds = <String>{};
+    final seenSongs = <String>{};
+    return List.unmodifiable([
+      for (final item in resolved)
+        if (item.$2 != null &&
+            seenVideoIds.add(item.$2!.videoId) &&
+            seenSongs.add(
+              '${normalize(item.$2!.title)}|${normalize(item.$2!.artist)}',
+            ))
+          item.$2!,
+    ]);
+  }
 
   Future<List<MusicChartTrack>> loadWorldChart({
     bool forceRefresh = false,

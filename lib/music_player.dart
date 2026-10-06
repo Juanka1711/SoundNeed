@@ -179,6 +179,7 @@ class MusicPlayerController extends ChangeNotifier {
   /// Timer para actualizar progreso en RecommendationService.
   Timer? _progressUpdateTimer;
   Future<void> _recommendationQueue = Future<void>.value();
+  Future<void>? _pendingChartQueue;
 
   // Getters
   List<Song> get songs => _songs;
@@ -585,6 +586,40 @@ class MusicPlayerController extends ChangeNotifier {
     await loadSongs();
   }
 
+  /// Elimina una canción local mediante el diálogo de confirmación del sistema.
+  Future<bool> deleteSong(Song song) async {
+    if (song.isOnline || song.isPodcast || !song.uri.startsWith('content://')) {
+      return false;
+    }
+
+    final deleted = await _channel.invokeMethod<bool>(
+          'deleteSong',
+          <String, Object?>{'uri': song.uri},
+        ) ??
+        false;
+    if (!deleted) return false;
+
+    final wasCurrent = _currentSong?.id == song.id &&
+        _currentSong?.uri == song.uri;
+    if (wasCurrent) {
+      await _audioHandler.stop();
+    } else {
+      final oldIndex = _queueIndex;
+      final removedIndex = _queue.indexWhere(
+        (queued) => queued.id == song.id && queued.uri == song.uri,
+      );
+      _queue.removeWhere((queued) => queued.id == song.id && queued.uri == song.uri);
+      if (removedIndex >= 0 && removedIndex < oldIndex) {
+        _queueIndex = oldIndex - 1;
+      }
+    }
+    if (song.albumId != null) _artworkCache.remove(song.albumId);
+    _artworkCache.remove(song.id);
+    if (_favoriteIds.remove(song.id)) await _saveFavorites();
+    await loadSongs();
+    return true;
+  }
+
   Future<void> downloadSong(Song song) async {
     if (_isDownloading) return;
     _isDownloading = true;
@@ -895,6 +930,7 @@ class MusicPlayerController extends ChangeNotifier {
         _currentSong?.uri == song.uri) {
       return;
     }
+    _pendingChartQueue = null;
 
     if (!retry) {
       _retryOnReconnect = false;
@@ -1205,12 +1241,14 @@ class MusicPlayerController extends ChangeNotifier {
   Future<bool> playOnline(
     YouTubeSearchResult result, {
     List<YouTubeSearchResult>? playlist,
+    bool repeatAll = false,
   }) async {
     final source = (playlist == null || playlist.isEmpty)
         ? <YouTubeSearchResult>[result]
         : playlist;
 
     final song = Song.fromYouTube(result);
+    _pendingChartQueue = null;
 
     _queue = source.map(Song.fromYouTube).toList();
 
@@ -1222,10 +1260,42 @@ class MusicPlayerController extends ChangeNotifier {
     }
 
     _queueIndex = index;
+    if (repeatAll) _playbackMode = modeRepeatAll;
 
     await playSong(_queue[_queueIndex], createQueue: false);
 
     return playbackError == null;
+  }
+
+  /// Completa en segundo plano la cola de un tema de tendencias.
+  /// La primera canción empieza a sonar sin esperar las demás búsquedas.
+  void loadChartQueue(
+    String currentVideoId,
+    Future<List<YouTubeSearchResult>> queueFuture,
+  ) {
+    late final Future<void> pending;
+    pending = queueFuture
+        .then((results) {
+          if (_currentSong?.onlineVideoId != currentVideoId || results.length < 2) {
+            return;
+          }
+          final songs = results.map(Song.fromYouTube).toList();
+          final currentIndex = songs.indexWhere(
+            (song) => song.onlineVideoId == currentVideoId,
+          );
+          if (currentIndex < 0) return;
+          _queue = songs;
+          _queueIndex = currentIndex;
+          _playbackMode = modeRepeatAll;
+          notifyListeners();
+        })
+        .catchError((Object error) {
+          debugPrint('[SoundNeed] No se pudo completar la cola de tendencias: $error');
+        })
+        .whenComplete(() {
+          if (identical(_pendingChartQueue, pending)) _pendingChartQueue = null;
+        });
+    _pendingChartQueue = pending;
   }
 
   // ============================================================
@@ -1271,6 +1341,9 @@ class MusicPlayerController extends ChangeNotifier {
   // ============================================================
 
   Future<void> nextSong() async {
+    if (_queue.length <= 1 && _pendingChartQueue != null) {
+      await _pendingChartQueue;
+    }
     if (_songs.isEmpty && _queue.isEmpty) return;
 
     if (_queue.isEmpty) {
@@ -1355,6 +1428,9 @@ class MusicPlayerController extends ChangeNotifier {
   // ============================================================
 
   Future<void> _handleSongCompleted() async {
+    if (_queue.length <= 1 && _pendingChartQueue != null) {
+      await _pendingChartQueue;
+    }
     if (_playbackMode == modeRepeatOne && _currentSong != null) {
       await _audioPlayer.seek(Duration.zero);
       await _audioPlayer.play();

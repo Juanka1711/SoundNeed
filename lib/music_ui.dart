@@ -506,7 +506,29 @@ class _MusicHomePageState extends State<MusicHomePage> {
                       Expanded(
                         child: NotificationListener<ScrollNotification>(
                           onNotification: _handleMainScroll,
-                          child: _buildCurrentSection(),
+                          child: AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 260),
+                            reverseDuration: const Duration(milliseconds: 180),
+                            switchInCurve: Curves.easeOutCubic,
+                            switchOutCurve: Curves.easeInCubic,
+                            transitionBuilder: (child, animation) {
+                              final slide = Tween<Offset>(
+                                begin: const Offset(0.025, 0),
+                                end: Offset.zero,
+                              ).animate(animation);
+                              return FadeTransition(
+                                opacity: animation,
+                                child: SlideTransition(
+                                  position: slide,
+                                  child: child,
+                                ),
+                              );
+                            },
+                            child: KeyedSubtree(
+                              key: ValueKey<MusicSection>(_section),
+                              child: _buildCurrentSection(),
+                            ),
+                          ),
                         ),
                       ),
 
@@ -663,6 +685,7 @@ class _MusicHomePageState extends State<MusicHomePage> {
       case MusicSection.home:
         return HomeSection(
           player: widget.player,
+          palette: _appPalette,
           onlineResults: _onlineResults,
           onlineQuery: _onlineQuery,
           isSearchingOnline: _isSearchingOnline,
@@ -675,19 +698,21 @@ class _MusicHomePageState extends State<MusicHomePage> {
           player: widget.player,
           filteredSongs: _filteredSongs,
           searchText: _searchText,
+          palette: _appPalette,
         );
 
       case MusicSection.playlists:
-        return PlaylistsSection(player: widget.player);
+        return PlaylistsSection(player: widget.player, palette: _appPalette);
 
       case MusicSection.folders:
-        return FoldersSection(player: widget.player);
+        return FoldersSection(player: widget.player, palette: _appPalette);
 
       case MusicSection.artists:
         return ArtistsSection(
           player: widget.player,
           songs: _filteredSongs,
           searchText: _searchText,
+          palette: _appPalette,
         );
 
       case MusicSection.albums:
@@ -695,6 +720,7 @@ class _MusicHomePageState extends State<MusicHomePage> {
           player: widget.player,
           songs: _filteredSongs,
           searchText: _searchText,
+          palette: _appPalette,
         );
     }
   }

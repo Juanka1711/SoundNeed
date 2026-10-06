@@ -1,12 +1,23 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../app_colors.dart';
 import '../music_player.dart';
+import '../song_actions.dart';
+import '../services/artwork_palette.dart';
+import '../widgets/section_spotlight.dart';
 
 class FoldersSection extends StatefulWidget {
   final MusicPlayerController player;
+  final ArtworkPalette palette;
 
-  const FoldersSection({super.key, required this.player});
+  const FoldersSection({
+    super.key,
+    required this.player,
+    required this.palette,
+  });
 
   @override
   State<FoldersSection> createState() => _FoldersSectionState();
@@ -111,63 +122,130 @@ class _FoldersSectionState extends State<FoldersSection> {
     folderPaths.addAll(_selectedFolders.map((folder) => folder['path'] ?? ''));
     folderPaths.remove('');
     final sortedPaths = folderPaths.toList()..sort();
+    final songsInFolders = songsByFolder.values.fold<int>(
+      0,
+      (total, songs) => total + songs.length,
+    );
 
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(18, 12, 18, 10),
-          child: Row(
-            children: [
-              const Expanded(
-                child: Text(
-                  'Carpetas de música',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
-                ),
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          child: SectionSpotlight(
+            eyebrow: 'TU BIBLIOTECA',
+            title: 'Tus carpetas',
+            subtitle:
+                '${sortedPaths.length} ${sortedPaths.length == 1 ? 'carpeta' : 'carpetas'} · $songsInFolders canciones',
+            icon: Icons.folder_open_rounded,
+            accent: const Color(0xFF6979F8),
+            palette: widget.palette,
+            action: FilledButton.tonalIcon(
+              onPressed: _addingFolder ? null : _addFolder,
+              icon: _addingFolder
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.add_rounded, size: 18),
+              label: const Text('Añadir'),
+              style: FilledButton.styleFrom(
+                foregroundColor: Colors.white,
+                backgroundColor: Colors.white.withValues(alpha: 0.12),
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                shape: const StadiumBorder(),
               ),
-              FilledButton.tonalIcon(
-                onPressed: _addingFolder ? null : _addFolder,
-                icon: _addingFolder
-                    ? const SizedBox(
-                        width: 17,
-                        height: 17,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.create_new_folder_outlined),
-                label: const Text('Agregar'),
-              ),
-            ],
+            ),
           ),
         ),
         Expanded(
           child: _loadingFolders && sortedPaths.isEmpty
-              ? const Center(child: CircularProgressIndicator())
+              ? Center(
+                  child: CircularProgressIndicator(
+                    color: widget.palette.secondary,
+                  ),
+                )
               : sortedPaths.isEmpty
               ? Center(
                   child: Padding(
-                    padding: const EdgeInsets.all(32),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.folder_open_rounded,
-                          size: 58,
-                          color: Colors.white.withValues(alpha: 0.40),
+                    padding: const EdgeInsets.all(24),
+                    child: Container(
+                      width: 360,
+                      padding: const EdgeInsets.fromLTRB(22, 25, 22, 22),
+                      decoration: BoxDecoration(
+                        color: AppColors.card.withValues(alpha: .72),
+                        borderRadius: BorderRadius.circular(26),
+                        border: Border.all(
+                          color: widget.palette.primary.withValues(alpha: .24),
                         ),
-                        const SizedBox(height: 14),
-                        const Text(
-                          'No hay carpetas con música',
-                          style: TextStyle(
-                            fontSize: 17,
-                            fontWeight: FontWeight.w600,
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 74,
+                            height: 74,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              gradient: LinearGradient(
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                                colors: [
+                                  widget.palette.primary.withValues(alpha: .45),
+                                  widget.palette.secondary.withValues(
+                                    alpha: .15,
+                                  ),
+                                ],
+                              ),
+                              border: Border.all(
+                                color: widget.palette.secondary.withValues(
+                                  alpha: .30,
+                                ),
+                              ),
+                            ),
+                            child: Icon(
+                              Icons.folder_open_rounded,
+                              size: 34,
+                              color: widget.palette.secondary,
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 6),
-                        const Text(
-                          'Agrega una carpeta para incluir sus canciones.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: Colors.white60),
-                        ),
-                      ],
+                          const SizedBox(height: 17),
+                          const Text(
+                            'Tu música, a tu manera',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: -.25,
+                            ),
+                          ),
+                          const SizedBox(height: 7),
+                          const Text(
+                            'Agrega una carpeta del dispositivo y SoundNeed organizará aquí tus canciones.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: Colors.white60,
+                              fontSize: 13,
+                              height: 1.4,
+                            ),
+                          ),
+                          const SizedBox(height: 18),
+                          FilledButton.icon(
+                            onPressed: _addingFolder ? null : _addFolder,
+                            icon: const Icon(Icons.create_new_folder_rounded),
+                            label: const Text('Agregar carpeta'),
+                            style: FilledButton.styleFrom(
+                              backgroundColor: widget.palette.primary,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 18,
+                                vertical: 12,
+                              ),
+                              shape: const StadiumBorder(),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 )
@@ -194,28 +272,49 @@ class _FoldersSectionState extends State<FoldersSection> {
                     final name = pathParts.isEmpty ? path : pathParts.last;
 
                     return Card(
-                      color: Colors.white.withValues(alpha: 0.045),
-                      margin: const EdgeInsets.symmetric(vertical: 5),
+                      color: Color.lerp(
+                        AppColors.card,
+                        widget.palette.dark,
+                        .16,
+                      ),
+                      margin: const EdgeInsets.symmetric(vertical: 6),
+                      elevation: 0,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(18),
                         side: BorderSide(
-                          color: Colors.white.withValues(alpha: 0.07),
+                          color: selected
+                              ? widget.palette.primary.withValues(alpha: 0.48)
+                              : Colors.white.withValues(alpha: 0.09),
                         ),
                       ),
                       clipBehavior: Clip.antiAlias,
                       child: ExpansionTile(
                         key: ValueKey(path),
-                        leading: Icon(
-                          Icons.folder_rounded,
-                          color: selected ? Colors.amberAccent : Colors.white70,
+                        tilePadding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 5,
                         ),
+                        childrenPadding: const EdgeInsets.only(bottom: 8),
+                        collapsedIconColor: Colors.white54,
+                        iconColor: widget.palette.secondary,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(18),
+                        ),
+                        collapsedShape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(18),
+                        ),
+                        leading: _buildFolderArtwork(songs, selected: selected),
                         title: Text(
                           name,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -.15,
+                          ),
                         ),
                         subtitle: Text(
-                          '${songs.length} ${songs.length == 1 ? 'canción' : 'canciones'} · $path',
+                          '${selected ? 'Carpeta agregada' : 'Toca para explorar'} · ${songs.length} ${songs.length == 1 ? 'canción' : 'canciones'}',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -243,6 +342,12 @@ class _FoldersSectionState extends State<FoldersSection> {
                                 )
                                   ListTile(
                                     dense: true,
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 18,
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(14),
+                                    ),
                                     leading: _buildSongArtwork(
                                       songs[songIndex],
                                     ),
@@ -252,11 +357,30 @@ class _FoldersSectionState extends State<FoldersSection> {
                                           : songs[songIndex].title,
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                      ),
                                     ),
                                     subtitle: Text(
                                       songs[songIndex].artist,
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
+                                    ),
+                                    onLongPress: () => confirmDeleteSong(
+                                      context,
+                                      widget.player,
+                                      songs[songIndex],
+                                    ),
+                                    trailing: IconButton(
+                                      tooltip: 'Eliminar del dispositivo',
+                                      onPressed: () => confirmDeleteSong(
+                                        context,
+                                        widget.player,
+                                        songs[songIndex],
+                                      ),
+                                      icon: const Icon(
+                                        Icons.delete_outline_rounded,
+                                      ),
                                     ),
                                     onTap: () => widget.player.playPlaylist(
                                       songs,
@@ -295,6 +419,88 @@ class _FoldersSectionState extends State<FoldersSection> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildFolderArtwork(List<Song> songs, {required bool selected}) {
+    if (songs.isEmpty) {
+      return Container(
+        width: 52,
+        height: 52,
+        decoration: BoxDecoration(
+          color: widget.palette.primary.withValues(alpha: .11),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: widget.palette.primary.withValues(alpha: .27),
+          ),
+        ),
+        child: Icon(
+          Icons.folder_rounded,
+          color: selected ? widget.palette.secondary : widget.palette.primary,
+        ),
+      );
+    }
+
+    Widget tile(Song song) => Expanded(
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(3),
+        child: FutureBuilder<Uint8List?>(
+          future: widget.player.loadArtwork(song),
+          builder: (context, snapshot) {
+            final artwork = snapshot.data;
+            return artwork == null
+                ? ColoredBox(
+                    color: Colors.white.withValues(alpha: 0.08),
+                    child: const Icon(
+                      Icons.music_note_rounded,
+                      color: Colors.white54,
+                      size: 13,
+                    ),
+                  )
+                : Image.memory(artwork, fit: BoxFit.cover);
+          },
+        ),
+      ),
+    );
+
+    final covers = songs.take(4).toList();
+    while (covers.length < 4) {
+      covers.add(songs[covers.length % songs.length]);
+    }
+    return Container(
+      width: 52,
+      height: 52,
+      padding: const EdgeInsets.all(2),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: widget.palette.primary.withValues(alpha: .36),
+        ),
+      ),
+      child: Column(
+        children: [
+          Expanded(
+            child: Row(
+              children: [
+                tile(covers[0]),
+                const SizedBox(width: 2),
+                tile(covers[1]),
+              ],
+            ),
+          ),
+          const SizedBox(height: 2),
+          Expanded(
+            child: Row(
+              children: [
+                tile(covers[2]),
+                const SizedBox(width: 2),
+                tile(covers[3]),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

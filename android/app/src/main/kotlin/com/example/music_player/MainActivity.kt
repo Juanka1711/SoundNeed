@@ -6,6 +6,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.app.RecoverableSecurityException
 import android.graphics.BitmapFactory
 import android.media.MediaScannerConnection
 import android.net.ConnectivityManager
@@ -63,6 +64,7 @@ class MainActivity : AudioServiceActivity() {
         }
     }
     private var pendingFolderPickerResult: MethodChannel.Result? = null
+    private var pendingDeleteResult: MethodChannel.Result? = null
 
     companion object {
         private const val CHANNEL = "music_player/media"
@@ -70,6 +72,7 @@ class MainActivity : AudioServiceActivity() {
         private const val WIDGET_CHANNEL = "soundneed/widget"
         private const val NOTIFICATION_PERMISSION_REQUEST_CODE = 200
         private const val PICK_MUSIC_FOLDER_REQUEST_CODE = 201
+        private const val DELETE_MUSIC_REQUEST_CODE = 202
         private const val MUSIC_FOLDERS_PREFS = "soundneed_music_folders"
         private const val MUSIC_FOLDERS_KEY = "paths"
         private const val DOWNLOAD_ARTWORKS_KEY = "artwork_files"
@@ -148,6 +151,74 @@ class MainActivity : AudioServiceActivity() {
                     paths.remove(path)
                     preferences.edit().putStringSet(MUSIC_FOLDERS_KEY, paths).apply()
                     result.success(true)
+                }
+
+                "deleteSong" -> {
+                    val rawUri = call.argument<String>("uri").orEmpty()
+                    val uri = runCatching { Uri.parse(rawUri) }.getOrNull()
+                    if (uri == null || uri.scheme != "content" ||
+                        uri.authority != "media" ||
+                        !uri.path.orEmpty().contains("/audio/media/")
+                    ) {
+                        result.error("INVALID_SONG_URI", "No se reconoce esta canción local.", null)
+                        return@setMethodCallHandler
+                    }
+                    if (pendingDeleteResult != null) {
+                        result.error("DELETE_BUSY", "Ya hay una confirmación de eliminación abierta.", null)
+                        return@setMethodCallHandler
+                    }
+
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        try {
+                            val request = MediaStore.createDeleteRequest(
+                                contentResolver,
+                                listOf(uri),
+                            )
+                            pendingDeleteResult = result
+                            startIntentSenderForResult(
+                                request.intentSender,
+                                DELETE_MUSIC_REQUEST_CODE,
+                                null,
+                                0,
+                                0,
+                                0,
+                            )
+                        } catch (error: Exception) {
+                            pendingDeleteResult = null
+                            result.error("DELETE_FAILED", error.message ?: "No se pudo solicitar la eliminación.", null)
+                        }
+                    } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        try {
+                            result.success(contentResolver.delete(uri, null, null) > 0)
+                        } catch (error: RecoverableSecurityException) {
+                            try {
+                                pendingDeleteResult = result
+                                startIntentSenderForResult(
+                                    error.userAction.actionIntent.intentSender,
+                                    DELETE_MUSIC_REQUEST_CODE,
+                                    null,
+                                    0,
+                                    0,
+                                    0,
+                                )
+                            } catch (launchError: Exception) {
+                                pendingDeleteResult = null
+                                result.error("DELETE_FAILED", launchError.message, null)
+                            }
+                        } catch (error: Exception) {
+                            result.error("DELETE_FAILED", error.message ?: "No se pudo eliminar la canción.", null)
+                        }
+                    } else {
+                        try {
+                            result.success(contentResolver.delete(uri, null, null) > 0)
+                        } catch (error: Exception) {
+                            result.error(
+                                "DELETE_FAILED",
+                                error.message ?: "No se pudo eliminar la canción.",
+                                null,
+                            )
+                        }
+                    }
                 }
 
                 "downloadAudio" -> {
@@ -409,6 +480,12 @@ class MainActivity : AudioServiceActivity() {
     @Deprecated("Deprecated in Android")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == DELETE_MUSIC_REQUEST_CODE) {
+            val pendingResult = pendingDeleteResult ?: return
+            pendingDeleteResult = null
+            pendingResult.success(resultCode == RESULT_OK)
+            return
+        }
         if (requestCode != PICK_MUSIC_FOLDER_REQUEST_CODE) return
 
         val pendingResult = pendingFolderPickerResult ?: return

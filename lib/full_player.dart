@@ -430,6 +430,12 @@ class _FullPlayerState extends State<FullPlayer>
           _buildSecondaryControls(),
 
           const SizedBox(height: 8),
+
+          if (song is Song &&
+              (song.isOnline || song.isPodcast ||
+                  song.uri.startsWith('http://') ||
+                  song.uri.startsWith('https://')))
+            _buildDownloadButton(song),
         ],
       ),
     );
@@ -713,26 +719,13 @@ class _FullPlayerState extends State<FullPlayer>
           animation: player,
           builder: (context, _) => Semantics(
             button: true,
-            label: player.isDownloading
-                ? 'Descargando canción'
-                : (playing ? 'Pausar' : 'Reproducir'),
+            label: playing ? 'Pausar' : 'Reproducir',
             child: SizedBox(
               width: 84,
               height: 84,
               child: Stack(
                 alignment: Alignment.center,
                 children: [
-                  if (player.isDownloading)
-                    SizedBox(
-                      width: 82,
-                      height: 82,
-                      child: CircularProgressIndicator(
-                        value: player.downloadProgress,
-                        strokeWidth: 3,
-                        color: _themeColor,
-                        backgroundColor: Colors.white.withOpacity(0.20),
-                      ),
-                    ),
                   Material(
                     color: Colors.transparent,
                     shape: const CircleBorder(),
@@ -774,6 +767,43 @@ class _FullPlayerState extends State<FullPlayer>
                 ],
               ),
             ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildDownloadButton(Song song) {
+    return AnimatedBuilder(
+      animation: player,
+      builder: (context, _) {
+        final downloading = player.isDownloading;
+        final progress = player.downloadProgress;
+        final label = downloading && progress != null
+            ? 'Descargando ${(progress * 100).round()}%'
+            : downloading
+            ? 'Preparando descarga…'
+            : 'Descargar en el dispositivo';
+        return OutlinedButton.icon(
+          onPressed: downloading ? null : () => _downloadSong(song),
+          icon: downloading
+              ? SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    value: progress,
+                    strokeWidth: 2,
+                    color: _themeColor,
+                  ),
+                )
+              : const Icon(Icons.download_for_offline_rounded),
+          label: Text(label),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: _themeColor,
+            disabledForegroundColor: _themeColor.withOpacity(0.85),
+            side: BorderSide(color: _themeColor.withOpacity(0.48)),
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
+            shape: const StadiumBorder(),
           ),
         );
       },
@@ -1178,8 +1208,22 @@ class _FullPlayerState extends State<FullPlayer>
   Future<void> _downloadSong(dynamic song) async {
     try {
       await player.downloadSong(song as Song);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('Canción guardada en el dispositivo.'),
+        ),
+      );
     } catch (error) {
       debugPrint('[SoundNeed] No se pudo descargar la canción: $error');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('No se pudo descargar: $error'),
+        ),
+      );
     }
   }
 

@@ -67,6 +67,58 @@ class MusicPlayerApp extends StatelessWidget {
 
         cardTheme: const CardThemeData(
           color: card,
+          elevation: 0,
+        ),
+
+        dialogTheme: DialogThemeData(
+          backgroundColor: surface,
+          surfaceTintColor: Colors.transparent,
+          elevation: 18,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(26),
+            side: BorderSide(color: Colors.white10),
+          ),
+          titleTextStyle: const TextStyle(
+            color: Colors.white,
+            fontSize: 21,
+            fontWeight: FontWeight.w800,
+            letterSpacing: -.3,
+          ),
+          contentTextStyle: const TextStyle(
+            color: textSecondary,
+            fontSize: 14,
+            height: 1.4,
+          ),
+        ),
+
+        bottomSheetTheme: BottomSheetThemeData(
+          backgroundColor: surface,
+          modalBackgroundColor: surface,
+          surfaceTintColor: Colors.transparent,
+          elevation: 20,
+          showDragHandle: true,
+          dragHandleColor: Colors.white38,
+          shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+            side: BorderSide(color: Colors.white10),
+          ),
+        ),
+
+        popupMenuTheme: PopupMenuThemeData(
+          color: surface,
+          surfaceTintColor: Colors.transparent,
+          elevation: 14,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+            side: const BorderSide(color: Colors.white12),
+          ),
+          textStyle: const TextStyle(color: Colors.white, fontSize: 14),
+        ),
+
+        dividerTheme: DividerThemeData(
+          color: Colors.white.withValues(alpha: .08),
+          thickness: 1,
+          space: 1,
         ),
 
         sliderTheme: SliderThemeData(

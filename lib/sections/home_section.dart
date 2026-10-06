@@ -10,13 +10,17 @@ import '../playlist_artwork.dart';
 import '../services/youtube_audio_service.dart';
 import '../playlist_manager.dart';
 import '../widgets/soundneed_search_field.dart';
+import '../widgets/soundneed_section_heading.dart';
+import '../widgets/soundneed_empty_state.dart';
 import '../artist_catalog_service.dart';
 import '../artist_discovery_service.dart';
 import '../services/recommendation_service.dart';
 import '../podcast_service.dart';
+import '../services/artwork_palette.dart';
 
 class HomeSection extends StatefulWidget {
   final MusicPlayerController player;
+  final ArtworkPalette palette;
   final List<YouTubeSearchResult>? onlineResults;
   final String? onlineQuery;
   final bool isSearchingOnline;
@@ -26,6 +30,7 @@ class HomeSection extends StatefulWidget {
   const HomeSection({
     super.key,
     required this.player,
+    required this.palette,
     this.onlineResults,
     this.onlineQuery,
     this.isSearchingOnline = false,
@@ -469,10 +474,7 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Tus playlists',
-            style: TextStyle(fontSize: 21, fontWeight: FontWeight.w800),
-          ),
+          _sectionHeading('Tus playlists', ''),
           const SizedBox(height: 13),
           GridView.builder(
             shrinkWrap: true,
@@ -503,36 +505,44 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(19),
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            PlaylistArtwork(
-                              player: widget.player,
-                              songs: item.songs,
-                              icon: item.icon,
-                              accent: item.color,
-                            ),
-                            Positioned(
-                              right: 10,
-                              bottom: 10,
-                              child: DecoratedBox(
-                                decoration: const BoxDecoration(
-                                  color: Colors.white,
-                                  shape: BoxShape.circle,
-                                ),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(7),
-                                  child: Icon(
-                                    Icons.play_arrow_rounded,
-                                    color: item.color,
-                                    size: 25,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(19),
+                          border: Border.all(
+                            color: item.color.withValues(alpha: .35),
+                          ),
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(19),
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              PlaylistArtwork(
+                                player: widget.player,
+                                songs: item.songs,
+                                icon: item.icon,
+                                accent: item.color,
+                              ),
+                              Positioned(
+                                right: 10,
+                                bottom: 10,
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(7),
+                                    child: Icon(
+                                      Icons.play_arrow_rounded,
+                                      color: item.color,
+                                      size: 25,
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -574,13 +584,19 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
     }
     return Container(
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF3B2065), Color(0xFF211A37)],
+        gradient: LinearGradient(
+          colors: [
+            Color.lerp(widget.palette.primary, widget.palette.dark, .52)!,
+            widget.palette.dark,
+            AppColors.card,
+          ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: Colors.white.withOpacity(.09)),
+        border: Border.all(
+          color: widget.palette.secondary.withValues(alpha: .22),
+        ),
       ),
       padding: const EdgeInsets.all(18),
       child: Row(
@@ -679,13 +695,13 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
                     color: Colors.white.withValues(alpha: .14),
                   ),
                 ),
-                child: const Row(
+                child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
                       Icons.bolt_rounded,
                       size: 15,
-                      color: Color(0xFFC19AFF),
+                      color: widget.palette.secondary,
                     ),
                     SizedBox(width: 5),
                     Text(
@@ -714,8 +730,8 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
                       children: [
                         Text(
                           'N.º ${track.rank} DEL MOMENTO',
-                          style: const TextStyle(
-                            color: Color(0xFFD4B8FF),
+                          style: TextStyle(
+                            color: widget.palette.secondary,
                             fontSize: 11,
                             fontWeight: FontWeight.w800,
                             letterSpacing: .8,
@@ -769,10 +785,7 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
   Widget _buildContinueListening() => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      const Text(
-        'Continúa escuchando',
-        style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
-      ),
+      _sectionHeading('Continúa escuchando', ''),
       const SizedBox(height: 14),
       SizedBox(
         height: 92,
@@ -838,18 +851,16 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
       children: [
         Row(
           children: [
-            const Expanded(
-              child: Text(
-                'Podcasts',
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
-              ),
-            ),
+            Expanded(child: _sectionHeading('Podcasts', '')),
             IconButton(
               onPressed: _loadingPodcastRecommendations
                   ? null
                   : _loadPodcastRecommendations,
               tooltip: 'Actualizar recomendaciones',
-              icon: const Icon(Icons.refresh_rounded, color: Colors.white70),
+              icon: Icon(
+                Icons.refresh_rounded,
+                color: widget.palette.secondary,
+              ),
             ),
           ],
         ),
@@ -1130,6 +1141,13 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
 
   Future<void> _playChartTrack(MusicChartTrack track) async {
     try {
+      final inColombiaChart = _currentChart.any(
+        (candidate) =>
+            candidate.id == track.id &&
+            candidate.title == track.title &&
+            candidate.artist == track.artist,
+      );
+      final sourceChart = inColombiaChart ? _currentChart : _worldChart;
       final results = await YouTubeAudioService.instance.search(
         '${track.title} ${track.artist} audio',
       );
@@ -1144,24 +1162,21 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
         return;
       }
       final normalizedTitle = track.title.toLowerCase();
-      final normalizedArtist = track.artist.toLowerCase();
-      var result = results.first;
-      for (final candidate in results) {
-        if (candidate.title.toLowerCase().contains(normalizedTitle) &&
-            candidate.artist.toLowerCase().contains(normalizedArtist)) {
-          result = candidate;
-          break;
-        }
+      final result = results.firstWhere(
+        (candidate) => candidate.title.toLowerCase().contains(normalizedTitle),
+        orElse: () => results.first,
+      );
+      final ok = await widget.player.playOnline(result, playlist: [result]);
+      if (ok) {
+        widget.player.loadChartQueue(
+          result.videoId,
+          ArtistDiscoveryService.instance.resolvePlaybackQueue(
+            sourceChart,
+            startWith: track,
+            firstResult: result,
+          ),
+        );
       }
-      if (result == results.first) {
-        for (final candidate in results) {
-          if (candidate.title.toLowerCase().contains(normalizedTitle)) {
-            result = candidate;
-            break;
-          }
-        }
-      }
-      final ok = await widget.player.playOnline(result, playlist: results);
       if (!ok && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -1179,22 +1194,12 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
     }
   }
 
-  Widget _sectionHeading(String title, String trailing) => Row(
-    children: [
-      Expanded(
-        child: Text(
-          title,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
-        ),
-      ),
-      Text(
-        trailing,
-        style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
-      ),
-    ],
-  );
+  Widget _sectionHeading(String title, String trailing) =>
+      SoundNeedSectionHeading(
+        title: title,
+        detail: trailing,
+        accent: widget.palette.primary,
+      );
 
   Widget _buildPodcastTile(PodcastEpisode episode) => Padding(
     padding: const EdgeInsets.only(bottom: 10),
@@ -1303,18 +1308,16 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
       children: [
         Row(
           children: [
-            const Expanded(
-              child: Text(
-                'Lo más escuchado ahora',
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
-              ),
-            ),
+            Expanded(child: _sectionHeading('Lo más escuchado ahora', '')),
             IconButton(
               tooltip: 'Actualizar éxitos',
               onPressed: _loadingChart
                   ? null
                   : () => _loadCurrentChart(refresh: true),
-              icon: const Icon(Icons.refresh_rounded, color: Colors.white70),
+              icon: Icon(
+                Icons.refresh_rounded,
+                color: widget.palette.secondary,
+              ),
             ),
           ],
         ),
@@ -1502,10 +1505,7 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Lo más escuchado en el mundo',
-          style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
-        ),
+        _sectionHeading('Lo más escuchado en el mundo', 'Global'),
         const SizedBox(height: 5),
         const Text(
           'Éxitos de todo el mundo',
@@ -1614,10 +1614,7 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
   Widget _buildRecommendedStations() => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      const Text(
-        'Estaciones recomendadas',
-        style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
-      ),
+      _sectionHeading('Estaciones recomendadas', ''),
       const SizedBox(height: 5),
       const Text(
         'Mezclas basadas en los artistas que escuchas',
@@ -1748,23 +1745,94 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
 
   Widget _buildHeader() {
     final songCount = widget.player.songs.length;
+    final hour = DateTime.now().hour;
+    final greeting = hour < 12
+        ? 'Buenos días'
+        : hour < 19
+        ? 'Buenas tardes'
+        : 'Buenas noches';
+    final subtitle = songCount == 0
+        ? 'Tu próximo descubrimiento empieza aquí.'
+        : '$songCount ${songCount == 1 ? 'canción lista' : 'canciones listas'} para acompañarte.';
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Row(
       children: [
-        const Text(
-          'Hola de nuevo',
-          style: TextStyle(
-            fontSize: 32,
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
-            letterSpacing: -0.8,
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 6,
+                    height: 6,
+                    decoration: BoxDecoration(
+                      color: widget.palette.primary,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 7),
+                  Text(
+                    'TU SONIDO · HOY',
+                    style: TextStyle(
+                      color: widget.palette.secondary.withValues(alpha: .9),
+                      fontSize: 9,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1.35,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 7),
+              Text(
+                '$greeting 👋',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 29,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                  letterSpacing: -0.8,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                subtitle,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 13,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ],
           ),
         ),
-        const SizedBox(height: 8),
-        Text(
-          '$songCount canciones en tu biblioteca',
-          style: const TextStyle(fontSize: 15, color: AppColors.textSecondary),
+        const SizedBox(width: 12),
+        Container(
+          width: 66,
+          height: 66,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [widget.palette.secondary, widget.palette.primary],
+            ),
+            border: Border.all(color: Colors.white.withValues(alpha: .18)),
+            boxShadow: [
+              BoxShadow(
+                color: widget.palette.primary.withValues(alpha: .30),
+                blurRadius: 22,
+                offset: const Offset(0, 7),
+              ),
+            ],
+          ),
+          child: const Icon(
+            Icons.graphic_eq_rounded,
+            color: Colors.white,
+            size: 32,
+          ),
         ),
       ],
     );
@@ -1778,36 +1846,11 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
     final results = widget.localSearchResults ?? [];
 
     if (results.isEmpty) {
-      return Container(
-        padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 20),
-        decoration: BoxDecoration(
-          color: AppColors.card,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: Colors.white.withOpacity(0.08)),
-        ),
-        child: Column(
-          children: [
-            Icon(
-              Icons.search_off,
-              size: 48,
-              color: Colors.white.withOpacity(0.25),
-            ),
-            const SizedBox(height: 16),
-            const Text(
-              'Sin resultados locales',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'No encontramos canciones en tu biblioteca',
-              style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
-            ),
-          ],
-        ),
+      return SoundNeedEmptyState(
+        icon: Icons.search_off_rounded,
+        title: 'Sin resultados locales',
+        message: 'No encontramos canciones en tu biblioteca.',
+        accent: widget.palette.primary,
       );
     }
 
@@ -2167,9 +2210,11 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
   // ============================================================
 
   Widget _buildLoading() {
-    return const Padding(
-      padding: EdgeInsets.symmetric(vertical: 80),
-      child: Center(child: CircularProgressIndicator(color: Colors.white)),
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 80),
+      child: Center(
+        child: CircularProgressIndicator(color: widget.palette.secondary),
+      ),
     );
   }
 
@@ -2178,43 +2223,20 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
   // ============================================================
 
   Widget _buildPermissionMessage() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 60),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.lock_outline,
-            size: 80,
-            color: Colors.white.withOpacity(0.25),
-          ),
-          const SizedBox(height: 20),
-          const Text(
-            'Permiso necesario',
-            style: TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(height: 10),
-          const Text(
-            'La aplicación necesita permiso para acceder '
-            'a la música almacenada en el dispositivo.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: AppColors.textSecondary),
-          ),
-          const SizedBox(height: 20),
-          FilledButton.icon(
-            style: FilledButton.styleFrom(
-              backgroundColor: Colors.white,
-              foregroundColor: Colors.black,
-            ),
-            onPressed: widget.player.loadSongs,
-            icon: const Icon(Icons.lock_open),
-            label: const Text('Conceder permiso'),
-          ),
-        ],
+    return SoundNeedEmptyState(
+      icon: Icons.folder_shared_rounded,
+      title: 'Necesitamos acceso a tu música',
+      message: 'Concede permiso para que SoundNeed pueda mostrar los archivos de audio del dispositivo.',
+      accent: widget.palette.primary,
+      action: FilledButton.icon(
+        onPressed: widget.player.loadSongs,
+        icon: const Icon(Icons.lock_open_rounded),
+        label: const Text('Conceder permiso'),
+        style: FilledButton.styleFrom(
+          backgroundColor: widget.palette.primary,
+          foregroundColor: Colors.white,
+          shape: const StadiumBorder(),
+        ),
       ),
     );
   }
@@ -2224,43 +2246,20 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
   // ============================================================
 
   Widget _buildEmptyLibrary() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 60),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.music_off,
-            size: 80,
-            color: Colors.white.withOpacity(0.25),
-          ),
-          const SizedBox(height: 20),
-          const Text(
-            'No hay música',
-            style: TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(height: 10),
-          const Text(
-            'Agrega archivos de música a tu dispositivo '
-            'y actualiza la biblioteca.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: AppColors.textSecondary),
-          ),
-          const SizedBox(height: 20),
-          FilledButton.icon(
-            style: FilledButton.styleFrom(
-              backgroundColor: Colors.white,
-              foregroundColor: Colors.black,
-            ),
-            onPressed: widget.player.loadSongs,
-            icon: const Icon(Icons.refresh),
-            label: const Text('Actualizar'),
-          ),
-        ],
+    return SoundNeedEmptyState(
+      icon: Icons.library_music_rounded,
+      title: 'Tu biblioteca está lista para sonar',
+      message: 'Agrega archivos de música a tu dispositivo y actualiza la biblioteca.',
+      accent: widget.palette.primary,
+      action: FilledButton.icon(
+        onPressed: widget.player.loadSongs,
+        icon: const Icon(Icons.refresh_rounded),
+        label: const Text('Actualizar música'),
+        style: FilledButton.styleFrom(
+          backgroundColor: widget.palette.primary,
+          foregroundColor: Colors.white,
+          shape: const StadiumBorder(),
+        ),
       ),
     );
   }

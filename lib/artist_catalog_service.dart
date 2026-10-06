@@ -14,8 +14,7 @@ class ArtistCatalogEntry {
   final int? fanCount;
 }
 
-/// Retrieves current artist portraits and public fan counts for artist pages.
-/// Search results are accepted only when the artist name matches exactly.
+/// Retrieves artist portraits and public fan counts for search and artist pages.
 class ArtistCatalogService {
   ArtistCatalogService._();
 
@@ -24,7 +23,75 @@ class ArtistCatalogService {
   static const _cacheDuration = Duration(hours: 6);
   final Map<String, _CachedArtist> _cache = {};
   final Map<String, Future<ArtistCatalogEntry?>> _pending = {};
+  final Map<String, _CachedArtistList> _searchCache = {};
+  final Map<String, Future<List<ArtistCatalogEntry>>> _searchPending = {};
   final http.Client _client = http.Client();
+
+  Future<List<ArtistCatalogEntry>> searchArtists(
+    String query, {
+    int limit = 20,
+  }) {
+    final trimmed = query.trim();
+    if (trimmed.isEmpty) return Future.value(const []);
+    final key = _normalize(trimmed);
+    final cached = _searchCache[key];
+    if (cached != null &&
+        DateTime.now().difference(cached.savedAt) < _cacheDuration) {
+      return Future.value(cached.entries.take(limit).toList(growable: false));
+    }
+    return _searchPending.putIfAbsent(
+      key,
+      () => _search(trimmed, key, limit),
+    );
+  }
+
+  Future<List<ArtistCatalogEntry>> _search(
+    String query,
+    String key,
+    int limit,
+  ) async {
+    try {
+      final response = await _client
+          .get(
+            Uri.https('api.deezer.com', '/search/artist', {'q': query}),
+            headers: const {'Accept': 'application/json'},
+          )
+          .timeout(const Duration(seconds: 8));
+      if (response.statusCode != 200) return const [];
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map || decoded['data'] is! List) return const [];
+
+      final entries = <ArtistCatalogEntry>[];
+      final seen = <String>{};
+      for (final item in decoded['data'] as List) {
+        if (item is! Map) continue;
+        final name = item['name']?.toString().trim() ?? '';
+        final normalizedName = _normalize(name);
+        if (name.isEmpty || !seen.add(normalizedName)) continue;
+        final picture = (item['picture_xl'] ??
+                item['picture_big'] ??
+                item['picture_medium'])
+            ?.toString()
+            .trim();
+        if (picture == null || !picture.startsWith('https://')) continue;
+        final rawFans = item['nb_fan'];
+        final entry = ArtistCatalogEntry(
+          name: name,
+          pictureUrl: picture,
+          fanCount: rawFans is num ? rawFans.toInt() : int.tryParse('$rawFans'),
+        );
+        entries.add(entry);
+        _cache[normalizedName] = _CachedArtist(entry, DateTime.now());
+        if (entries.length >= limit) break;
+      }
+      _searchCache[key] = _CachedArtistList(entries, DateTime.now());
+      return List.unmodifiable(entries);
+    } catch (_) {
+      return const [];
+    } finally {
+      _searchPending.remove(key);
+    }
+  }
 
   Future<ArtistCatalogEntry?> lookup(
     String artistName, {
@@ -101,5 +168,12 @@ class _CachedArtist {
   const _CachedArtist(this.entry, this.savedAt);
 
   final ArtistCatalogEntry? entry;
+  final DateTime savedAt;
+}
+
+class _CachedArtistList {
+  const _CachedArtistList(this.entries, this.savedAt);
+
+  final List<ArtistCatalogEntry> entries;
   final DateTime savedAt;
 }

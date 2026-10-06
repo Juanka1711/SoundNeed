@@ -10,6 +10,9 @@ import '../playlist_actions.dart';
 import '../services/recommendation_service.dart';
 import '../artist_discovery_service.dart';
 import '../services/youtube_audio_service.dart';
+import '../services/artwork_palette.dart';
+import '../widgets/section_spotlight.dart';
+import '../widgets/soundneed_section_heading.dart';
 
 /// Personal recommendations come from local listening history. YouTube search
 /// results are presented as discovery results, never as verified charts.
@@ -19,12 +22,14 @@ class ArtistAlbumDiscoverySection extends StatefulWidget {
     required this.player,
     required this.songs,
     required this.showArtists,
+    required this.palette,
     this.searchText = '',
   });
 
   final MusicPlayerController player;
   final List<Song> songs;
   final bool showArtists;
+  final ArtworkPalette palette;
   final String searchText;
 
   @override
@@ -44,13 +49,17 @@ class _ArtistAlbumDiscoverySectionState
   String? _selectedArtist;
   _MediaGroup? _selectedAlbum;
   List<YouTubeSearchResult> _artistResults = [];
+  List<ArtistCatalogEntry> _artistSearchResults = [];
   ArtistCatalogEntry? _artistCatalog;
   bool _loadingPersonal = true;
   bool _loadingOnline = false;
+  bool _searchingArtists = false;
   bool _loadingDiscovery = true;
   String? _onlineError;
   int _requestId = 0;
   Timer? _chartRefreshTimer;
+  Timer? _artistSearchDebounce;
+  int _artistSearchRequest = 0;
   bool _loadingWorldChart = true;
 
   bool get _isArtists => widget.showArtists;
@@ -62,6 +71,9 @@ class _ArtistAlbumDiscoverySectionState
     unawaited(_loadPersonalRecommendations());
     unawaited(_loadYouTubeDiscovery());
     unawaited(_loadWorldArtists());
+    if (_isArtists && widget.searchText.trim().isNotEmpty) {
+      _triggerArtistSearch(widget.searchText);
+    }
     if (_isArtists) {
       _chartRefreshTimer = Timer.periodic(
         const Duration(hours: 6),
@@ -74,6 +86,7 @@ class _ArtistAlbumDiscoverySectionState
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _chartRefreshTimer?.cancel();
+    _artistSearchDebounce?.cancel();
     super.dispose();
   }
 
@@ -91,6 +104,35 @@ class _ArtistAlbumDiscoverySectionState
       _selectedArtist = null;
       _selectedAlbum = null;
     }
+    if (oldWidget.searchText != widget.searchText ||
+        oldWidget.showArtists != widget.showArtists) {
+      _triggerArtistSearch(widget.showArtists ? widget.searchText : '');
+    }
+  }
+
+  void _triggerArtistSearch(String value) {
+    _artistSearchDebounce?.cancel();
+    final query = value.trim();
+    if (!_isArtists || query.isEmpty) {
+      _artistSearchRequest++;
+      if (mounted) {
+        setState(() {
+          _artistSearchResults = [];
+          _searchingArtists = false;
+        });
+      }
+      return;
+    }
+    final request = ++_artistSearchRequest;
+    setState(() => _searchingArtists = true);
+    _artistSearchDebounce = Timer(const Duration(milliseconds: 450), () async {
+      final results = await ArtistCatalogService.instance.searchArtists(query);
+      if (!mounted || request != _artistSearchRequest) return;
+      setState(() {
+        _artistSearchResults = results;
+        _searchingArtists = false;
+      });
+    });
   }
 
   Future<void> _loadPersonalRecommendations() async {
@@ -273,20 +315,37 @@ class _ArtistAlbumDiscoverySectionState
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
         children: [
-          Text(
-            _isArtists ? 'Artistas' : 'Álbumes de tu biblioteca',
-            style: const TextStyle(fontSize: 23, fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 5),
-          Text(
-            _isArtists
+          SectionSpotlight(
+            eyebrow: _isArtists ? 'DESCUBRE Y EXPLORA' : 'TU COLECCIÓN',
+            title: _isArtists ? 'Artistas' : 'Álbumes',
+            subtitle: _isArtists
                 ? 'Tendencias globales y tus artistas.'
-                : 'Ordenados según los artistas que más escuchas.',
-            style: const TextStyle(
-              color: AppColors.textSecondary,
-              fontSize: 13,
-            ),
+                : '${visibleGroups.length} ${visibleGroups.length == 1 ? 'álbum' : 'álbumes'} de tu biblioteca',
+            icon: _isArtists ? Icons.graphic_eq_rounded : Icons.album_rounded,
+            accent: _isArtists
+                ? const Color(0xFF9B73FF)
+                : const Color(0xFF4C9EFF),
+            palette: widget.palette,
           ),
+          if (_isArtists && query.isNotEmpty) ...[
+            const SizedBox(height: 18),
+            _sectionHeading('Artistas encontrados', 'Deezer'),
+            const SizedBox(height: 10),
+            if (_searchingArtists)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 18),
+                child: Center(
+                  child: CircularProgressIndicator(color: Colors.white),
+                ),
+              )
+            else if (_artistSearchResults.isEmpty)
+              _message(
+                Icons.person_search_rounded,
+                'No encontramos artistas con ese nombre.',
+              )
+            else
+              ..._artistSearchResults.map(_searchedArtistTile),
+          ],
           if (_isArtists && _loadingWorldChart && visibleWorldArtists.isEmpty)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 22),
@@ -327,20 +386,13 @@ class _ArtistAlbumDiscoverySectionState
                         children: [
                           Stack(
                             children: [
-                              _Artwork(
-                                player: widget.player,
-                                song: null,
-                                artistName: artist.name,
-                                size: 82,
-                                circular: true,
-                                icon: Icons.person_rounded,
-                              ),
+                              _artistAvatar(artist.name, size: 82),
                               Positioned(
                                 right: 0,
                                 bottom: 0,
                                 child: CircleAvatar(
                                   radius: 13,
-                                  backgroundColor: const Color(0xFF211A37),
+                                  backgroundColor: widget.palette.primary,
                                   child: Text(
                                     '${artist.rank}',
                                     style: const TextStyle(
@@ -391,13 +443,10 @@ class _ArtistAlbumDiscoverySectionState
                       onTap: () => _openArtist(artist.name),
                       child: Column(
                         children: [
-                          _Artwork(
-                            player: widget.player,
+                          _artistAvatar(
+                            artist.name,
                             song: local.isEmpty ? null : local.first,
-                            artistName: artist.name,
                             size: 82,
-                            circular: true,
-                            icon: Icons.person_rounded,
                           ),
                           const SizedBox(height: 8),
                           Text(
@@ -481,15 +530,15 @@ class _ArtistAlbumDiscoverySectionState
                   child: SizedBox.expand(),
                 ),
               ),
-            const DecoratedBox(
+            DecoratedBox(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.topRight,
                   end: Alignment.bottomLeft,
                   colors: [
-                    Color(0xAA542E88),
-                    Color(0xCC171323),
-                    Color(0xF20B0B12),
+                    widget.palette.primary.withValues(alpha: .65),
+                    widget.palette.dark.withValues(alpha: .78),
+                    const Color(0xF20B0B12),
                   ],
                 ),
               ),
@@ -524,16 +573,20 @@ class _ArtistAlbumDiscoverySectionState
                             vertical: 7,
                           ),
                           decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: .13),
+                            color: widget.palette.primary.withValues(
+                              alpha: .24,
+                            ),
                             borderRadius: BorderRadius.circular(20),
                             border: Border.all(
-                              color: Colors.white.withValues(alpha: .16),
+                              color: widget.palette.secondary.withValues(
+                                alpha: .32,
+                              ),
                             ),
                           ),
                           child: Text(
                             'N.º ${artist.rank} · 30 DÍAS',
-                            style: const TextStyle(
-                              color: Colors.white,
+                            style: TextStyle(
+                              color: widget.palette.secondary,
                               fontSize: 10,
                               fontWeight: FontWeight.w800,
                               letterSpacing: .7,
@@ -611,6 +664,48 @@ class _ArtistAlbumDiscoverySectionState
     ),
   );
 
+  Widget _searchedArtistTile(ArtistCatalogEntry artist) => Card(
+    color: AppColors.card,
+    margin: const EdgeInsets.only(bottom: 8),
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(17)),
+    clipBehavior: Clip.antiAlias,
+    child: ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      leading: ClipOval(
+        child: Image.network(
+          artist.pictureUrl,
+          width: 52,
+          height: 52,
+          fit: BoxFit.cover,
+          errorBuilder: (_, _, _) => const SizedBox(
+            width: 52,
+            height: 52,
+            child: ColoredBox(
+              color: AppColors.surface,
+              child: Icon(Icons.person_rounded, color: Colors.white70),
+            ),
+          ),
+        ),
+      ),
+      title: Text(
+        artist.name,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontWeight: FontWeight.w700),
+      ),
+      subtitle: Text(
+        artist.fanCount == null
+            ? 'Ver perfil y canciones'
+            : '${_formatFans(artist.fanCount!)} seguidores en Deezer',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+      ),
+      trailing: const Icon(Icons.chevron_right_rounded),
+      onTap: () => _openArtist(artist.name),
+    ),
+  );
+
   Widget _artistProfile(String name) {
     final localSongs = _songsForArtist(name);
     final learnedSongs = _mostPlayed
@@ -633,13 +728,26 @@ class _ArtistAlbumDiscoverySectionState
           ),
           const SizedBox(height: 16),
           Center(
-            child: _Artwork(
-              player: widget.player,
-              song: sample,
-              artistName: name,
-              size: 150,
-              circular: true,
-              icon: Icons.person_rounded,
+            child: Container(
+              width: 160,
+              height: 160,
+              padding: const EdgeInsets.all(4),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [widget.palette.secondary, widget.palette.primary],
+                ),
+              ),
+              child: _Artwork(
+                player: widget.player,
+                song: sample,
+                artistName: name,
+                size: 152,
+                circular: true,
+                icon: Icons.person_rounded,
+              ),
             ),
           ),
           const SizedBox(height: 15),
@@ -764,11 +872,24 @@ class _ArtistAlbumDiscoverySectionState
           ),
           const SizedBox(height: 18),
           Center(
-            child: _Artwork(
-              player: widget.player,
-              song: songs.first,
-              size: 205,
-              icon: Icons.album_rounded,
+            child: Container(
+              width: 218,
+              height: 218,
+              padding: const EdgeInsets.all(4),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(25),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [widget.palette.primary, widget.palette.secondary],
+                ),
+              ),
+              child: _Artwork(
+                player: widget.player,
+                song: songs.first,
+                size: 210,
+                icon: Icons.album_rounded,
+              ),
             ),
           ),
           const SizedBox(height: 16),
@@ -799,33 +920,48 @@ class _ArtistAlbumDiscoverySectionState
     );
   }
 
-  Widget _sectionHeading(String title, String detail) => Row(
-    children: [
-      Expanded(
-        child: Text(
-          title,
-          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+  Widget _sectionHeading(String title, String detail) =>
+      SoundNeedSectionHeading(
+        title: title,
+        detail: detail,
+        accent: widget.palette.primary,
+      );
+
+  Widget _artistAvatar(String name, {Song? song, double size = 82}) =>
+      Container(
+        width: size,
+        height: size,
+        padding: const EdgeInsets.all(2.5),
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [widget.palette.secondary, widget.palette.primary],
+          ),
         ),
-      ),
-      Text(detail, style: const TextStyle(color: AppColors.textSecondary)),
-    ],
-  );
+        child: _Artwork(
+          player: widget.player,
+          song: song,
+          artistName: name,
+          size: size - 5,
+          circular: true,
+          icon: Icons.person_rounded,
+        ),
+      );
 
   Widget _artistTile(_MediaGroup group) => Padding(
     padding: const EdgeInsets.only(bottom: 9),
     child: Material(
-      color: Colors.white.withValues(alpha: .05),
-      borderRadius: BorderRadius.circular(25),
+      color: Color.lerp(AppColors.card, widget.palette.primary, .045),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(22),
+        side: BorderSide(color: widget.palette.primary.withValues(alpha: .16)),
+      ),
+      clipBehavior: Clip.antiAlias,
       child: ListTile(
         contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-        leading: _Artwork(
-          player: widget.player,
-          song: group.songs.first,
-          artistName: group.title,
-          size: 58,
-          circular: true,
-          icon: Icons.person_rounded,
-        ),
+        leading: _artistAvatar(group.title, song: group.songs.first, size: 58),
         title: Text(
           group.title,
           maxLines: 1,
@@ -833,9 +969,9 @@ class _ArtistAlbumDiscoverySectionState
           style: const TextStyle(fontWeight: FontWeight.w700),
         ),
         subtitle: Text(_trackCount(group.songs.length)),
-        trailing: const Icon(
+        trailing: Icon(
           Icons.chevron_right_rounded,
-          color: Colors.white60,
+          color: widget.palette.secondary,
         ),
         onTap: () => _openArtist(group.title),
       ),
@@ -858,6 +994,12 @@ class _ArtistAlbumDiscoverySectionState
         color: Colors.white.withValues(alpha: .045),
         borderRadius: BorderRadius.circular(22),
         clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(22),
+          side: BorderSide(
+            color: widget.palette.primary.withValues(alpha: .16),
+          ),
+        ),
         child: InkWell(
           onTap: () => setState(() => _selectedAlbum = album),
           child: Padding(
@@ -1100,17 +1242,39 @@ class _ArtistAlbumDiscoverySectionState
   );
 
   Widget _message(IconData icon, String message) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 24),
-    child: Column(
-      children: [
-        Icon(icon, size: 42, color: Colors.white38),
-        const SizedBox(height: 10),
-        Text(
-          message,
-          textAlign: TextAlign.center,
-          style: const TextStyle(color: AppColors.textSecondary),
+    padding: const EdgeInsets.symmetric(vertical: 12),
+    child: Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.card.withValues(alpha: .76),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: widget.palette.primary.withValues(alpha: .18),
         ),
-      ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: widget.palette.primary.withValues(alpha: .15),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, size: 22, color: widget.palette.secondary),
+          ),
+          const SizedBox(width: 13),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(
+                color: AppColors.textSecondary,
+                height: 1.35,
+              ),
+            ),
+          ),
+        ],
+      ),
     ),
   );
 
@@ -1230,12 +1394,22 @@ class _ArtistAlbumDiscoverySectionState
         }
         return;
       }
-      final title = track.title.toLowerCase();
-      final match = results.where(
-        (result) => result.title.toLowerCase().contains(title),
+      final normalizedTitle = track.title.toLowerCase();
+      final selected = results.firstWhere(
+        (result) => result.title.toLowerCase().contains(normalizedTitle),
+        orElse: () => results.first,
       );
-      final selected = match.isEmpty ? results.first : match.first;
-      final ok = await widget.player.playOnline(selected, playlist: results);
+      final ok = await widget.player.playOnline(selected, playlist: [selected]);
+      if (ok) {
+        widget.player.loadChartQueue(
+          selected.videoId,
+          ArtistDiscoveryService.instance.resolvePlaybackQueue(
+            _worldSongsForArtist(track.artist),
+            startWith: track,
+            firstResult: selected,
+          ),
+        );
+      }
       if (!ok && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
