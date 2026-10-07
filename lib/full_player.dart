@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:video_player/video_player.dart';
 
 import 'lyrics_service.dart';
@@ -35,7 +36,10 @@ class _FullPlayerState extends State<FullPlayer>
   bool _onlineVideoMode = false;
   bool _onlineVideoPlaying = false;
   bool _onlineVideoLoading = false;
+  bool _samplingVideoTheme = false;
   VideoPlayerController? _videoController;
+  Timer? _videoThemeTimer;
+  final GlobalKey _videoFrameBoundaryKey = GlobalKey();
   double _dismissProgress = 0;
   bool _draggingToDismiss = false;
   final Map<int, LyricsData?> _lyricsBySongId = {};
@@ -83,10 +87,41 @@ class _FullPlayerState extends State<FullPlayer>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     player.removeListener(_onPlayerChanged);
+    _videoThemeTimer?.cancel();
     final videoController = _videoController;
-    if (videoController != null) unawaited(videoController.dispose());
+    if (videoController != null) {
+      if (_onlineVideoMode) {
+        unawaited(_handoffVideoToAudioAndDispose(videoController));
+      } else {
+        unawaited(videoController.dispose());
+      }
+    }
     _songAnimationController.dispose();
     super.dispose();
+  }
+
+  Future<void> _handoffVideoToAudioAndDispose(
+    VideoPlayerController controller,
+  ) async {
+    final resumeAudio = _onlineVideoPlaying || controller.value.isPlaying;
+    try {
+      await player.audioPlayer.seek(controller.value.position);
+      if (resumeAudio) {
+        // El nuevo reproductor empieza antes de destruir el video para que
+        // volver al mini player no corte el sonido.
+        unawaited(
+          player.audioPlayer.play().catchError((Object error) {
+            debugPrint('[SoundNeed] No se pudo continuar el audio: $error');
+          }),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+      }
+      await controller.pause();
+    } catch (error) {
+      debugPrint('[SoundNeed] No se pudo transferir el audio del video: $error');
+    } finally {
+      await controller.dispose();
+    }
   }
 
   @override
@@ -109,6 +144,8 @@ class _FullPlayerState extends State<FullPlayer>
       if (oldVideoController != null) unawaited(oldVideoController.dispose());
       _videoController = null;
       _onlineVideoLoading = false;
+      _videoThemeTimer?.cancel();
+      _videoThemeTimer = null;
       _songAnimationController.forward(from: 0);
 
       _updateThemeFromArtwork(song);
@@ -221,6 +258,7 @@ class _FullPlayerState extends State<FullPlayer>
           await controller.play();
           await player.audioPlayer.pause();
         }
+        _startVideoThemeSampling();
       } catch (error) {
         debugPrint('[SoundNeed] No se pudo reproducir el video: $error');
         await controller?.dispose();
@@ -233,6 +271,8 @@ class _FullPlayerState extends State<FullPlayer>
           _onlineVideoLoading = false;
           _videoController = null;
         });
+        _videoThemeTimer?.cancel();
+        _videoThemeTimer = null;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('No se pudo cargar el video: $message'),
@@ -247,6 +287,8 @@ class _FullPlayerState extends State<FullPlayer>
     }
 
     if (!_onlineVideoMode) return;
+    _videoThemeTimer?.cancel();
+    _videoThemeTimer = null;
     final controller = _videoController;
     if (controller == null) {
       setState(() {
@@ -290,6 +332,101 @@ class _FullPlayerState extends State<FullPlayer>
     if (requestedPosition == null) return;
 
     await controller.seekTo(requestedPosition);
+  }
+
+  void _startVideoThemeSampling() {
+    _videoThemeTimer?.cancel();
+    unawaited(_sampleVideoTheme());
+    _videoThemeTimer = Timer.periodic(const Duration(milliseconds: 350), (_) {
+      unawaited(_sampleVideoTheme());
+    });
+  }
+
+  Future<void> _sampleVideoTheme() async {
+    if (!_onlineVideoMode || _samplingVideoTheme) return;
+    final controller = _videoController;
+    final renderObject = _videoFrameBoundaryKey.currentContext
+        ?.findRenderObject();
+    if (controller == null ||
+        !controller.value.isInitialized ||
+        controller.value.isBuffering ||
+        renderObject is! RenderRepaintBoundary ||
+        !renderObject.attached ||
+        renderObject.size.isEmpty) {
+      return;
+    }
+
+    _samplingVideoTheme = true;
+    ui.Image? image;
+    try {
+      image = await renderObject.toImage(pixelRatio: 0.05);
+      final data = await image.toByteData(
+        format: ui.ImageByteFormat.rawRgba,
+      );
+      if (data == null || !_onlineVideoMode) return;
+      final colors = _extractVideoTheme(data.buffer.asUint8List());
+      if (!mounted || !_onlineVideoMode || colors.$1 == Colors.white) return;
+      setState(() {
+        // Suavizar cada muestra evita que los cambios de escena hagan
+        // parpadear el color de los controles y del fondo.
+        _themeColor = Color.lerp(_themeColor, colors.$1, 0.28)!;
+        _themeSecondary = Color.lerp(_themeSecondary, colors.$2, 0.28)!;
+        _themeDark = Color.lerp(_themeDark, colors.$3, 0.28)!;
+      });
+    } catch (error) {
+      debugPrint('[SoundNeed] No se pudo muestrear el color del video: $error');
+    } finally {
+      image?.dispose();
+      _samplingVideoTheme = false;
+    }
+  }
+
+  (Color, Color, Color) _extractVideoTheme(Uint8List pixels) {
+    final candidates = <Color>[];
+    // La captura se reduce a unos pocos píxeles; tomar una de cada cuatro
+    // mantiene el análisis liviano incluso durante la reproducción.
+    for (var i = 0; i + 3 < pixels.length; i += 16) {
+      final alpha = pixels[i + 3];
+      if (alpha < 100) continue;
+      final color = Color.fromARGB(
+        alpha,
+        pixels[i],
+        pixels[i + 1],
+        pixels[i + 2],
+      );
+      final hsl = HSLColor.fromColor(color);
+      if (hsl.lightness < 0.10 ||
+          (hsl.saturation < 0.12 && hsl.lightness > 0.90)) {
+        continue;
+      }
+      candidates.add(color);
+    }
+
+    if (candidates.isEmpty) {
+      return (Colors.white, Colors.white70, const Color(0xFF080808));
+    }
+
+    candidates.sort((a, b) {
+      final aHsl = HSLColor.fromColor(a);
+      final bHsl = HSLColor.fromColor(b);
+      final aScore = aHsl.saturation * 2.2 +
+          (1 - (aHsl.lightness - 0.50).abs()) * 1.3;
+      final bScore = bHsl.saturation * 2.2 +
+          (1 - (bHsl.lightness - 0.50).abs()) * 1.3;
+      return bScore.compareTo(aScore);
+    });
+
+    final primary = candidates.first;
+    final secondary = candidates.reduce(
+      (a, b) => _colorDistance(primary, a) >= _colorDistance(primary, b)
+          ? a
+          : b,
+    );
+    final primaryHsl = HSLColor.fromColor(primary);
+    final dark = primaryHsl
+        .withLightness((primaryHsl.lightness * 0.20).clamp(0.035, 0.16))
+        .toColor();
+    return (primary, secondary, dark);
   }
 
   Future<void> _updateThemeFromArtwork(dynamic song) async {
@@ -847,7 +984,10 @@ class _FullPlayerState extends State<FullPlayer>
               child: SizedBox(
                 width: videoWidth,
                 height: videoHeight,
-                child: VideoPlayer(controller),
+                child: RepaintBoundary(
+                  key: _videoFrameBoundaryKey,
+                  child: VideoPlayer(controller),
+                ),
               ),
             ),
           ),

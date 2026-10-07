@@ -156,6 +156,8 @@ class MusicPlayerController extends ChangeNotifier {
   final Map<String, LockCachingAudioSource> _onlineAudioSources = {};
   // Caché persistente de URLs de YouTube (videoId -> URL)
   final Map<String, String> _youtubeUrlCache = {};
+  final Set<String> _refreshingOnlineAudioUrls = {};
+  final Map<String, int> _onlineAudioUrlRefreshAttempts = {};
 
   bool _loadingOnline = false;
   bool _controllerDisposed = false;
@@ -238,6 +240,9 @@ class MusicPlayerController extends ChangeNotifier {
         });
     _audioPlayer.playerStateStream.listen((state) {
       _isPlaying = state.playing;
+      if (state.playing && _currentSong?.isOnline == true) {
+        _onlineAudioUrlRefreshAttempts.remove(_currentSong!.onlineVideoId);
+      }
       notifyListeners();
     });
 
@@ -249,6 +254,10 @@ class MusicPlayerController extends ChangeNotifier {
     _playerErrorSubscription = _audioPlayer.errorStream.listen((error) {
       final song = _currentSong;
       if (song == null || !song.isOnline || _loadedSong?.id != song.id) {
+        return;
+      }
+      if (_isRefreshableOnlineAudioError(error)) {
+        _refreshExpiredOnlineAudioUrl(song, error);
         return;
       }
       playbackError = 'Error al cargar el audio: ${error.message}';
@@ -1066,6 +1075,10 @@ class MusicPlayerController extends ChangeNotifier {
               },
             );
       } on TimeoutException catch (e) {
+        if (song.isOnline && _isRefreshableOnlineAudioError(e)) {
+          _refreshExpiredOnlineAudioUrl(song, e);
+          return;
+        }
         playbackError =
             'Timeout: No se pudo cargar el audio a tiempo. '
             'Inténtalo de nuevo o verifica tu conexión.';
@@ -1073,6 +1086,10 @@ class MusicPlayerController extends ChangeNotifier {
         debugPrint('[SoundNeed] Timeout en setAudioSource: $e');
         return;
       } on PlayerException catch (e) {
+        if (song.isOnline && _isRefreshableOnlineAudioError(e)) {
+          _refreshExpiredOnlineAudioUrl(song, e);
+          return;
+        }
         // Errores específicos de just_audio/MediaCodec
         final errorMsg = e.message?.toLowerCase() ?? '';
         if (errorMsg.contains('codec') ||
@@ -1145,6 +1162,55 @@ class MusicPlayerController extends ChangeNotifier {
     _onlineAudioSources.remove(song.onlineVideoId);
   }
 
+  bool _isRefreshableOnlineAudioError(Object error) {
+    final message = error.toString().toLowerCase();
+    return message.contains('403') ||
+        message.contains('410') ||
+        message.contains('http status error') ||
+        message.contains('source error');
+  }
+
+  void _refreshExpiredOnlineAudioUrl(Song song, Object error) {
+    final videoId = song.onlineVideoId;
+    if (videoId.isEmpty || !_refreshingOnlineAudioUrls.add(videoId)) return;
+
+    final attempts = _onlineAudioUrlRefreshAttempts[videoId] ?? 0;
+    if (attempts >= 2) {
+      _refreshingOnlineAudioUrls.remove(videoId);
+      playbackError =
+          'YouTube rechazó el enlace de audio después de varios intentos.';
+      _isPlaying = false;
+      _progressUpdateTimer?.cancel();
+      notifyListeners();
+      debugPrint(
+        '[SoundNeed] Se agotaron los reintentos de URL para $videoId: $error',
+      );
+      return;
+    }
+
+    _onlineAudioUrlRefreshAttempts[videoId] = attempts + 1;
+    _youtubeUrlCache.remove(videoId);
+    _onlineAudioSources.remove(videoId);
+    _saveYoutubeUrlCache();
+    _retryOnReconnect = false;
+    playbackError = 'Actualizando el enlace de audio…';
+    _isPlaying = false;
+    notifyListeners();
+    debugPrint(
+      '[SoundNeed] URL de audio vencida para $videoId; extrayendo una nueva.',
+    );
+
+    unawaited(() async {
+      try {
+        if (_currentSong?.id == song.id && !_controllerDisposed) {
+          await playSong(song, createQueue: false, retry: true);
+        }
+      } finally {
+        _refreshingOnlineAudioUrls.remove(videoId);
+      }
+    }());
+  }
+
   Future<void> _publishProcessedArtwork(Song song, int token) async {
     try {
       final bytes = await loadOnlineArtwork(song);
@@ -1171,7 +1237,11 @@ class MusicPlayerController extends ChangeNotifier {
       if (token != _playToken) return;
       playbackError = 'Error al reproducir: $error';
       final song = _currentSong;
-      if (song != null) _waitForNetworkReconnect(song);
+      if (song != null && song.isOnline && _isRefreshableOnlineAudioError(error)) {
+        _refreshExpiredOnlineAudioUrl(song, error);
+      } else if (song != null) {
+        _waitForNetworkReconnect(song);
+      }
       _isPlaying = false;
       _progressUpdateTimer?.cancel();
       notifyListeners();
