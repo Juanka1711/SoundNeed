@@ -9,13 +9,13 @@ import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 class YouTubeAudioService {
   YouTubeAudioService._();
 
-  static final YouTubeAudioService instance =
-      YouTubeAudioService._();
+  static final YouTubeAudioService instance = YouTubeAudioService._();
 
   final YoutubeExplode _youtube = YoutubeExplode();
 
-  static const MethodChannel _youtubeChannel =
-      MethodChannel('youtube/extractor');
+  static const MethodChannel _youtubeChannel = MethodChannel(
+    'youtube/extractor',
+  );
 
   /// Último error ocurrido.
   /// null = última operación exitosa.
@@ -31,9 +31,7 @@ class YouTubeAudioService {
   // BUSCAR
   // ============================================================
 
-  Future<List<YouTubeSearchResult>> search(
-    String query,
-  ) async {
+  Future<List<YouTubeSearchResult>> search(String query) async {
     query = query.trim();
 
     if (query.isEmpty) {
@@ -55,18 +53,13 @@ class YouTubeAudioService {
               videoId: video.id.value,
               title: video.title,
               artist: video.author,
-              duration:
-                  video.duration?.inSeconds ?? 0,
-              thumbnail:
-                  video.thumbnails.highResUrl,
-              url:
-                  'https://www.youtube.com/watch?v=${video.id.value}',
+              duration: video.duration?.inSeconds ?? 0,
+              thumbnail: video.thumbnails.highResUrl,
+              url: 'https://www.youtube.com/watch?v=${video.id.value}',
             ),
           )
           .where(
-            (result) =>
-                result.videoId.isNotEmpty &&
-                result.title.isNotEmpty,
+            (result) => result.videoId.isNotEmpty && result.title.isNotEmpty,
           )
           .toList();
 
@@ -107,11 +100,9 @@ class YouTubeAudioService {
         return list;
       }
 
-      lastError ??=
-          'La búsqueda no devolvió videos.';
+      lastError ??= 'La búsqueda no devolvió videos.';
     } catch (e, st) {
-      lastError =
-          '${lastError ?? ''} | Respaldo: $e';
+      lastError = '${lastError ?? ''} | Respaldo: $e';
 
       debugPrint(
         '[YouTubeAudioService] '
@@ -128,32 +119,22 @@ class YouTubeAudioService {
   // BÚSQUEDA HTML
   // ============================================================
 
-  Future<List<YouTubeSearchResult>> _searchByHtml(
-    String query,
-  ) async {
-    final uri = Uri.https(
-      'www.youtube.com',
-      '/results',
-      {
-        'search_query': query,
-        'hl': 'es',
-      },
-    );
+  Future<List<YouTubeSearchResult>> _searchByHtml(String query) async {
+    final uri = Uri.https('www.youtube.com', '/results', {
+      'search_query': query,
+      'hl': 'es',
+    });
 
     final response = await http
         .get(
           uri,
           headers: {
             'User-Agent': _desktopUserAgent,
-            'Accept-Language':
-                'es-ES,es;q=0.9,en;q=0.8',
-            'Cookie':
-                'CONSENT=YES+1; SOCS=CAI',
+            'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
+            'Cookie': 'CONSENT=YES+1; SOCS=CAI',
           },
         )
-        .timeout(
-          const Duration(seconds: 15),
-        );
+        .timeout(const Duration(seconds: 15));
 
     debugPrint(
       '[YouTubeAudioService] '
@@ -162,9 +143,7 @@ class YouTubeAudioService {
     );
 
     if (response.statusCode != 200) {
-      throw Exception(
-        'HTTP ${response.statusCode}',
-      );
+      throw Exception('HTTP ${response.statusCode}');
     }
 
     final match = RegExp(
@@ -179,17 +158,11 @@ class YouTubeAudioService {
       );
     }
 
-    final data = jsonDecode(
-      match.group(1)!,
-    );
+    final data = jsonDecode(match.group(1)!);
 
-    final results =
-        <YouTubeSearchResult>[];
+    final results = <YouTubeSearchResult>[];
 
-    _collectVideos(
-      data,
-      results,
-    );
+    _collectVideos(data, results);
 
     return results;
   }
@@ -198,47 +171,32 @@ class YouTubeAudioService {
   // EXTRAER VIDEOS DEL HTML
   // ============================================================
 
-  void _collectVideos(
-    dynamic node,
-    List<YouTubeSearchResult> out,
-  ) {
+  void _collectVideos(dynamic node, List<YouTubeSearchResult> out) {
     if (out.length >= 30) {
       return;
     }
 
     if (node is Map) {
-      final renderer =
-          node['videoRenderer'];
+      final renderer = node['videoRenderer'];
 
-      if (renderer is Map &&
-          renderer['videoId'] is String) {
-        final videoId =
-            renderer['videoId'] as String;
+      if (renderer is Map && renderer['videoId'] is String) {
+        final videoId = renderer['videoId'] as String;
 
-        final thumbs =
-            renderer['thumbnail'] is Map
-                ? (renderer['thumbnail']
-                            ['thumbnails']
-                        as List? ??
-                    [])
-                : <dynamic>[];
+        final thumbs = renderer['thumbnail'] is Map
+            ? (renderer['thumbnail']['thumbnails'] as List? ?? [])
+            : <dynamic>[];
 
         String thumbnail = '';
 
-        if (thumbs.isNotEmpty &&
-            thumbs.last is Map) {
-          thumbnail =
-              (thumbs.last['url'] ?? '')
-                  .toString();
+        if (thumbs.isNotEmpty && thumbs.last is Map) {
+          thumbnail = (thumbs.last['url'] ?? '').toString();
 
           if (thumbnail.startsWith('//')) {
-            thumbnail =
-                'https:$thumbnail';
+            thumbnail = 'https:$thumbnail';
           }
         }
 
-        final title =
-            _text(renderer['title']);
+        final title = _text(renderer['title']);
 
         if (title.isNotEmpty) {
           out.add(
@@ -246,17 +204,11 @@ class YouTubeAudioService {
               videoId: videoId,
               title: title,
               artist: _text(
-                renderer['ownerText'] ??
-                    renderer['longBylineText'],
+                renderer['ownerText'] ?? renderer['longBylineText'],
               ),
-              duration: _toSeconds(
-                _text(
-                  renderer['lengthText'],
-                ),
-              ),
+              duration: _toSeconds(_text(renderer['lengthText'])),
               thumbnail: thumbnail,
-              url:
-                  'https://www.youtube.com/watch?v=$videoId',
+              url: 'https://www.youtube.com/watch?v=$videoId',
             ),
           );
         }
@@ -265,17 +217,11 @@ class YouTubeAudioService {
       }
 
       for (final value in node.values) {
-        _collectVideos(
-          value,
-          out,
-        );
+        _collectVideos(value, out);
       }
     } else if (node is List) {
       for (final value in node) {
-        _collectVideos(
-          value,
-          out,
-        );
+        _collectVideos(value, out);
       }
     }
   }
@@ -292,11 +238,7 @@ class YouTubeAudioService {
 
       if (object['runs'] is List) {
         return (object['runs'] as List)
-            .map(
-              (run) => run is Map
-                  ? (run['text'] ?? '').toString()
-                  : '',
-            )
+            .map((run) => run is Map ? (run['text'] ?? '').toString() : '')
             .join();
       }
     }
@@ -312,9 +254,7 @@ class YouTubeAudioService {
     var total = 0;
 
     for (final part in text.split(':')) {
-      total =
-          total * 60 +
-          (int.tryParse(part.trim()) ?? 0);
+      total = total * 60 + (int.tryParse(part.trim()) ?? 0);
     }
 
     return total;
@@ -335,16 +275,13 @@ class YouTubeAudioService {
   /// - aplica timeout;
   /// - valida la URL;
   /// - maneja errores.
-  Future<String?> getAudioUrl(
-    String videoId,
-  ) async {
+  Future<String?> getAudioUrl(String videoId) async {
     lastError = null;
 
     videoId = videoId.trim();
 
     if (videoId.isEmpty) {
-      lastError =
-          'El videoId está vacío.';
+      lastError = 'El videoId está vacío.';
 
       debugPrint(
         '[YouTubeAudioService] '
@@ -360,25 +297,16 @@ class YouTubeAudioService {
         'Solicitando audio para: $videoId',
       );
 
-      final result =
-          await _youtubeChannel
-              .invokeMethod<String>(
-        'getAudioUrl',
-        {
-          'videoId': videoId,
-        },
-      ).timeout(
-        const Duration(seconds: 20),
-      );
+      final result = await _youtubeChannel
+          .invokeMethod<String>('getAudioUrl', {'videoId': videoId})
+          .timeout(const Duration(seconds: 20));
 
       // --------------------------------------------------------
       // Respuesta vacía
       // --------------------------------------------------------
 
-      if (result == null ||
-          result.trim().isEmpty) {
-        lastError =
-            'Android no devolvió una URL de audio.';
+      if (result == null || result.trim().isEmpty) {
+        lastError = 'Android no devolvió una URL de audio.';
 
         debugPrint(
           '[YouTubeAudioService] '
@@ -397,8 +325,7 @@ class YouTubeAudioService {
       final uri = Uri.tryParse(url);
 
       if (uri == null) {
-        lastError =
-            'La URL de audio no pudo analizarse.';
+        lastError = 'La URL de audio no pudo analizarse.';
 
         debugPrint(
           '[YouTubeAudioService] '
@@ -408,10 +335,8 @@ class YouTubeAudioService {
         return null;
       }
 
-      if (!uri.hasScheme ||
-          !uri.hasAuthority) {
-        lastError =
-            'La URL de audio no es válida.';
+      if (!uri.hasScheme || !uri.hasAuthority) {
+        lastError = 'La URL de audio no es válida.';
 
         debugPrint(
           '[YouTubeAudioService] '
@@ -421,8 +346,7 @@ class YouTubeAudioService {
         return null;
       }
 
-      if (uri.scheme != 'http' &&
-          uri.scheme != 'https') {
+      if (uri.scheme != 'http' && uri.scheme != 'https') {
         lastError =
             'Protocolo de audio no compatible: '
             '${uri.scheme}';
@@ -449,14 +373,11 @@ class YouTubeAudioService {
 
       return url;
     }
-
     // ----------------------------------------------------------
     // Timeout
     // ----------------------------------------------------------
-
     on TimeoutException catch (e, st) {
-      lastError =
-          'Timeout al obtener URL de audio (20s).';
+      lastError = 'Timeout al obtener URL de audio (20s).';
 
       debugPrint(
         '[YouTubeAudioService] '
@@ -467,11 +388,9 @@ class YouTubeAudioService {
 
       return null;
     }
-
     // ----------------------------------------------------------
     // Error de plataforma
     // ----------------------------------------------------------
-
     on PlatformException catch (e, st) {
       lastError =
           'NewPipe: ${e.code}: '
@@ -487,14 +406,11 @@ class YouTubeAudioService {
 
       return null;
     }
-
     // ----------------------------------------------------------
     // Error inesperado
     // ----------------------------------------------------------
-
     catch (e, st) {
-      lastError =
-          'Error obteniendo audio: $e';
+      lastError = 'Error obteniendo audio: $e';
 
       debugPrint(
         '[YouTubeAudioService] '
@@ -508,16 +424,69 @@ class YouTubeAudioService {
   }
 
   /// Obtiene los metadatos publicados por la página original del video.
+  /// Obtiene un stream directo de video, separado del audio.
+  Future<String?> getVideoUrl(String videoId) async {
+    lastError = null;
+    final normalizedId = videoId.trim();
+    if (normalizedId.isEmpty) {
+      lastError = 'El videoId está vacío.';
+      return null;
+    }
+
+    const maxAttempts = 3;
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        final rawUrl = await _youtubeChannel
+            .invokeMethod<String>('getVideoUrl', {'videoId': normalizedId})
+            .timeout(const Duration(seconds: 14));
+        final url = rawUrl?.trim() ?? '';
+        final uri = Uri.tryParse(url);
+        if (uri != null &&
+            uri.hasAuthority &&
+            (uri.scheme == 'http' || uri.scheme == 'https')) {
+          lastError = null;
+          return url;
+        }
+        lastError = 'NewPipe no devolvió una URL de video válida.';
+      } on TimeoutException {
+        lastError = 'Tiempo de espera agotado al extraer el video.';
+      } on PlatformException catch (error) {
+        lastError =
+            'NewPipe: ${error.code}: ${error.message ?? 'sin detalles'}';
+      } catch (error) {
+        lastError = 'No se pudo extraer el video: $error';
+      }
+
+      debugPrint(
+        '[YouTubeAudioService] Extracción de video fallida '
+        '($attempt/$maxAttempts): $lastError',
+      );
+      if (attempt < maxAttempts) {
+        await Future<void>.delayed(Duration(milliseconds: 600 * attempt));
+      }
+    }
+
+    lastError =
+        'No se pudo extraer el video después de $maxAttempts intentos. '
+        '${lastError ?? ''}';
+    return null;
+  }
+
   Future<Map<String, String>> getVideoMetadata(String videoId) async {
     try {
-      final metadata = await _youtubeChannel.invokeMapMethod<String, dynamic>(
-        'getVideoMetadata',
-        {'videoId': videoId},
-      ).timeout(const Duration(seconds: 20));
+      final metadata = await _youtubeChannel
+          .invokeMapMethod<String, dynamic>('getVideoMetadata', {
+            'videoId': videoId,
+          })
+          .timeout(const Duration(seconds: 20));
       if (metadata == null) return const {};
-      return metadata.map((key, value) => MapEntry(key, value?.toString().trim() ?? ''));
+      return metadata.map(
+        (key, value) => MapEntry(key, value?.toString().trim() ?? ''),
+      );
     } catch (error) {
-      debugPrint('[YouTubeAudioService] No se pudieron leer metadatos del video: $error');
+      debugPrint(
+        '[YouTubeAudioService] No se pudieron leer metadatos del video: $error',
+      );
       return const {};
     }
   }

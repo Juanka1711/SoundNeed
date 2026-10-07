@@ -242,16 +242,19 @@ class SoundNeedWidgetProvider : AppWidgetProvider() {
 
             if (!hasSong) {
 
-                views.setViewVisibility(R.id.widget_root, View.GONE)
+                // Mantener el widget como mini player aunque todavía no haya
+                // una canción activa: así conserva su tamaño y ofrece una
+                // entrada clara para abrir SoundNeed.
+                views.setViewVisibility(R.id.widget_root, View.VISIBLE)
 
                 views.setTextViewText(
                     R.id.widget_title,
-                    ""
+                    "SoundNeed"
                 )
 
                 views.setTextViewText(
                     R.id.widget_artist,
-                    ""
+                    "Toca para reproducir música"
                 )
 
                 views.setImageViewResource(
@@ -262,6 +265,11 @@ class SoundNeedWidgetProvider : AppWidgetProvider() {
                 views.setImageViewResource(
                     R.id.widget_play_pause,
                     R.drawable.soundneed_widget_play
+                )
+
+                views.setImageViewBitmap(
+                    R.id.widget_background_image,
+                    createDefaultBackground()
                 )
 
                 views.setImageViewBitmap(
@@ -282,6 +290,10 @@ class SoundNeedWidgetProvider : AppWidgetProvider() {
                 // Abrir la app al tocar el widget
                 views.setOnClickPendingIntent(
                     R.id.widget_content,
+                    launchAppPendingIntent(context)
+                )
+                views.setOnClickPendingIntent(
+                    R.id.widget_play_pause,
                     launchAppPendingIntent(context)
                 )
 

@@ -1,12 +1,18 @@
+import 'dart:async';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:video_player/video_player.dart';
 
 import 'lyrics_service.dart';
 import 'music_player.dart';
 import 'mini_player.dart';
 import 'playlist_actions.dart';
+import 'services/youtube_audio_service.dart';
+import 'widgets/overflow_marquee_text.dart';
+
+import 'package:just_audio/just_audio.dart';
 
 class FullPlayer extends StatefulWidget {
   final MusicPlayerController player;
@@ -18,7 +24,7 @@ class FullPlayer extends StatefulWidget {
 }
 
 class _FullPlayerState extends State<FullPlayer>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   MusicPlayerController get player => widget.player;
 
   Color _themeColor = Colors.white;
@@ -26,6 +32,10 @@ class _FullPlayerState extends State<FullPlayer>
   Color _themeDark = const Color(0xFF080808);
 
   int? _lastSongId;
+  bool _onlineVideoMode = false;
+  bool _onlineVideoPlaying = false;
+  bool _onlineVideoLoading = false;
+  VideoPlayerController? _videoController;
   double _dismissProgress = 0;
   bool _draggingToDismiss = false;
   final Map<int, LyricsData?> _lyricsBySongId = {};
@@ -39,6 +49,7 @@ class _FullPlayerState extends State<FullPlayer>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
 
     _songAnimationController = AnimationController(
       vsync: this,
@@ -70,9 +81,19 @@ class _FullPlayerState extends State<FullPlayer>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     player.removeListener(_onPlayerChanged);
+    final videoController = _videoController;
+    if (videoController != null) unawaited(videoController.dispose());
     _songAnimationController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.paused || !_onlineVideoMode) return;
+    final song = player.currentSong;
+    if (song is Song) unawaited(_setOnlineVideoMode(false, song));
   }
 
   void _onPlayerChanged() {
@@ -82,7 +103,12 @@ class _FullPlayerState extends State<FullPlayer>
 
     if (_lastSongId != song.id) {
       _lastSongId = song.id;
-
+      _onlineVideoMode = false;
+      _onlineVideoPlaying = false;
+      final oldVideoController = _videoController;
+      if (oldVideoController != null) unawaited(oldVideoController.dispose());
+      _videoController = null;
+      _onlineVideoLoading = false;
       _songAnimationController.forward(from: 0);
 
       _updateThemeFromArtwork(song);
@@ -124,6 +150,146 @@ class _FullPlayerState extends State<FullPlayer>
       if (mounted && player.currentSong?.id == songId) setState(() {});
     });
     return future;
+  }
+
+  Future<void> _setOnlineVideoMode(bool enabled, Song song) async {
+    if (enabled) {
+      if (_onlineVideoMode) return;
+      final videoId = song.onlineVideoId;
+      if (videoId.isEmpty) return;
+
+      setState(() {
+        _videoController = null;
+        _onlineVideoMode = true;
+        _onlineVideoPlaying = false;
+        _onlineVideoLoading = true;
+      });
+
+      VideoPlayerController? controller;
+      try {
+        final videoUrl = await YouTubeAudioService.instance.getVideoUrl(
+          videoId,
+        );
+        if (videoUrl == null) {
+          throw StateError(
+            YouTubeAudioService.instance.lastError ??
+                'No se pudo extraer el video.',
+          );
+        }
+
+        if (!mounted ||
+            !_onlineVideoMode ||
+            player.currentSong?.id != song.id) {
+          return;
+        }
+
+        controller = VideoPlayerController.networkUrl(Uri.parse(videoUrl));
+        await controller.initialize();
+        if (!mounted ||
+            !_onlineVideoMode ||
+            player.currentSong?.id != song.id) {
+          await controller.dispose();
+          return;
+        }
+        final audioWasPlaying = player.audioPlayer.playing;
+        var audioPosition = player.audioPlayer.position;
+        await controller.seekTo(audioPosition);
+        if (!mounted ||
+            !_onlineVideoMode ||
+            player.currentSong?.id != song.id) {
+          await controller.dispose();
+          return;
+        }
+        final latestAudioPosition = player.audioPlayer.position;
+        if ((latestAudioPosition - audioPosition).inMilliseconds.abs() > 120) {
+          audioPosition = latestAudioPosition;
+          await controller.seekTo(audioPosition);
+        }
+        if (audioWasPlaying) {
+          // Iniciar primero el video en la posición del audio y después
+          // detener el audio para que el cambio no tenga un hueco de silencio.
+          audioPosition = player.audioPlayer.position;
+          await controller.seekTo(audioPosition);
+        }
+        await controller.setVolume(1);
+        setState(() {
+          _videoController = controller;
+          _onlineVideoLoading = false;
+          _onlineVideoPlaying = audioWasPlaying;
+        });
+        if (audioWasPlaying) {
+          await controller.play();
+          await player.audioPlayer.pause();
+        }
+      } catch (error) {
+        debugPrint('[SoundNeed] No se pudo reproducir el video: $error');
+        await controller?.dispose();
+        if (!mounted) return;
+        if (!_onlineVideoMode || player.currentSong?.id != song.id) return;
+        final message = error.toString().replaceFirst('Bad state: ', '');
+        setState(() {
+          _onlineVideoMode = false;
+          _onlineVideoPlaying = false;
+          _onlineVideoLoading = false;
+          _videoController = null;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('No se pudo cargar el video: $message'),
+            action: SnackBarAction(
+              label: 'Reintentar',
+              onPressed: () => _setOnlineVideoMode(true, song),
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
+    if (!_onlineVideoMode) return;
+    final controller = _videoController;
+    if (controller == null) {
+      setState(() {
+        _onlineVideoMode = false;
+        _onlineVideoPlaying = false;
+        _onlineVideoLoading = false;
+      });
+      return;
+    }
+
+    final resumeAudio = _onlineVideoPlaying || controller.value.isPlaying;
+    final position = controller.value.position;
+    await player.audioPlayer.seek(position);
+    if (resumeAudio) {
+      // Arrancar el audio antes de apagar el video evita un corte al cambiar.
+      unawaited(
+        player.audioPlayer.play().catchError((Object error) {
+          debugPrint('[SoundNeed] No se pudo reanudar el audio: $error');
+        }),
+      );
+    }
+    await controller.pause();
+    if (!mounted) return;
+    setState(() {
+      _onlineVideoMode = false;
+      _onlineVideoPlaying = false;
+      _onlineVideoLoading = false;
+      _videoController = null;
+    });
+    await controller.dispose();
+  }
+
+  Future<void> _syncVideoToAudio([Duration? requestedPosition]) async {
+    final controller = _videoController;
+    if (!_onlineVideoMode ||
+        controller == null ||
+        !controller.value.isInitialized) {
+      return;
+    }
+    // Solo sincronizar si se solicita explícitamente (ej: al hacer seek manual)
+    if (requestedPosition == null) return;
+
+    await controller.seekTo(requestedPosition);
   }
 
   Future<void> _updateThemeFromArtwork(dynamic song) async {
@@ -391,7 +557,45 @@ class _FullPlayerState extends State<FullPlayer>
               },
             ),
 
-            const Spacer(),
+            Expanded(
+              child: song is Song && song.isOnline
+                  ? Center(
+                      child: Container(
+                        padding: const EdgeInsets.all(3),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.055),
+                          borderRadius: BorderRadius.circular(24),
+                          border: Border.all(
+                            color: Colors.white.withOpacity(0.07),
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Tooltip(
+                              message: 'Solo audio',
+                              child: _onlineModeButton(
+                                icon: Icons.music_note_rounded,
+                                selected: !_onlineVideoMode,
+                                onTap: () => _setOnlineVideoMode(false, song),
+                              ),
+                            ),
+                            Tooltip(
+                              message: 'Reproducir video',
+                              child: _onlineModeButton(
+                                icon: Icons.videocam_rounded,
+                                selected: _onlineVideoMode,
+                                onTap: () => song is Song
+                                    ? _setOnlineVideoMode(true, song)
+                                    : null,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    )
+                  : const SizedBox.shrink(),
+            ),
 
             _glassButton(
               icon: Icons.more_horiz_rounded,
@@ -423,19 +627,13 @@ class _FullPlayerState extends State<FullPlayer>
 
           const SizedBox(height: 6),
 
-          _buildMainControls(),
+          _buildMainControls(song),
 
           const SizedBox(height: 14),
 
           _buildSecondaryControls(),
 
           const SizedBox(height: 8),
-
-          if (song is Song &&
-              (song.isOnline || song.isPodcast ||
-                  song.uri.startsWith('http://') ||
-                  song.uri.startsWith('https://')))
-            _buildDownloadButton(song),
         ],
       ),
     );
@@ -456,6 +654,9 @@ class _FullPlayerState extends State<FullPlayer>
                 .clamp(180.0, 390.0)
                 .clamp(0.0, availableHeight * 0.40)
                 .toDouble();
+            final showVideo = _onlineVideoMode && song is Song && song.isOnline;
+            final artworkWidth = size;
+            final artworkHeight = size;
 
             return GestureDetector(
               behavior: HitTestBehavior.opaque,
@@ -490,8 +691,8 @@ class _FullPlayerState extends State<FullPlayer>
               child: Hero(
                 tag: 'full_player_artwork_${song.id}',
                 child: Container(
-                  width: size,
-                  height: size,
+                  width: artworkWidth,
+                  height: artworkHeight,
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(28),
                     boxShadow: [
@@ -509,7 +710,9 @@ class _FullPlayerState extends State<FullPlayer>
                     ],
                   ),
                   clipBehavior: Clip.antiAlias,
-                  child: bytes != null
+                  child: showVideo
+                      ? _buildOnlineVideoSurface()
+                      : bytes != null
                       ? Image.memory(
                           bytes,
                           fit: BoxFit.cover,
@@ -570,11 +773,9 @@ class _FullPlayerState extends State<FullPlayer>
                           ),
                         );
                       },
-                      child: Text(
+                      child: OverflowMarqueeText(
                         title,
                         key: ValueKey('title_${song.id}'),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                         textAlign: TextAlign.center,
                         style: const TextStyle(
                           color: Colors.white,
@@ -589,11 +790,9 @@ class _FullPlayerState extends State<FullPlayer>
 
                     AnimatedSwitcher(
                       duration: const Duration(milliseconds: 420),
-                      child: Text(
+                      child: OverflowMarqueeText(
                         artist.isEmpty ? 'Artista desconocido' : artist,
                         key: ValueKey('artist_${song.id}'),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           color: _themeSecondary,
@@ -612,78 +811,141 @@ class _FullPlayerState extends State<FullPlayer>
     );
   }
 
-  Widget _buildProgress() {
-    return StreamBuilder<Duration>(
-      stream: player.positionStream,
-      initialData: Duration.zero,
-      builder: (context, snapshot) {
-        final position = snapshot.data ?? Duration.zero;
+  Widget _buildOnlineVideoSurface() {
+    final controller = _videoController;
+    if (controller == null || !controller.value.isInitialized) {
+      return ColoredBox(
+        color: Colors.black,
+        child: Center(
+          child: _onlineVideoLoading
+              ? CircularProgressIndicator(color: _themeColor)
+              : const Icon(
+                  Icons.video_library_outlined,
+                  color: Colors.white38,
+                  size: 34,
+                ),
+        ),
+      );
+    }
 
-        final duration =
-            player.audioPlayer.duration ?? const Duration(seconds: 1);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final frameAspectRatio = constraints.maxWidth / constraints.maxHeight;
+        final videoAspectRatio = controller.value.aspectRatio;
+        final videoWidth = videoAspectRatio > frameAspectRatio
+            ? constraints.maxHeight * videoAspectRatio
+            : constraints.maxWidth;
+        final videoHeight = videoAspectRatio > frameAspectRatio
+            ? constraints.maxHeight
+            : constraints.maxWidth / videoAspectRatio;
 
-        final totalMs = duration.inMilliseconds;
-        final currentMs = position.inMilliseconds;
-
-        final value = totalMs <= 0
-            ? 0.0
-            : (currentMs / totalMs).clamp(0.0, 1.0);
-
-        return Column(
-          children: [
-            SliderTheme(
-              data: SliderTheme.of(context).copyWith(
-                trackHeight: 3,
-                activeTrackColor: _themeColor,
-                inactiveTrackColor: Colors.white.withOpacity(0.12),
-                thumbColor: _themeColor,
-                overlayColor: _themeColor.withOpacity(0.12),
-                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
-                overlayShape: const RoundSliderOverlayShape(overlayRadius: 15),
-              ),
-              child: Slider(
-                value: value,
-                onChanged: (newValue) {
-                  final target = Duration(
-                    milliseconds: (duration.inMilliseconds * newValue).round(),
-                  );
-
-                  player.seek(target);
-                },
-              ),
-            ),
-
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    player.formatDuration(position.inMilliseconds),
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.52),
-                      fontSize: 11,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  Text(
-                    player.formatDuration(duration.inMilliseconds),
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.52),
-                      fontSize: 11,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
+        return ColoredBox(
+          color: Colors.black,
+          child: ClipRect(
+            child: FittedBox(
+              fit: BoxFit.cover,
+              child: SizedBox(
+                width: videoWidth,
+                height: videoHeight,
+                child: VideoPlayer(controller),
               ),
             ),
-          ],
+          ),
         );
       },
     );
   }
 
-  Widget _buildMainControls() {
+  Widget _buildProgress() {
+    final videoController = _onlineVideoMode ? _videoController : null;
+    if (videoController != null && videoController.value.isInitialized) {
+      return ValueListenableBuilder<VideoPlayerValue>(
+        valueListenable: videoController,
+        builder: (context, value, _) => _buildProgressContent(
+          value.position,
+          value.duration,
+        ),
+      );
+    }
+
+    return StreamBuilder<Duration>(
+      stream: player.positionStream,
+      initialData: Duration.zero,
+      builder: (context, snapshot) {
+        final position = snapshot.data ?? Duration.zero;
+        final duration =
+            player.audioPlayer.duration ?? const Duration(seconds: 1);
+        return _buildProgressContent(position, duration);
+      },
+    );
+  }
+
+  Widget _buildProgressContent(Duration position, Duration duration) {
+    final totalMs = duration.inMilliseconds;
+    final currentMs = position.inMilliseconds;
+
+    final value = totalMs <= 0
+        ? 0.0
+        : (currentMs / totalMs).clamp(0.0, 1.0);
+
+    return Column(
+      children: [
+        SliderTheme(
+          data: SliderTheme.of(context).copyWith(
+            trackHeight: 3,
+            activeTrackColor: _themeColor,
+            inactiveTrackColor: Colors.white.withOpacity(0.12),
+            thumbColor: _themeColor,
+            overlayColor: _themeColor.withOpacity(0.12),
+            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
+            overlayShape: const RoundSliderOverlayShape(overlayRadius: 15),
+          ),
+          child: Slider(
+            value: value,
+            onChanged: (newValue) {
+              final target = Duration(
+                milliseconds: (duration.inMilliseconds * newValue).round(),
+              );
+
+              unawaited(_seekPlayback(target));
+            },
+          ),
+        ),
+
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                player.formatDuration(position.inMilliseconds),
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.52),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              Text(
+                player.formatDuration(duration.inMilliseconds),
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.52),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _seekPlayback(Duration target) async {
+    await player.seek(target);
+    if (_onlineVideoMode) await _syncVideoToAudio(target);
+  }
+
+  Widget _buildMainControls(dynamic song) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
@@ -695,7 +957,7 @@ class _FullPlayerState extends State<FullPlayer>
 
         const SizedBox(width: 30),
 
-        _buildPlayButton(),
+        _buildPlayButton(song),
 
         const SizedBox(width: 30),
 
@@ -708,106 +970,113 @@ class _FullPlayerState extends State<FullPlayer>
     );
   }
 
-  Widget _buildPlayButton() {
+  Widget _buildPlayButton(dynamic song) {
+    final canDownload =
+        song is Song &&
+        (song.isOnline ||
+            song.isPodcast ||
+            song.uri.startsWith('http://') ||
+            song.uri.startsWith('https://'));
+
     return StreamBuilder<bool>(
       stream: player.audioPlayer.playingStream,
       initialData: player.isPlaying,
       builder: (context, snapshot) {
-        final playing = snapshot.data ?? false;
+        final playing = _onlineVideoMode
+            ? _onlineVideoPlaying
+            : snapshot.data ?? false;
 
         return AnimatedBuilder(
           animation: player,
-          builder: (context, _) => Semantics(
-            button: true,
-            label: playing ? 'Pausar' : 'Reproducir',
-            child: SizedBox(
-              width: 84,
-              height: 84,
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  Material(
-                    color: Colors.transparent,
-                    shape: const CircleBorder(),
-                    child: InkWell(
-                      customBorder: const CircleBorder(),
-                      onTap: player.togglePlayPause,
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 240),
-                        curve: Curves.easeOutCubic,
-                        width: 72,
-                        height: 72,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
+          builder: (context, _) {
+            final downloading = canDownload && player.isDownloading;
+            final downloadProgress = player.downloadProgress;
+            return Semantics(
+              button: true,
+              label: playing ? 'Pausar' : 'Reproducir',
+              child: SizedBox(
+                width: 96,
+                height: 96,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    if (downloading)
+                      SizedBox(
+                        width: 92,
+                        height: 92,
+                        child: CircularProgressIndicator(
+                          value: downloadProgress,
+                          strokeWidth: 2.5,
                           color: _themeColor,
-                          boxShadow: [
-                            BoxShadow(
-                              color: _themeColor.withOpacity(0.38),
-                              blurRadius: 26,
-                              spreadRadius: 3,
-                            ),
-                          ],
                         ),
-                        child: AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 180),
-                          transitionBuilder: (child, animation) =>
-                              ScaleTransition(scale: animation, child: child),
-                          child: Icon(
-                            playing
-                                ? Icons.pause_rounded
-                                : Icons.play_arrow_rounded,
-                            key: ValueKey(playing),
-                            color: Colors.black,
-                            size: 39,
+                      ),
+                    Material(
+                      color: Colors.transparent,
+                      shape: const CircleBorder(),
+                      child: InkWell(
+                        customBorder: const CircleBorder(),
+                        onTap: () => _togglePlay(song),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 240),
+                          curve: Curves.easeOutCubic,
+                          width: 72,
+                          height: 72,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: _themeColor,
+                            boxShadow: [
+                              BoxShadow(
+                                color: _themeColor.withOpacity(0.38),
+                                blurRadius: 26,
+                                spreadRadius: 3,
+                              ),
+                            ],
+                          ),
+                          child: AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 180),
+                            transitionBuilder: (child, animation) =>
+                                ScaleTransition(scale: animation, child: child),
+                            child: Icon(
+                              playing
+                                  ? Icons.pause_rounded
+                                  : Icons.play_arrow_rounded,
+                              key: ValueKey(playing),
+                              color: Colors.black,
+                              size: 39,
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-          ),
+            );
+          },
         );
       },
     );
   }
 
-  Widget _buildDownloadButton(Song song) {
-    return AnimatedBuilder(
-      animation: player,
-      builder: (context, _) {
-        final downloading = player.isDownloading;
-        final progress = player.downloadProgress;
-        final label = downloading && progress != null
-            ? 'Descargando ${(progress * 100).round()}%'
-            : downloading
-            ? 'Preparando descarga…'
-            : 'Descargar en el dispositivo';
-        return OutlinedButton.icon(
-          onPressed: downloading ? null : () => _downloadSong(song),
-          icon: downloading
-              ? SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(
-                    value: progress,
-                    strokeWidth: 2,
-                    color: _themeColor,
-                  ),
-                )
-              : const Icon(Icons.download_for_offline_rounded),
-          label: Text(label),
-          style: OutlinedButton.styleFrom(
-            foregroundColor: _themeColor,
-            disabledForegroundColor: _themeColor.withOpacity(0.85),
-            side: BorderSide(color: _themeColor.withOpacity(0.48)),
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
-            shape: const StadiumBorder(),
-          ),
-        );
-      },
-    );
+  Future<void> _togglePlay(dynamic song) async {
+    if (!_onlineVideoMode || song is! Song) {
+      await player.togglePlayPause();
+      return;
+    }
+
+    final controller = _videoController;
+    if (_onlineVideoPlaying) {
+      if (controller != null && controller.value.isInitialized) {
+        await controller.pause();
+      }
+      if (mounted) setState(() => _onlineVideoPlaying = false);
+      return;
+    }
+
+    if (controller != null && controller.value.isInitialized) {
+      await controller.play();
+    }
+    if (mounted) setState(() => _onlineVideoPlaying = true);
   }
 
   Widget _buildSecondaryControls() {
@@ -972,6 +1241,7 @@ class _FullPlayerState extends State<FullPlayer>
     required IconData icon,
     required VoidCallback onTap,
     Color color = Colors.white,
+    bool selected = false,
   }) {
     return Material(
       color: Colors.transparent,
@@ -983,10 +1253,41 @@ class _FullPlayerState extends State<FullPlayer>
           height: 42,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(18),
-            color: Colors.white.withOpacity(0.055),
-            border: Border.all(color: Colors.white.withOpacity(0.07)),
+            color: selected
+                ? _themeColor.withOpacity(0.20)
+                : Colors.white.withOpacity(0.055),
+            border: Border.all(
+              color: selected
+                  ? _themeSecondary.withOpacity(0.48)
+                  : Colors.white.withOpacity(0.07),
+            ),
           ),
           child: Icon(icon, color: color, size: 21),
+        ),
+      ),
+    );
+  }
+
+  Widget _onlineModeButton({
+    required IconData icon,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(24),
+        onTap: onTap,
+        child: Ink(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: selected
+                ? _themeColor.withOpacity(0.25)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Icon(icon, color: Colors.white, size: 21),
         ),
       ),
     );

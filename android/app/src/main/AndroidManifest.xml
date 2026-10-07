@@ -26,6 +26,8 @@
     <!-- Android 13+ -->
     <!-- ========================================================= -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Solo se usa al activar el visualizador de la reproducción actual. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <!-- ========================================================= -->
     <!-- REPRODUCCIÓN EN SEGUNDO PLANO                            -->

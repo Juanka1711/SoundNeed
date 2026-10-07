@@ -24,6 +24,9 @@ class ArtworkPalette {
   final Color secondary;
   final Color dark;
   final bool isArtworkDerived;
+
+  Color get primaryTextColor => isArtworkDerived ? primary : Colors.white;
+  Color get secondaryTextColor => isArtworkDerived ? secondary : Colors.white;
 }
 
 /// Decodes a tiny thumbnail and extracts two distinct, saturated colors.

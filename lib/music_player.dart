@@ -690,8 +690,12 @@ class MusicPlayerController extends ChangeNotifier {
               'url': audioUrl,
               'title': songTitle.isEmpty ? song.displayName : songTitle,
               'artist': artist,
+              'album': _albumForDownload(song, sourceMetadata),
               'duration': song.duration,
               'artwork': artwork,
+              'sourceUrl': song.isOnline
+                  ? 'https://www.youtube.com/watch?v=${song.onlineVideoId}'
+                  : song.uri,
             },
           );
 
@@ -795,6 +799,15 @@ class MusicPlayerController extends ChangeNotifier {
     }
 
     return 'Artista desconocido';
+  }
+
+  String _albumForDownload(Song song, Map<String, String> sourceMetadata) {
+    final sourceAlbum = sourceMetadata['album']?.trim() ?? '';
+    if (sourceAlbum.isNotEmpty) return sourceAlbum;
+
+    final album = song.album.trim();
+    if (album.isEmpty || album.toLowerCase() == 'youtube') return '';
+    return album;
   }
 
   bool _validSourceArtist(String artist) {

@@ -5,6 +5,7 @@ import '../music_player.dart';
 import '../services/music_player_service.dart';
 import '../services/recommendation_service.dart';
 import '../services/youtube_audio_service.dart';
+import 'local_music_badge.dart';
 
 /// ============================================================
 /// RECOMMENDATION SECTIONS
@@ -385,6 +386,10 @@ class RecommendationSectionsState
                   fontSize: 12,
                 ),
               ),
+              if (_findLocalSong(song) != null) ...[
+                const SizedBox(height: 4),
+                const LocalMusicBadge(),
+              ],
             ],
           ),
         ),

@@ -17,6 +17,8 @@ import '../artist_discovery_service.dart';
 import '../services/recommendation_service.dart';
 import '../podcast_service.dart';
 import '../services/artwork_palette.dart';
+import '../widgets/audio_artwork_visualizer.dart';
+import '../widgets/local_music_badge.dart';
 
 class HomeSection extends StatefulWidget {
   final MusicPlayerController player;
@@ -62,6 +64,8 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
   static const _recentMixKey = 'soundneed_home_mix_recent_ids_v1';
   bool _loadingChart = false;
   Timer? _chartRefreshTimer;
+  int? _observedSongId;
+  bool _observedPlaying = false;
 
   @override
   void initState() {
@@ -73,6 +77,7 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
     _loadCurrentChart();
     _loadWorldChart();
     _loadPodcastRecommendations();
+    _observePlayback();
     widget.player.addListener(_onPlayerChanged);
     _chartRefreshTimer = Timer.periodic(const Duration(hours: 6), (_) {
       _loadCurrentChart(refresh: true);
@@ -97,9 +102,21 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
   }
 
   void _onPlayerChanged() {
+    final songId = widget.player.currentSong?.id;
+    final playing = widget.player.isPlaying;
+    if (songId != _observedSongId || playing != _observedPlaying) {
+      _observedSongId = songId;
+      _observedPlaying = playing;
+      if (mounted) setState(() {});
+    }
     if (widget.player.songs.isNotEmpty && _surpriseMix.isEmpty) {
       _buildSurpriseMix();
     }
+  }
+
+  void _observePlayback() {
+    _observedSongId = widget.player.currentSong?.id;
+    _observedPlaying = widget.player.isPlaying;
   }
 
   Future<void> _loadDiscoverySuggestions({bool refresh = false}) async {
@@ -371,8 +388,6 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
           /// ====================================================
           if (hasLocalSearch) ...[
             _buildLocalSearchResults(),
-
-            const SizedBox(height: 32),
           ]
           /// ====================================================
           /// CONTENIDO NORMAL
@@ -425,7 +440,6 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
           /// YOUTUBE
           /// ====================================================
           if (showOnlineResults) ...[
-            const SizedBox(height: 32),
             _buildOnlineResults(),
           ],
 
@@ -731,7 +745,7 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
                         Text(
                           'N.º ${track.rank} DEL MOMENTO',
                           style: TextStyle(
-                            color: widget.palette.secondary,
+                            color: widget.palette.secondaryTextColor,
                             fontSize: 11,
                             fontWeight: FontWeight.w800,
                             letterSpacing: .8,
@@ -831,6 +845,12 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
                                 fontSize: 12,
                               ),
                             ),
+                            if (isLocalMusic(song)) ...[
+                              const SizedBox(height: 4),
+                              LocalMusicBadge(
+                                color: widget.palette.secondaryTextColor,
+                              ),
+                            ],
                           ],
                         ),
                       ),
@@ -1198,7 +1218,7 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
       SoundNeedSectionHeading(
         title: title,
         detail: trailing,
-        accent: widget.palette.primary,
+        accent: widget.palette.primaryTextColor,
       );
 
   Widget _buildPodcastTile(PodcastEpisode episode) => Padding(
@@ -1767,7 +1787,7 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
                     width: 6,
                     height: 6,
                     decoration: BoxDecoration(
-                      color: widget.palette.primary,
+                      color: widget.palette.primaryTextColor,
                       shape: BoxShape.circle,
                     ),
                   ),
@@ -1775,7 +1795,9 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
                   Text(
                     'TU SONIDO · HOY',
                     style: TextStyle(
-                      color: widget.palette.secondary.withValues(alpha: .9),
+                      color: widget.palette.secondaryTextColor.withValues(
+                        alpha: .9,
+                      ),
                       fontSize: 9,
                       fontWeight: FontWeight.w800,
                       letterSpacing: 1.35,
@@ -1844,45 +1866,9 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
 
   Widget _buildLocalSearchResults() {
     final results = widget.localSearchResults ?? [];
-
-    if (results.isEmpty) {
-      return SoundNeedEmptyState(
-        icon: Icons.search_off_rounded,
-        title: 'Sin resultados locales',
-        message: 'No encontramos canciones en tu biblioteca.',
-        accent: widget.palette.primary,
-      );
-    }
-
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            const Expanded(
-              child: Text(
-                'Resultados locales',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-            Text(
-              '${results.length}',
-              style: const TextStyle(
-                color: AppColors.textSecondary,
-                fontSize: 13,
-              ),
-            ),
-          ],
-        ),
-
-        const SizedBox(height: 16),
-
-        ...results.map(_buildSongTile),
-      ],
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: results.map(_buildSongTile).toList(),
     );
   }
 
@@ -1899,7 +1885,7 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
             CircularProgressIndicator(color: Colors.white),
             SizedBox(height: 18),
             Text(
-              'Buscando en YouTube...',
+              'Buscando canciones...',
               style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
             ),
           ],
@@ -1910,38 +1896,22 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
     final results = widget.onlineResults ?? [];
 
     if (results.isEmpty) {
-      return const SizedBox.shrink();
+      final hasLocalResults = widget.localSearchResults?.isNotEmpty == true;
+      final hasSearchQuery = widget.onlineQuery?.trim().isNotEmpty == true;
+      if (hasLocalResults || !hasSearchQuery) {
+        return const SizedBox.shrink();
+      }
+      return SoundNeedEmptyState(
+        icon: Icons.search_off_rounded,
+        title: 'No encontramos canciones',
+        message: 'Prueba con otro título o artista.',
+        accent: widget.palette.primary,
+      );
     }
 
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            const Expanded(
-              child: Text(
-                'Resultados de YouTube',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-            Text(
-              '${results.length}',
-              style: const TextStyle(
-                color: AppColors.textSecondary,
-                fontSize: 13,
-              ),
-            ),
-          ],
-        ),
-
-        const SizedBox(height: 16),
-
-        ...results.map(_buildOnlineSongTile),
-      ],
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: results.map(_buildOnlineSongTile).toList(),
     );
   }
 
@@ -1994,6 +1964,12 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
                           color: AppColors.textSecondary,
                         ),
                       ),
+                      if (isLocalMusic(song)) ...[
+                        const SizedBox(height: 4),
+                        LocalMusicBadge(
+                          color: widget.palette.secondaryTextColor,
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -2015,32 +1991,63 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
   // ============================================================
 
   Widget _buildArtwork(Song song, {double size = 56}) {
+    final isPlaying =
+        widget.player.currentSong?.id == song.id && widget.player.isPlaying;
     return FutureBuilder(
       future: widget.player.loadArtwork(song),
       builder: (context, snapshot) {
         if (snapshot.hasData && snapshot.data != null) {
-          return ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: Image.memory(
-              snapshot.data!,
-              width: size,
-              height: size,
-              fit: BoxFit.cover,
+          return _artworkWithVisualizer(
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Image.memory(
+                snapshot.data!,
+                width: size,
+                height: size,
+                fit: BoxFit.cover,
+              ),
             ),
+            size,
+            isPlaying,
           );
         }
 
-        return Container(
-          width: size,
-          height: size,
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.06),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.white.withOpacity(0.10)),
+        return _artworkWithVisualizer(
+          Container(
+            width: size,
+            height: size,
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.06),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.white.withOpacity(0.10)),
+            ),
+            child: const Icon(Icons.music_note, size: 24, color: Colors.white54),
           ),
-          child: const Icon(Icons.music_note, size: 24, color: Colors.white54),
+          size,
+          isPlaying,
         );
       },
+    );
+  }
+
+  Widget _artworkWithVisualizer(Widget artwork, double size, bool isPlaying) {
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          artwork,
+          if (isPlaying)
+            AudioArtworkVisualizer(
+              sessionIds:
+                  widget.player.audioPlayer.androidAudioSessionIdStream,
+              initialSessionId:
+                  widget.player.audioPlayer.androidAudioSessionId,
+              isPlaying: true,
+            ),
+        ],
+      ),
     );
   }
 
@@ -2053,6 +2060,12 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
   // ============================================================
 
   Widget _buildOnlineSongTile(YouTubeSearchResult result) {
+    final resultSong = Song.fromYouTube(result);
+    final currentSong = widget.player.currentSong;
+    final isPlaying =
+        currentSong?.id == resultSong.id &&
+        currentSong?.uri == resultSong.uri &&
+        widget.player.isPlaying;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Material(
@@ -2064,7 +2077,7 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
             // Precargar URL en segundo plano
             unawaited(widget.player.preloadYoutubeUrl(result.videoId));
 
-            final selectedSong = Song.fromYouTube(result);
+            final selectedSong = resultSong;
             if (widget.player.currentSong?.id == selectedSong.id &&
                 widget.player.currentSong?.uri == selectedSong.uri) {
               await selectSongOrOpenPlayer(
@@ -2106,15 +2119,32 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
                   child: SizedBox(
                     width: 120,
                     height: 68,
-                    child: result.thumbnail.isNotEmpty
-                        ? Image.network(
-                            result.thumbnail,
-                            fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) {
-                              return _buildOnlinePlaceholder();
-                            },
-                          )
-                        : _buildOnlinePlaceholder(),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        result.thumbnail.isNotEmpty
+                            ? Image.network(
+                                result.thumbnail,
+                                fit: BoxFit.cover,
+                                errorBuilder: (context, error, stackTrace) {
+                                  return _buildOnlinePlaceholder();
+                                },
+                              )
+                            : _buildOnlinePlaceholder(),
+                        if (isPlaying)
+                          AudioArtworkVisualizer(
+                            sessionIds: widget
+                                .player
+                                .audioPlayer
+                                .androidAudioSessionIdStream,
+                            initialSessionId: widget
+                                .player
+                                .audioPlayer
+                                .androidAudioSessionId,
+                            isPlaying: true,
+                          ),
+                      ],
+                    ),
                   ),
                 ),
 

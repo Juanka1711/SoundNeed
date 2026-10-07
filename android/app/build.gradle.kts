@@ -55,6 +55,7 @@ kotlin {
 
 dependencies {
     implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.5")
+    implementation("io.github.amanrajaryan:TagLib:1.0.0")
     // NewPipe Extractor requires java.nio desugaring when minSdk < 33.
     // desugar_jdk_libs_nio includes the base desugar set PLUS package java.nio
     // (the plain "desugar_jdk_libs" does NOT cover java.nio). Without it, NewPipe

@@ -7,6 +7,7 @@ import '../music_player.dart';
 import '../player_navigation.dart';
 import '../playlist_artwork.dart';
 import '../playlist_actions.dart';
+import '../widgets/local_music_badge.dart';
 import '../playlist_manager.dart';
 import '../services/youtube_audio_service.dart';
 import '../services/artwork_palette.dart';
@@ -855,16 +856,26 @@ class _PlaylistContentsState extends State<_PlaylistContents> {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
-                      subtitle: Text(
-                        _lookedUpArtists[songKey(song)] ??
-                            (song.artist == 'Artista desconocido' &&
-                                    _artistLookupsStarted.contains(
-                                      songKey(song),
-                                    )
-                                ? 'Buscando artista…'
-                                : song.artist),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            _lookedUpArtists[songKey(song)] ??
+                                (song.artist == 'Artista desconocido' &&
+                                        _artistLookupsStarted.contains(
+                                          songKey(song),
+                                        )
+                                    ? 'Buscando artista…'
+                                    : song.artist),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          if (isLocalMusic(song)) ...[
+                            const SizedBox(height: 3),
+                            const LocalMusicBadge(),
+                          ],
+                        ],
                       ),
                       onTap: () {
                         if (current) {
@@ -1190,10 +1201,20 @@ class _PlaylistSongPickerState extends State<_PlaylistSongPicker> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  subtitle: Text(
-                    song.isOnline ? 'YouTube · ${song.artist}' : song.artist,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                  subtitle: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        song.isOnline ? 'YouTube · ${song.artist}' : song.artist,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      if (isLocalMusic(song)) ...[
+                        const SizedBox(height: 3),
+                        const LocalMusicBadge(),
+                      ],
+                    ],
                   ),
                   trailing: const Icon(Icons.add_circle_outline_rounded),
                   onTap: () => _addSong(song),

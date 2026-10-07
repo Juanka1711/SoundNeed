@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import 'music_player.dart';
 import 'full_player.dart';
+import 'widgets/overflow_marquee_text.dart';
 
 // ============================================================
 // COLORES BASE
@@ -476,12 +477,10 @@ class _MiniPlayerState extends State<MiniPlayer> {
                             mainAxisAlignment: MainAxisAlignment.center,
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(
+                              OverflowMarqueeText(
                                 song.title.isEmpty
                                     ? song.displayName
                                     : song.title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
                                   color: Colors.white,
                                   fontSize: 14,
@@ -489,12 +488,10 @@ class _MiniPlayerState extends State<MiniPlayer> {
                                 ),
                               ),
                               const SizedBox(height: 3),
-                              Text(
+                              OverflowMarqueeText(
                                 song.artist.isEmpty
                                     ? 'Artista desconocido'
                                     : song.artist,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
                                   color: Colors.white.withOpacity(0.60),
                                   fontSize: 12,

@@ -2,5 +2,6 @@
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
     <solid android:color="#20202A" />
-    <corners android:radius="12dp" />
+    <!-- Radio visual más cercano al artwork del mini player Flutter. -->
+    <corners android:radius="16dp" />
 </shape>

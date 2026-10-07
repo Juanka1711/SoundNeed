@@ -13,6 +13,7 @@ import '../services/youtube_audio_service.dart';
 import '../services/artwork_palette.dart';
 import '../widgets/section_spotlight.dart';
 import '../widgets/soundneed_section_heading.dart';
+import '../widgets/local_music_badge.dart';
 
 /// Personal recommendations come from local listening history. YouTube search
 /// results are presented as discovery results, never as verified charts.
@@ -535,7 +536,7 @@ class _ArtistAlbumDiscoverySectionState
                           child: Text(
                             'N.º ${artist.rank} · 30 DÍAS',
                             style: TextStyle(
-                              color: widget.palette.secondary,
+                              color: widget.palette.secondaryTextColor,
                               fontSize: 10,
                               fontWeight: FontWeight.w800,
                               letterSpacing: .7,
@@ -939,7 +940,7 @@ class _ArtistAlbumDiscoverySectionState
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: widget.palette.secondary,
+                        color: widget.palette.secondaryTextColor,
                         fontSize: 9,
                         fontWeight: FontWeight.w700,
                       ),
@@ -1153,10 +1154,18 @@ class _ArtistAlbumDiscoverySectionState
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
-        subtitle: Text(
-          song.artist,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              song.artist,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 3),
+            LocalMusicBadge(color: widget.palette.secondaryTextColor),
+          ],
         ),
         trailing: PopupMenuButton<String>(
           icon: Icon(

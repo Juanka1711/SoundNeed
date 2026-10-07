@@ -15,6 +15,7 @@ import 'sections/albums_section.dart';
 import 'services/youtube_audio_service.dart';
 import 'services/artwork_palette.dart';
 import 'widgets/soundneed_search_field.dart';
+import 'widgets/local_music_badge.dart';
 
 // ============================================================
 // COLORES BASE DE SOUNDNEED
@@ -73,6 +74,7 @@ class _MusicHomePageState extends State<MusicHomePage> {
   List<YouTubeSearchResult> _onlineResults = [];
   String _onlineQuery = '';
   Timer? _onlineSearchDebounce;
+  int _onlineSearchRequestId = 0;
 
   MusicSection _section = MusicSection.home;
 
@@ -253,6 +255,7 @@ class _MusicHomePageState extends State<MusicHomePage> {
   // ==========================================================
 
   void _triggerOnlineSearch(String query) {
+    _onlineSearchRequestId++;
     _onlineSearchDebounce?.cancel();
 
     if (query.trim().isEmpty) {
@@ -264,6 +267,12 @@ class _MusicHomePageState extends State<MusicHomePage> {
       return;
     }
 
+    setState(() {
+      _onlineResults = [];
+      _onlineQuery = query;
+      _isSearchingOnline = true;
+    });
+
     _onlineSearchDebounce = Timer(const Duration(milliseconds: 800), () {
       _searchOnline(query);
     });
@@ -271,6 +280,7 @@ class _MusicHomePageState extends State<MusicHomePage> {
 
   Future<void> _searchOnline(String query) async {
     if (query.trim().isEmpty) return;
+    final requestId = ++_onlineSearchRequestId;
 
     setState(() {
       _isSearchingOnline = true;
@@ -281,7 +291,7 @@ class _MusicHomePageState extends State<MusicHomePage> {
     try {
       final results = await YouTubeAudioService.instance.search(query);
 
-      if (!mounted) return;
+      if (!mounted || requestId != _onlineSearchRequestId) return;
 
       setState(() {
         _onlineResults = results;
@@ -290,7 +300,7 @@ class _MusicHomePageState extends State<MusicHomePage> {
     } catch (e) {
       debugPrint('[SoundNeed] Error buscando YouTube: $e');
 
-      if (!mounted) return;
+      if (!mounted || requestId != _onlineSearchRequestId) return;
 
       setState(() {
         _onlineResults = [];
@@ -300,6 +310,8 @@ class _MusicHomePageState extends State<MusicHomePage> {
   }
 
   void _clearOnlineSearch() {
+    _onlineSearchRequestId++;
+    _onlineSearchDebounce?.cancel();
     setState(() {
       _onlineResults = [];
       _onlineQuery = '';
@@ -822,10 +834,20 @@ class _MusicHomePageState extends State<MusicHomePage> {
                                       : FontWeight.normal,
                                 ),
                               ),
-                              subtitle: Text(
-                                song.artist,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
+                              subtitle: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    song.artist,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  if (isLocalMusic(song)) ...[
+                                    const SizedBox(height: 3),
+                                    const LocalMusicBadge(),
+                                  ],
+                                ],
                               ),
                               trailing: isCurrent
                                   ? const Icon(

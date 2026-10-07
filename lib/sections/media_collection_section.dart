@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../app_colors.dart';
 import '../music_player.dart';
+import '../widgets/local_music_badge.dart';
 
 enum MediaCollectionKind { artists, albums }
 
@@ -295,12 +296,20 @@ class _MediaCollectionSectionState extends State<MediaCollectionSection> {
                           color: isCurrent ? Theme.of(context).colorScheme.primary : Colors.white,
                         ),
                       ),
-                      subtitle: Text(
-                        song.artist == '<unknown>' || song.artist.isEmpty
-                            ? 'Artista desconocido'
-                            : song.artist,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            song.artist == '<unknown>' || song.artist.isEmpty
+                                ? 'Artista desconocido'
+                                : song.artist,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 3),
+                          const LocalMusicBadge(),
+                        ],
                       ),
                       trailing: Text(
                         widget.player.formatDuration(song.duration),

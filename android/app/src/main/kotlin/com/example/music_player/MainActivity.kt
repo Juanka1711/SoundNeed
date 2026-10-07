@@ -9,6 +9,7 @@ import android.content.pm.PackageManager
 import android.app.RecoverableSecurityException
 import android.graphics.BitmapFactory
 import android.media.MediaScannerConnection
+import android.media.audiofx.Visualizer
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -33,6 +34,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 
 import com.ryanheise.audioservice.AudioServiceActivity
+import aman.taglib.TagLib
 
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -65,6 +67,10 @@ class MainActivity : AudioServiceActivity() {
     }
     private var pendingFolderPickerResult: MethodChannel.Result? = null
     private var pendingDeleteResult: MethodChannel.Result? = null
+    private var visualizer: Visualizer? = null
+    private var visualizerEventSink: EventChannel.EventSink? = null
+    private var pendingVisualizerResult: MethodChannel.Result? = null
+    private var pendingVisualizerSessionId: Int? = null
 
     companion object {
         private const val CHANNEL = "music_player/media"
@@ -73,6 +79,7 @@ class MainActivity : AudioServiceActivity() {
         private const val NOTIFICATION_PERMISSION_REQUEST_CODE = 200
         private const val PICK_MUSIC_FOLDER_REQUEST_CODE = 201
         private const val DELETE_MUSIC_REQUEST_CODE = 202
+        private const val VISUALIZER_PERMISSION_REQUEST_CODE = 203
         private const val MUSIC_FOLDERS_PREFS = "soundneed_music_folders"
         private const val MUSIC_FOLDERS_KEY = "paths"
         private const val DOWNLOAD_ARTWORKS_KEY = "artwork_files"
@@ -225,8 +232,10 @@ class MainActivity : AudioServiceActivity() {
                     val audioUrl = call.argument<String>("url").orEmpty()
                     val title = call.argument<String>("title").orEmpty()
                     val artist = call.argument<String>("artist").orEmpty()
+                    val album = call.argument<String>("album").orEmpty()
                     val duration = call.argument<Number>("duration")?.toLong() ?: 0L
                     val artwork = call.argument<ByteArray>("artwork")
+                    val sourceUrl = call.argument<String>("sourceUrl").orEmpty()
                     if (audioUrl.isBlank() || title.isBlank()) {
                         result.error("INVALID_DOWNLOAD", "Faltan datos de la canción.", null)
                         return@setMethodCallHandler
@@ -238,8 +247,10 @@ class MainActivity : AudioServiceActivity() {
                                 audioUrl,
                                 title,
                                 artist,
+                                album,
                                 duration,
                                 artwork = artwork,
+                                sourceUrl = sourceUrl,
                                 onProgress = { received, total ->
                                     val progress = if (total > 0L) {
                                         received.toDouble() / total.toDouble()
@@ -308,6 +319,66 @@ class MainActivity : AudioServiceActivity() {
                 }
             }
         }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "soundneed/visualizer"
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "hasPermission" -> {
+                    result.success(
+                        ContextCompat.checkSelfPermission(
+                            this,
+                            Manifest.permission.RECORD_AUDIO
+                        ) == PackageManager.PERMISSION_GRANTED
+                    )
+                }
+                "start" -> {
+                    val sessionId = call.argument<Number>("sessionId")?.toInt()
+                    if (sessionId == null || sessionId <= 0) {
+                        result.success(false)
+                    } else if (ContextCompat.checkSelfPermission(
+                            this,
+                            Manifest.permission.RECORD_AUDIO
+                        ) == PackageManager.PERMISSION_GRANTED
+                    ) {
+                        result.success(startAudioVisualizer(sessionId))
+                    } else if (pendingVisualizerResult != null) {
+                        result.success(false)
+                    } else {
+                        pendingVisualizerResult = result
+                        pendingVisualizerSessionId = sessionId
+                        ActivityCompat.requestPermissions(
+                            this,
+                            arrayOf(Manifest.permission.RECORD_AUDIO),
+                            VISUALIZER_PERMISSION_REQUEST_CODE
+                        )
+                    }
+                }
+                "stop" -> {
+                    stopAudioVisualizer()
+                    result.success(null)
+                }
+                else -> result.notImplemented()
+            }
+        }
+
+        EventChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "soundneed/visualizer_data"
+        ).setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                visualizerEventSink = events
+            }
+
+            override fun onCancel(arguments: Any?) {
+                visualizerEventSink = null
+                stopAudioVisualizer()
+                pendingVisualizerResult?.success(false)
+                pendingVisualizerResult = null
+                pendingVisualizerSessionId = null
+            }
+        })
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
@@ -470,11 +541,114 @@ class MainActivity : AudioServiceActivity() {
                     }
                 }
 
+                "getVideoUrl" -> {
+                    val videoId = call.argument<String>("videoId")
+                    if (videoId.isNullOrBlank()) {
+                        result.error("INVALID_VIDEO_ID", "El videoId está vacío", null)
+                        return@setMethodCallHandler
+                    }
+
+                    extractorExecutor.execute {
+                        try {
+                            val url = getYouTubeVideoUrl(videoId)
+                            runOnUiThread {
+                                if (url != null) {
+                                    result.success(url)
+                                } else {
+                                    result.error(
+                                        "NO_VIDEO",
+                                        "No se encontró un stream de video reproducible",
+                                        null
+                                    )
+                                }
+                            }
+                        } catch (error: Exception) {
+                            Log.e("SoundNeedYouTube", "Error extrayendo video", error)
+                            runOnUiThread {
+                                result.error(
+                                    "VIDEO_EXTRACTION_ERROR",
+                                    error.message ?: "Error desconocido",
+                                    null
+                                )
+                            }
+                        }
+                    }
+                }
+
                 else -> {
                     result.notImplemented()
                 }
             }
         }
+    }
+
+    private fun startAudioVisualizer(sessionId: Int): Boolean {
+        stopAudioVisualizer()
+        return try {
+            val effect = Visualizer(sessionId)
+            val captureRange = Visualizer.getCaptureSizeRange()
+            effect.captureSize = captureRange[1]
+            effect.setDataCaptureListener(
+                object : Visualizer.OnDataCaptureListener {
+                    override fun onWaveFormDataCapture(
+                        visualizer: Visualizer?, waveform: ByteArray?, samplingRate: Int
+                    ) = Unit
+
+                    override fun onFftDataCapture(
+                        visualizer: Visualizer?, fft: ByteArray?, samplingRate: Int
+                    ) {
+                        if (fft == null || fft.size < 8) return
+                        val bandCount = 36
+                        val bands = ArrayList<Double>(bandCount)
+                        for (index in 0 until bandCount) {
+                            val low = (2.0 * Math.pow(64.0, index.toDouble() / bandCount))
+                                .toInt().coerceIn(1, fft.size / 2 - 1)
+                            val high = (2.0 * Math.pow(64.0, (index + 1).toDouble() / bandCount))
+                                .toInt().coerceIn(low + 1, fft.size / 2)
+                            var peak = 0.0
+                            for (bin in low until high) {
+                                val real = fft[bin * 2].toInt()
+                                val imaginary = fft[bin * 2 + 1].toInt()
+                                peak = maxOf(peak, Math.hypot(real.toDouble(), imaginary.toDouble()))
+                            }
+                            bands.add(((peak - 3.0) / 55.0).coerceIn(0.0, 1.0))
+                        }
+                        runOnUiThread { visualizerEventSink?.success(bands) }
+                    }
+                },
+                Visualizer.getMaxCaptureRate() / 3,
+                false,
+                true
+            )
+            effect.enabled = true
+            visualizer = effect
+            true
+        } catch (error: Exception) {
+            Log.w("SoundNeedVisualizer", "No se pudo iniciar el FFT de audio", error)
+            stopAudioVisualizer()
+            false
+        }
+    }
+
+    private fun stopAudioVisualizer() {
+        runCatching { visualizer?.enabled = false }
+        runCatching { visualizer?.release() }
+        visualizer = null
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != VISUALIZER_PERMISSION_REQUEST_CODE) return
+        val result = pendingVisualizerResult ?: return
+        val sessionId = pendingVisualizerSessionId
+        pendingVisualizerResult = null
+        pendingVisualizerSessionId = null
+        val granted = grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
+        result.success(granted && sessionId != null && startAudioVisualizer(sessionId))
     }
 
     @Deprecated("Deprecated in Android")
@@ -739,8 +913,10 @@ class MainActivity : AudioServiceActivity() {
         audioUrl: String,
         title: String,
         artist: String,
+        album: String,
         duration: Long,
         artwork: ByteArray?,
+        sourceUrl: String,
         onProgress: (Long, Long) -> Unit
     ): Map<String, String> {
         val startTime = System.currentTimeMillis()
@@ -788,23 +964,10 @@ class MainActivity : AudioServiceActivity() {
             val displayName = "${safeDownloadName(title)}.$extension"
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val values = ContentValues().apply {
-                    put(MediaStore.Audio.Media.DISPLAY_NAME, displayName)
-                    put(MediaStore.Audio.Media.TITLE, title)
-                    put(MediaStore.Audio.Media.ARTIST, artist.ifBlank { "Artista desconocido" })
-                    put(MediaStore.Audio.Media.MIME_TYPE, mimeType)
-                    put(MediaStore.Audio.Media.RELATIVE_PATH, "Music/SoundNeed")
-                    put(MediaStore.Audio.Media.IS_MUSIC, 1)
-                    if (duration > 0) put(MediaStore.Audio.Media.DURATION, duration)
-                    put(MediaStore.Audio.Media.IS_PENDING, 1)
-                }
-                val collection = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
-                val savedUri = contentResolver.insert(collection, values)
-                    ?: throw IllegalStateException("No se pudo crear el archivo de audio.")
+                val stagedFile = File.createTempFile("soundneed-download-", ".$extension", cacheDir)
+                var savedUri: Uri? = null
                 try {
-                    val output = contentResolver.openOutputStream(savedUri, "w")
-                        ?: throw IllegalStateException("No se pudo escribir el archivo.")
-
+                    java.io.FileOutputStream(stagedFile).use { output ->
                     // Intentar descarga paralela primero si el servidor soporta Range y el archivo es grande
                     var downloadSuccess = false
                     if (supportsRange && contentLength > 2 * 1024 * 1024) {
@@ -815,6 +978,8 @@ class MainActivity : AudioServiceActivity() {
                         } catch (parallelError: Exception) {
                             Log.w("SoundNeedDownload", "Descarga paralela falló: ${parallelError.message}")
                             Log.d("SoundNeedDownload", "Fallback a descarga normal (1 conexión)")
+                            output.channel.truncate(0)
+                            output.channel.position(0)
                             // Fallback a descarga normal
                             val bufferedInput = java.io.BufferedInputStream(
                                 connection.inputStream,
@@ -854,9 +1019,42 @@ class MainActivity : AudioServiceActivity() {
                     if (!downloadSuccess) {
                         throw IllegalStateException("La descarga falló en todos los intentos.")
                     }
+                    }
+
+                    writeEmbeddedTags(
+                        stagedFile,
+                        title,
+                        artist,
+                        album,
+                        duration,
+                        artwork,
+                        sourceUrl
+                    )
+
+                    val values = ContentValues().apply {
+                        put(MediaStore.Audio.Media.DISPLAY_NAME, displayName)
+                        put(MediaStore.Audio.Media.TITLE, title)
+                        put(MediaStore.Audio.Media.ARTIST, artist.ifBlank { "Artista desconocido" })
+                        if (album.isNotBlank()) put(MediaStore.Audio.Media.ALBUM, album)
+                        put(MediaStore.Audio.Media.MIME_TYPE, mimeType)
+                        put(MediaStore.Audio.Media.RELATIVE_PATH, "Music/SoundNeed")
+                        put(MediaStore.Audio.Media.IS_MUSIC, 1)
+                        if (duration > 0) put(MediaStore.Audio.Media.DURATION, duration)
+                        put(MediaStore.Audio.Media.IS_PENDING, 1)
+                    }
+                    val collection = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+                    val destinationUri = contentResolver.insert(collection, values)
+                        ?: throw IllegalStateException("No se pudo crear el archivo de audio.")
+                    savedUri = destinationUri
+
+                    val destination = contentResolver.openOutputStream(destinationUri, "w")
+                        ?: throw IllegalStateException("No se pudo escribir el archivo.")
+                    destination.use { output ->
+                        stagedFile.inputStream().use { input -> input.copyTo(output) }
+                    }
 
                     contentResolver.update(
-                        savedUri,
+                        destinationUri,
                         ContentValues().apply {
                             put(MediaStore.Audio.Media.IS_PENDING, 0)
                         },
@@ -864,13 +1062,17 @@ class MainActivity : AudioServiceActivity() {
                         null
                     )
                 } catch (error: Exception) {
-                    contentResolver.delete(savedUri, null, null)
+                    savedUri?.let { contentResolver.delete(it, null, null) }
                     throw error
+                } finally {
+                    stagedFile.delete()
                 }
+                val publishedUri = savedUri
+                    ?: throw IllegalStateException("No se publicó el archivo descargado.")
                 registerSoundNeedFolder()
-                val artworkUri = saveDownloadedArtwork(savedUri.toString(), artwork)
+                val artworkUri = saveDownloadedArtwork(publishedUri.toString(), artwork)
                 return mapOf(
-                    "uri" to savedUri.toString(),
+                    "uri" to publishedUri.toString(),
                     "folderPath" to File(
                         Environment.getExternalStoragePublicDirectory(
                             Environment.DIRECTORY_MUSIC
@@ -916,6 +1118,7 @@ class MainActivity : AudioServiceActivity() {
                     copyDownload(input, output, contentLength, startTime, onProgress)
                 }
             }
+            writeEmbeddedTags(file, title, artist, album, duration, artwork, sourceUrl)
             registerSoundNeedFolder()
 
             val scanCompleted = CountDownLatch(1)
@@ -953,6 +1156,47 @@ class MainActivity : AudioServiceActivity() {
         } finally {
             connection.disconnect()
         }
+    }
+
+    private fun writeEmbeddedTags(
+        audioFile: File,
+        title: String,
+        artist: String,
+        album: String,
+        duration: Long,
+        artwork: ByteArray?,
+        sourceUrl: String
+    ) {
+        val metadata = hashMapOf(
+            "TITLE" to title,
+            "ARTIST" to artist.ifBlank { "Artista desconocido" },
+            "COMMENT" to sourceUrl.takeIf { it.isNotBlank() }
+                ?.let { "Source: $it" }.orEmpty()
+        )
+        if (album.isNotBlank()) metadata["ALBUM"] = album
+
+        val metadataSaved = try {
+            TagLib.setMetadata(audioFile.absolutePath, metadata)
+        } catch (error: LinkageError) {
+            Log.e("SoundNeedDownload", "El etiquetador no está disponible para esta ABI", error)
+            return
+        }
+        if (!metadataSaved) {
+            throw IllegalStateException("No se pudieron escribir las etiquetas de audio.")
+        }
+
+        if (artwork != null && artwork.isNotEmpty()) {
+            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(artwork, 0, artwork.size, options)
+            val mimeType = options.outMimeType?.takeIf { it.startsWith("image/") }
+                ?: "image/jpeg"
+            if (!TagLib.setArtwork(audioFile.absolutePath, artwork, mimeType, "")) {
+                Log.w("SoundNeedDownload", "No se pudo incrustar la portada en ${audioFile.name}")
+            }
+        }
+
+        // La duración se deriva del stream y también se guarda en MediaStore.
+        Log.d("SoundNeedDownload", "Etiquetas escritas: ${audioFile.name}, duration=$duration")
     }
 
     private fun copyDownload(
@@ -1597,5 +1841,52 @@ class MainActivity : AudioServiceActivity() {
         }
 
         return selectedUrl
+    }
+
+    // ============================================================
+    // OBTENER URL DIRECTA DE VIDEO DE YOUTUBE (NEWPIPE)
+    // ============================================================
+
+    private fun getYouTubeVideoUrl(videoId: String): String? {
+        initializeNewPipe()
+
+        val extractor = NewPipe.getService("YouTube")
+            .getStreamExtractor("https://www.youtube.com/watch?v=$videoId")
+        extractor.fetchPage()
+
+        // Usar un stream combinado de video y audio: en modo video el
+        // video_player será la única fuente de reproducción.
+        val streams = extractor.videoStreams
+            .filter { it.isUrl && !it.isVideoOnly && it.content.isNotBlank() }
+
+        if (streams.isEmpty()) {
+            Log.w("SoundNeedYouTube", "YouTube no devolvió streams directos de video con audio")
+            return null
+        }
+
+        // Preferir una calidad moderada para acelerar la carga en móviles.
+        val sortedByQuality = streams.sortedByDescending { stream ->
+            stream.getResolution()
+                .filter { it.isDigit() }
+                .toIntOrNull()
+                ?: 0
+        }
+        val selected = sortedByQuality
+            .firstOrNull { stream ->
+                stream.getResolution()
+                    .filter { it.isDigit() }
+                    .toIntOrNull()
+                    ?.let { it <= 720 }
+                    ?: true
+            }
+            ?: sortedByQuality.firstOrNull()
+
+        val url = selected?.content?.trim().orEmpty()
+        if (!url.startsWith("https://") && !url.startsWith("http://")) {
+            Log.w("SoundNeedYouTube", "El stream de video seleccionado tiene URL inválida")
+            return null
+        }
+
+        return url
     }
 }

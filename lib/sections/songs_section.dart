@@ -9,6 +9,7 @@ import '../playlist_artwork.dart';
 import '../song_actions.dart';
 import '../services/artwork_palette.dart';
 import '../widgets/soundneed_empty_state.dart';
+import '../widgets/audio_artwork_visualizer.dart';
 
 class SongsSection extends StatefulWidget {
   final MusicPlayerController player;
@@ -29,6 +30,46 @@ class SongsSection extends StatefulWidget {
 }
 
 class _SongsSectionState extends State<SongsSection> {
+  int? _observedSongId;
+  bool _observedPlaying = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _observePlayback();
+    widget.player.addListener(_onPlayerChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant SongsSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.player != widget.player) {
+      oldWidget.player.removeListener(_onPlayerChanged);
+      _observePlayback();
+      widget.player.addListener(_onPlayerChanged);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.player.removeListener(_onPlayerChanged);
+    super.dispose();
+  }
+
+  void _observePlayback() {
+    _observedSongId = widget.player.currentSong?.id;
+    _observedPlaying = widget.player.isPlaying;
+  }
+
+  void _onPlayerChanged() {
+    final songId = widget.player.currentSong?.id;
+    final playing = widget.player.isPlaying;
+    if (songId == _observedSongId && playing == _observedPlaying) return;
+    _observedSongId = songId;
+    _observedPlaying = playing;
+    if (mounted) setState(() {});
+  }
+
   @override
   Widget build(BuildContext context) {
     if (widget.player.loading) {
@@ -65,7 +106,8 @@ class _SongsSectionState extends State<SongsSection> {
           if (songs.isEmpty) return _buildNoResults();
           final song = songs[index - 1];
           final isCurrent = widget.player.currentSong?.id == song.id;
-          return _buildSongTile(context, song, isCurrent);
+          final isPlaying = isCurrent && widget.player.isPlaying;
+          return _buildSongTile(context, song, isCurrent, isPlaying);
         },
       ),
     );
@@ -218,8 +260,13 @@ class _SongsSectionState extends State<SongsSection> {
     );
   }
 
-  Widget _buildSongTile(BuildContext context, Song song, bool isCurrent) {
-    final accent = isCurrent
+  Widget _buildSongTile(
+    BuildContext context,
+    Song song,
+    bool isCurrent,
+    bool isPlaying,
+  ) {
+    final accent = isCurrent && widget.palette.isArtworkDerived
         ? Color.lerp(widget.palette.primary, Colors.white, .28)!
         : Colors.white;
     return Padding(
@@ -237,7 +284,7 @@ class _SongsSectionState extends State<SongsSection> {
             padding: const EdgeInsets.fromLTRB(10, 9, 5, 9),
             child: Row(
               children: [
-                _buildArtwork(song, size: 62),
+                _buildArtwork(song, size: 62, isPlaying: isPlaying),
                 const SizedBox(width: 12),
 
                 Expanded(
@@ -259,14 +306,6 @@ class _SongsSectionState extends State<SongsSection> {
                       const SizedBox(height: 6),
                       Row(
                         children: [
-                          if (isCurrent) ...[
-                            Icon(
-                              Icons.graphic_eq_rounded,
-                              size: 14,
-                              color: widget.palette.secondary,
-                            ),
-                            const SizedBox(width: 4),
-                          ],
                           Expanded(
                             child: Text(
                               song.artist.isEmpty
@@ -336,39 +375,74 @@ class _SongsSectionState extends State<SongsSection> {
     );
   }
 
-  Widget _buildArtwork(Song song, {double size = 76}) {
+  Widget _buildArtwork(
+    Song song, {
+    double size = 76,
+    bool isPlaying = false,
+  }) {
     return FutureBuilder<Uint8List?>(
       future: widget.player.loadArtwork(song),
       builder: (context, snapshot) {
         if (snapshot.hasData && snapshot.data != null) {
-          return ClipRRect(
-            borderRadius: BorderRadius.circular(13),
-            child: Image.memory(
+          return _artworkWithVisualizer(
+            Image.memory(
               snapshot.data!,
               width: size,
               height: size,
               fit: BoxFit.cover,
             ),
+            size,
+            isPlaying,
           );
         }
 
-        return Container(
-          width: size,
-          height: size,
-          decoration: BoxDecoration(
-            color: widget.palette.primary.withValues(alpha: .12),
-            borderRadius: BorderRadius.circular(13),
-            border: Border.all(
-              color: widget.palette.primary.withValues(alpha: .26),
+        return _artworkWithVisualizer(
+          Container(
+            width: size,
+            height: size,
+            decoration: BoxDecoration(
+              color: widget.palette.primary.withValues(alpha: .12),
+              borderRadius: BorderRadius.circular(13),
+              border: Border.all(
+                color: widget.palette.primary.withValues(alpha: .26),
+              ),
+            ),
+            child: Icon(
+              Icons.music_note_rounded,
+              size: 32,
+              color: widget.palette.secondary,
             ),
           ),
-          child: Icon(
-            Icons.music_note_rounded,
-            size: 32,
-            color: widget.palette.secondary,
-          ),
+          size,
+          isPlaying,
         );
       },
+    );
+  }
+
+  Widget _artworkWithVisualizer(
+    Widget artwork,
+    double size,
+    bool isPlaying,
+  ) {
+    return SizedBox(
+      width: size,
+      height: size,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(13),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            artwork,
+            if (isPlaying)
+              AudioArtworkVisualizer(
+                sessionIds: widget.player.audioPlayer.androidAudioSessionIdStream,
+                initialSessionId: widget.player.audioPlayer.androidAudioSessionId,
+                isPlaying: isPlaying,
+              ),
+          ],
+        ),
+      ),
     );
   }
 
