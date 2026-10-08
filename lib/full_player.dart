@@ -11,9 +11,9 @@ import 'music_player.dart';
 import 'mini_player.dart';
 import 'playlist_actions.dart';
 import 'services/youtube_audio_service.dart';
+import 'services/equalizer_service.dart';
 import 'widgets/overflow_marquee_text.dart';
 
-import 'package:just_audio/just_audio.dart';
 
 class FullPlayer extends StatefulWidget {
   final MusicPlayerController player;
@@ -118,7 +118,9 @@ class _FullPlayerState extends State<FullPlayer>
       }
       await controller.pause();
     } catch (error) {
-      debugPrint('[SoundNeed] No se pudo transferir el audio del video: $error');
+      debugPrint(
+        '[SoundNeed] No se pudo transferir el audio del video: $error',
+      );
     } finally {
       await controller.dispose();
     }
@@ -381,9 +383,7 @@ class _FullPlayerState extends State<FullPlayer>
     ui.Image? image;
     try {
       image = await renderObject.toImage(pixelRatio: 0.05);
-      final data = await image.toByteData(
-        format: ui.ImageByteFormat.rawRgba,
-      );
+      final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
       if (data == null || !_onlineVideoMode) return;
       final colors = _extractVideoTheme(data.buffer.asUint8List());
       if (!mounted || !_onlineVideoMode || colors.$1 == Colors.white) return;
@@ -430,18 +430,17 @@ class _FullPlayerState extends State<FullPlayer>
     candidates.sort((a, b) {
       final aHsl = HSLColor.fromColor(a);
       final bHsl = HSLColor.fromColor(b);
-      final aScore = aHsl.saturation * 2.2 +
-          (1 - (aHsl.lightness - 0.50).abs()) * 1.3;
-      final bScore = bHsl.saturation * 2.2 +
-          (1 - (bHsl.lightness - 0.50).abs()) * 1.3;
+      final aScore =
+          aHsl.saturation * 2.2 + (1 - (aHsl.lightness - 0.50).abs()) * 1.3;
+      final bScore =
+          bHsl.saturation * 2.2 + (1 - (bHsl.lightness - 0.50).abs()) * 1.3;
       return bScore.compareTo(aScore);
     });
 
     final primary = candidates.first;
     final secondary = candidates.reduce(
-      (a, b) => _colorDistance(primary, a) >= _colorDistance(primary, b)
-          ? a
-          : b,
+      (a, b) =>
+          _colorDistance(primary, a) >= _colorDistance(primary, b) ? a : b,
     );
     final primaryHsl = HSLColor.fromColor(primary);
     final dark = primaryHsl
@@ -1022,10 +1021,8 @@ class _FullPlayerState extends State<FullPlayer>
     if (videoController != null && videoController.value.isInitialized) {
       return ValueListenableBuilder<VideoPlayerValue>(
         valueListenable: videoController,
-        builder: (context, value, _) => _buildProgressContent(
-          value.position,
-          value.duration,
-        ),
+        builder: (context, value, _) =>
+            _buildProgressContent(value.position, value.duration),
       );
     }
 
@@ -1045,9 +1042,7 @@ class _FullPlayerState extends State<FullPlayer>
     final totalMs = duration.inMilliseconds;
     final currentMs = position.inMilliseconds;
 
-    final value = totalMs <= 0
-        ? 0.0
-        : (currentMs / totalMs).clamp(0.0, 1.0);
+    final value = totalMs <= 0 ? 0.0 : (currentMs / totalMs).clamp(0.0, 1.0);
 
     return Column(
       children: [
@@ -1620,6 +1615,16 @@ class _FullPlayerState extends State<FullPlayer>
                 const SizedBox(height: 20),
 
                 _optionTile(
+                  icon: Icons.equalizer_rounded,
+                  title: 'Ecualizador y sonido',
+                  subtitle: 'Modos de sonido y ajustes personalizados',
+                  onTap: () {
+                    Navigator.pop(context);
+                    _showEqualizer();
+                  },
+                ),
+
+                _optionTile(
                   icon: Icons.download_rounded,
                   title: 'Descargar',
                   onTap: () {
@@ -1694,6 +1699,7 @@ class _FullPlayerState extends State<FullPlayer>
     required IconData icon,
     required String title,
     required VoidCallback onTap,
+    String? subtitle,
   }) {
     return ListTile(
       onTap: onTap,
@@ -1715,8 +1721,356 @@ class _FullPlayerState extends State<FullPlayer>
           fontWeight: FontWeight.w600,
         ),
       ),
+      subtitle: subtitle == null
+          ? null
+          : Text(
+              subtitle,
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.56),
+                fontSize: 11,
+              ),
+            ),
     );
   }
+
+  void _showEqualizer() {
+    final equalizer = EqualizerService.instance;
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => AnimatedBuilder(
+        animation: equalizer,
+        builder: (context, _) => FractionallySizedBox(
+          heightFactor: .88,
+          child: Container(
+            decoration: BoxDecoration(
+              color: _themeDark,
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(30),
+              ),
+              border: Border.all(color: Colors.white.withOpacity(.08)),
+            ),
+            child: Column(
+              children: [
+                const SizedBox(height: 11),
+                Container(
+                  width: 42,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(.2),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 18, 12, 8),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 42,
+                        height: 42,
+                        decoration: BoxDecoration(
+                          color: _themeColor.withOpacity(.15),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Icon(
+                          Icons.equalizer_rounded,
+                          color: _themeColor,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Ecualizador',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 19,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            SizedBox(height: 2),
+                            Text(
+                              'Ajusta el sonido a tu gusto',
+                              style: TextStyle(
+                                color: Colors.white60,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Cerrar ecualizador',
+                        onPressed: () => Navigator.pop(sheetContext),
+                        icon: const Icon(Icons.close_rounded),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(child: _buildEqualizerContent(equalizer)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEqualizerContent(EqualizerService equalizer) {
+    if (equalizer.loading) {
+      return Center(child: CircularProgressIndicator(color: _themeColor));
+    }
+    if (!equalizer.available) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.headphones_rounded,
+                size: 42,
+                color: Colors.white.withOpacity(.45),
+              ),
+              const SizedBox(height: 13),
+              Text(
+                equalizer.error ??
+                    'Reproduce una canción para activar el sonido.',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white70, height: 1.4),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final videoMode = _onlineVideoMode;
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(18, 6, 18, 26),
+      children: [
+        if (videoMode) ...[
+          _equalizerNotice(
+            Icons.info_outline_rounded,
+            'El ecualizador funciona en modo Solo audio. Al volver a ese modo, se aplicarán tus ajustes.',
+          ),
+          const SizedBox(height: 12),
+        ],
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(.055),
+            borderRadius: BorderRadius.circular(18),
+          ),
+          child: SwitchListTile.adaptive(
+            value: equalizer.enabled,
+            onChanged: videoMode
+                ? null
+                : (value) => unawaited(equalizer.setEnabled(value)),
+            activeColor: _themeColor,
+            title: const Text(
+              'Activar ecualizador',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            subtitle: const Text(
+              'Se aplica al audio del reproductor, incluidos los audífonos conectados.',
+              style: TextStyle(color: Colors.white60, fontSize: 11),
+            ),
+          ),
+        ),
+        const SizedBox(height: 22),
+        Row(
+          children: [
+            const Expanded(
+              child: Text(
+                'Perfiles rápidos',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+              ),
+            ),
+            TextButton.icon(
+              onPressed: videoMode ? null : () => unawaited(equalizer.reset()),
+              icon: const Icon(Icons.restart_alt_rounded, size: 17),
+              label: const Text('Reiniciar'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 5),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final mode in EqualizerService.soundModes)
+              ChoiceChip(
+                label: Text(mode),
+                selected: equalizer.selectedPreset == mode,
+                onSelected: videoMode
+                    ? null
+                    : (_) => unawaited(equalizer.selectSoundMode(mode)),
+                selectedColor: _themeColor.withOpacity(.28),
+                backgroundColor: Colors.white.withOpacity(.07),
+                labelStyle: TextStyle(
+                  color: equalizer.selectedPreset == mode
+                      ? Colors.white
+                      : Colors.white70,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+                side: BorderSide(
+                  color: equalizer.selectedPreset == mode
+                      ? _themeColor.withOpacity(.65)
+                      : Colors.white.withOpacity(.08),
+                ),
+                showCheckmark: false,
+              ),
+          ],
+        ),
+        if (equalizer.presets.isNotEmpty) ...[
+          const SizedBox(height: 18),
+          const Text(
+            'Perfiles del dispositivo',
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final preset in equalizer.presets)
+                ChoiceChip(
+                  label: Text(preset.name),
+                  selected: equalizer.selectedPreset == preset.name,
+                  onSelected: videoMode
+                      ? null
+                      : (_) => unawaited(equalizer.selectPreset(preset)),
+                  selectedColor: _themeColor.withOpacity(.28),
+                  backgroundColor: Colors.white.withOpacity(.07),
+                  labelStyle: TextStyle(
+                    color: equalizer.selectedPreset == preset.name
+                        ? Colors.white
+                        : Colors.white70,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  side: BorderSide(
+                    color: equalizer.selectedPreset == preset.name
+                        ? _themeColor.withOpacity(.65)
+                        : Colors.white.withOpacity(.08),
+                  ),
+                  showCheckmark: false,
+                ),
+            ],
+          ),
+        ],
+        if (equalizer.error != null) ...[
+          const SizedBox(height: 12),
+          _equalizerNotice(Icons.warning_amber_rounded, equalizer.error!),
+        ],
+        const SizedBox(height: 22),
+        const Text(
+          'Ajuste personalizado',
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          'Sube o baja cada frecuencia para crear tu propio perfil.',
+          style: TextStyle(color: Colors.white60, fontSize: 11),
+        ),
+        const SizedBox(height: 12),
+        for (final band in equalizer.bands)
+          _equalizerBandSlider(band, equalizer, disabled: videoMode),
+      ],
+    );
+  }
+
+  Widget _equalizerNotice(IconData icon, String message) => Container(
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: _themeColor.withOpacity(.10),
+      borderRadius: BorderRadius.circular(15),
+      border: Border.all(color: _themeColor.withOpacity(.20)),
+    ),
+    child: Row(
+      children: [
+        Icon(icon, size: 18, color: _themeColor),
+        const SizedBox(width: 9),
+        Expanded(
+          child: Text(
+            message,
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 11,
+              height: 1.35,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _equalizerBandSlider(
+    EqualizerBand band,
+    EqualizerService equalizer, {
+    required bool disabled,
+  }) {
+    final minDb = band.minimumMb / 100;
+    final maxDb = band.maximumMb / 100;
+    final valueDb = (band.levelMb / 100).clamp(minDb, maxDb).toDouble();
+    final divisions = ((band.maximumMb - band.minimumMb) / 100)
+        .round()
+        .clamp(1, 100)
+        .toInt();
+    final level = (band.levelMb / 100).round();
+    final valueLabel = '${level > 0 ? '+' : ''}${level} dB';
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 3),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 62,
+            child: Text(
+              _frequencyLabel(band.frequencyHz),
+              style: const TextStyle(
+                color: Colors.white70,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Slider(
+              value: valueDb,
+              min: minDb,
+              max: maxDb,
+              divisions: divisions,
+              activeColor: _themeColor,
+              inactiveColor: Colors.white.withOpacity(.12),
+              onChanged: disabled
+                  ? null
+                  : (value) => unawaited(
+                      equalizer.setBandLevel(band.index, (value * 100).round()),
+                    ),
+            ),
+          ),
+          SizedBox(
+            width: 48,
+            child: Text(
+              valueLabel,
+              textAlign: TextAlign.end,
+              style: const TextStyle(color: Colors.white54, fontSize: 10),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _frequencyLabel(int frequencyHz) => frequencyHz >= 1000
+      ? '${(frequencyHz / 1000).toStringAsFixed(frequencyHz % 1000 == 0 ? 0 : 1)} kHz'
+      : '$frequencyHz Hz';
 
   void _showSongInfo(BuildContext context, dynamic song) {
     final duration = player.audioPlayer.duration;

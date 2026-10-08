@@ -9,6 +9,7 @@ import android.content.pm.PackageManager
 import android.app.RecoverableSecurityException
 import android.graphics.BitmapFactory
 import android.media.MediaScannerConnection
+import android.media.audiofx.Equalizer
 import android.media.audiofx.Visualizer
 import android.net.ConnectivityManager
 import android.net.Network
@@ -71,6 +72,8 @@ class MainActivity : AudioServiceActivity() {
     private var visualizerEventSink: EventChannel.EventSink? = null
     private var pendingVisualizerResult: MethodChannel.Result? = null
     private var pendingVisualizerSessionId: Int? = null
+    private var equalizer: Equalizer? = null
+    private var equalizerSessionId: Int? = null
 
     companion object {
         private const val CHANNEL = "music_player/media"
@@ -382,6 +385,144 @@ class MainActivity : AudioServiceActivity() {
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
+            "soundneed/equalizer"
+        ).setMethodCallHandler { call, result ->
+            try {
+                when (call.method) {
+                    "open" -> {
+                        val sessionId = call.argument<Number>("sessionId")?.toInt()
+                        if (sessionId == null || sessionId <= 0) {
+                            result.error("INVALID_SESSION", "La sesión de audio no es válida.", null)
+                            return@setMethodCallHandler
+                        }
+                        if (equalizerSessionId != sessionId || equalizer == null) {
+                            closeAudioEqualizer()
+                            val effect = Equalizer(0, sessionId)
+                            equalizer = effect
+                            equalizerSessionId = sessionId
+                        }
+
+                        val effect = equalizer ?: throw IllegalStateException(
+                            "Android no creó el ecualizador."
+                        )
+                        val range = effect.bandLevelRange
+                        val bands = (0 until effect.numberOfBands.toInt()).map { index ->
+                            val band = index.toShort()
+                            mapOf(
+                                "index" to index,
+                                "frequencyHz" to (effect.getCenterFreq(band) / 1000),
+                                "levelMb" to effect.getBandLevel(band).toInt(),
+                            )
+                        }
+                        val presets = (0 until effect.numberOfPresets.toInt()).map { index ->
+                            mapOf(
+                                "id" to index,
+                                "name" to effect.getPresetName(index.toShort()),
+                            )
+                        }
+                        result.success(
+                            mapOf(
+                                "supported" to bands.isNotEmpty(),
+                                "minimumMb" to range[0].toInt(),
+                                "maximumMb" to range[1].toInt(),
+                                "bands" to bands,
+                                "presets" to presets,
+                            )
+                        )
+                    }
+                    "setEnabled" -> {
+                        val effect = equalizer ?: throw IllegalStateException(
+                            "Abre primero el ecualizador."
+                        )
+                        effect.enabled = call.argument<Boolean>("enabled") ?: false
+                        result.success(effect.enabled)
+                    }
+                    "setBandLevel" -> {
+                        val effect = equalizer ?: throw IllegalStateException(
+                            "Abre primero el ecualizador."
+                        )
+                        val band = call.argument<Number>("band")?.toInt()
+                            ?: throw IllegalArgumentException("Falta la banda de audio.")
+                        val level = call.argument<Number>("levelMb")?.toInt()
+                            ?: throw IllegalArgumentException("Falta el nivel de audio.")
+                        effect.setBandLevel(band.toShort(), level.coerceIn(
+                            effect.bandLevelRange[0].toInt(),
+                            effect.bandLevelRange[1].toInt(),
+                        ).toShort())
+                        result.success(null)
+                    }
+                    "setBandLevels" -> {
+                        val effect = equalizer ?: throw IllegalStateException(
+                            "Abre primero el ecualizador."
+                        )
+                        val levels = call.argument<List<Number>>("levelsMb")
+                            ?: throw IllegalArgumentException("Faltan los niveles de audio.")
+                        if (levels.size != effect.numberOfBands.toInt()) {
+                            throw IllegalArgumentException("La cantidad de bandas no coincide.")
+                        }
+                        val range = effect.bandLevelRange
+                        levels.forEachIndexed { index, level ->
+                            effect.setBandLevel(
+                                index.toShort(),
+                                level.toInt().coerceIn(
+                                    range[0].toInt(),
+                                    range[1].toInt(),
+                                ).toShort(),
+                            )
+                        }
+                        result.success(
+                            (0 until effect.numberOfBands.toInt()).map { index ->
+                                effect.getBandLevel(index.toShort()).toInt()
+                            }
+                        )
+                    }
+                    "usePreset" -> {
+                        val effect = equalizer ?: throw IllegalStateException(
+                            "Abre primero el ecualizador."
+                        )
+                        val preset = call.argument<Number>("presetId")?.toInt()
+                            ?: throw IllegalArgumentException("Falta el modo de sonido.")
+                        if (preset !in 0 until effect.numberOfPresets.toInt()) {
+                            throw IllegalArgumentException("El modo seleccionado no existe.")
+                        }
+                        effect.usePreset(preset.toShort())
+                        result.success(
+                            (0 until effect.numberOfBands.toInt()).map { index ->
+                                effect.getBandLevel(index.toShort()).toInt()
+                            }
+                        )
+                    }
+                    "reset" -> {
+                        val effect = equalizer ?: throw IllegalStateException(
+                            "Abre primero el ecualizador."
+                        )
+                        (0 until effect.numberOfBands.toInt()).forEach { index ->
+                            effect.setBandLevel(index.toShort(), 0)
+                        }
+                        result.success(
+                            (0 until effect.numberOfBands.toInt()).map { index ->
+                                effect.getBandLevel(index.toShort()).toInt()
+                            }
+                        )
+                    }
+                    "close" -> {
+                        closeAudioEqualizer()
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            } catch (error: Exception) {
+                Log.w("SoundNeedEqualizer", "No se pudo cambiar el ecualizador", error)
+                result.error(
+                    "EQUALIZER_ERROR",
+                    error.message ?: "No se pudo aplicar el ecualizador.",
+                    null,
+                )
+            }
+        }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
             WIDGET_CHANNEL
         ).setMethodCallHandler { call, result ->
             when (call.method) {
@@ -634,6 +775,13 @@ class MainActivity : AudioServiceActivity() {
         runCatching { visualizer?.enabled = false }
         runCatching { visualizer?.release() }
         visualizer = null
+    }
+
+    private fun closeAudioEqualizer() {
+        runCatching { equalizer?.enabled = false }
+        runCatching { equalizer?.release() }
+        equalizer = null
+        equalizerSessionId = null
     }
 
     override fun onRequestPermissionsResult(

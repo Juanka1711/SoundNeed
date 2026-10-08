@@ -13,6 +13,7 @@ import 'package:http/http.dart' as http;
 import 'services/youtube_audio_service.dart';
 import 'services/audio_handler.dart';
 import 'services/recommendation_service.dart';
+import 'services/equalizer_service.dart';
 
 class Song {
   final int id;
@@ -171,6 +172,7 @@ class MusicPlayerController extends ChangeNotifier {
   StreamSubscription<dynamic>? _networkSubscription;
   StreamSubscription<dynamic>? _downloadProgressSubscription;
   StreamSubscription<PlayerException>? _playerErrorSubscription;
+  StreamSubscription<int?>? _audioSessionSubscription;
   bool _isDownloading = false;
   double? _downloadProgress;
   bool _isDownloadingPlaylist = false;
@@ -218,6 +220,18 @@ class MusicPlayerController extends ChangeNotifier {
   MusicPlayerController({required SoundNeedAudioHandler audioHandler})
     : _audioHandler = audioHandler {
     _audioPlayer = audioHandler.player;
+    _audioSessionSubscription = _audioPlayer.androidAudioSessionIdStream.listen(
+      (sessionId) => unawaited(
+        EqualizerService.instance.bindSession(sessionId),
+      ),
+      onError: (Object error) {
+        debugPrint('[SoundNeed] No se pudo enlazar el ecualizador: $error');
+      },
+    );
+    final initialAudioSessionId = _audioPlayer.androidAudioSessionId;
+    if (initialAudioSessionId != null) {
+      unawaited(EqualizerService.instance.bindSession(initialAudioSessionId));
+    }
     _audioHandler.onPlayRequested = _handleExternalPlay;
     _audioHandler.onSkipToNext = nextSong;
     _audioHandler.onSkipToPrevious = previousSong;
@@ -1864,6 +1878,8 @@ class MusicPlayerController extends ChangeNotifier {
     unawaited(_networkSubscription?.cancel() ?? Future<void>.value());
     unawaited(_downloadProgressSubscription?.cancel() ?? Future<void>.value());
     unawaited(_playerErrorSubscription?.cancel() ?? Future<void>.value());
+    unawaited(_audioSessionSubscription?.cancel() ?? Future<void>.value());
+    unawaited(EqualizerService.instance.release());
     super.dispose();
   }
 
