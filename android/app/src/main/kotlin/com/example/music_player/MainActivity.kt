@@ -84,7 +84,7 @@ class MainActivity : AudioServiceActivity() {
         private const val MUSIC_FOLDERS_KEY = "paths"
         private const val DOWNLOAD_ARTWORKS_KEY = "artwork_files"
         private val extractorExecutor =
-            Executors.newSingleThreadExecutor()
+            Executors.newFixedThreadPool(2)
         private val downloadExecutor =
             Executors.newSingleThreadExecutor()
     }

@@ -74,16 +74,28 @@ class SoundNeedWidgetProvider : AppWidgetProvider() {
             val preferences =
                 context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-            val previousArtUri =
-                preferences.getString(KEY_ART_URI, "")
+            val previousArtUri = preferences.getString(KEY_ART_URI, "") ?: ""
+            // MediaSession puede publicar metadata vacía durante stop/reinicio.
+            // No permitimos que eso borre la última canción visible.
+            val safeTitle = title.trim().ifBlank {
+                preferences.getString(KEY_TITLE, "")?.trim().orEmpty()
+            }
+            val safeArtist = artist.trim().ifBlank {
+                if (title.isBlank()) {
+                    preferences.getString(KEY_ARTIST, "")?.trim().orEmpty()
+                } else {
+                    "Artista desconocido"
+                }
+            }
+            val safeArtUri = artUri.trim().ifBlank { previousArtUri }
 
             val artworkCacheMissing =
-                cachedArtworkFile(context, artUri)?.exists() != true
+                cachedArtworkFile(context, safeArtUri)?.exists() != true
 
             preferences.edit()
-                .putString(KEY_TITLE, title)
-                .putString(KEY_ARTIST, artist)
-                .putString(KEY_ART_URI, artUri)
+                .putString(KEY_TITLE, safeTitle)
+                .putString(KEY_ARTIST, safeArtist)
+                .putString(KEY_ART_URI, safeArtUri)
                 .putBoolean(KEY_PLAYING, playing)
                 .apply()
 
@@ -103,7 +115,7 @@ class SoundNeedWidgetProvider : AppWidgetProvider() {
                     context,
                     manager,
                     widgetId,
-                    refreshArtwork = previousArtUri != artUri || artworkCacheMissing
+                    refreshArtwork = previousArtUri != safeArtUri || artworkCacheMissing
                 )
             }
         }
@@ -227,8 +239,15 @@ class SoundNeedWidgetProvider : AppWidgetProvider() {
             val duration =
                 preferences.getLong(KEY_DURATION, 0L)
 
-            val hasSong =
-                title.isNotBlank() || artUri.isNotBlank()
+            val displayTitle = title.trim().ifBlank { "SoundNeed" }
+            val displayArtist = artist.trim().ifBlank {
+                if (title.isBlank() && artUri.isBlank()) {
+                    "Toca para reproducir música"
+                } else {
+                    "Artista desconocido"
+                }
+            }
+            val hasSong = title.isNotBlank() || artUri.isNotBlank()
 
             val views =
                 RemoteViews(
@@ -313,12 +332,12 @@ class SoundNeedWidgetProvider : AppWidgetProvider() {
 
             views.setTextViewText(
                 R.id.widget_title,
-                title
+                displayTitle
             )
 
             views.setTextViewText(
                 R.id.widget_artist,
-                artist
+                displayArtist
             )
 
             val progress =
@@ -653,18 +672,14 @@ class SoundNeedWidgetProvider : AppWidgetProvider() {
 
                     views.setTextViewText(
                         R.id.widget_title,
-                        preferences.getString(
-                            KEY_TITLE,
-                            ""
-                        )
+                        preferences.getString(KEY_TITLE, "")?.takeIf { it.isNotBlank() }
+                            ?: "SoundNeed"
                     )
 
                     views.setTextViewText(
                         R.id.widget_artist,
-                        preferences.getString(
-                            KEY_ARTIST,
-                            ""
-                        )
+                        preferences.getString(KEY_ARTIST, "")?.takeIf { it.isNotBlank() }
+                            ?: "Artista desconocido"
                     )
 
                     applyArtwork(

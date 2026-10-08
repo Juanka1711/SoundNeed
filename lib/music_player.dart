@@ -156,6 +156,9 @@ class MusicPlayerController extends ChangeNotifier {
   final Map<String, LockCachingAudioSource> _onlineAudioSources = {};
   // Caché persistente de URLs de YouTube (videoId -> URL)
   final Map<String, String> _youtubeUrlCache = {};
+  // Comparte la extracción entre precarga y reproducción para evitar que una
+  // selección inicie dos llamadas NewPipe para el mismo video.
+  final Map<String, Future<String?>> _youtubeUrlRequests = {};
   final Set<String> _refreshingOnlineAudioUrls = {};
   final Map<String, int> _onlineAudioUrlRefreshAttempts = {};
 
@@ -300,20 +303,41 @@ class MusicPlayerController extends ChangeNotifier {
   /// Precarga la URL de audio de YouTube en segundo plano.
   /// Llamar esto cuando el usuario selecciona o muestra una canción online.
   Future<void> preloadYoutubeUrl(String videoId) async {
-    if (_youtubeUrlCache.containsKey(videoId)) {
-      return; // Ya está cacheada
-    }
-
     try {
-      final audioUrl = await YouTubeAudioService.instance.getAudioUrl(videoId);
-      if (audioUrl != null && audioUrl.isNotEmpty) {
-        _youtubeUrlCache[videoId] = audioUrl;
-        _saveYoutubeUrlCache();
+      final cached = _youtubeUrlCache.containsKey(videoId);
+      final audioUrl = await _getOrResolveYoutubeAudioUrl(videoId);
+      if (!cached && audioUrl != null) {
         debugPrint('[SoundNeed] URL precargada para $videoId');
       }
     } catch (e) {
       debugPrint('[SoundNeed] Error precargando URL: $e');
     }
+  }
+
+  Future<String?> _getOrResolveYoutubeAudioUrl(String videoId) {
+    final cached = _youtubeUrlCache[videoId];
+    if (cached != null && cached.isNotEmpty) return Future.value(cached);
+
+    final pending = _youtubeUrlRequests[videoId];
+    if (pending != null) return pending;
+
+    late final Future<String?> request;
+    request = () async {
+      try {
+        final audioUrl = await YouTubeAudioService.instance.getAudioUrl(videoId);
+        if (audioUrl != null && audioUrl.isNotEmpty) {
+          _youtubeUrlCache[videoId] = audioUrl;
+          _saveYoutubeUrlCache();
+        }
+        return audioUrl;
+      } finally {
+        if (identical(_youtubeUrlRequests[videoId], request)) {
+          _youtubeUrlRequests.remove(videoId);
+        }
+      }
+    }();
+    _youtubeUrlRequests[videoId] = request;
+    return request;
   }
 
   void _retryCurrentOnlineSong() {
@@ -1001,9 +1025,9 @@ class MusicPlayerController extends ChangeNotifier {
           String? audioUrl = _youtubeUrlCache[videoId];
 
           if (audioUrl == null) {
-            audioUrl = await YouTubeAudioService.instance.getAudioUrl(
-              videoId,
-            );
+            debugPrint('[SoundNeed] Resolviendo audio de YouTube: $videoId');
+            final resolveTimer = Stopwatch()..start();
+            audioUrl = await _getOrResolveYoutubeAudioUrl(videoId);
 
             // Si el usuario eligió otra canción mientras obtenía la URL, descartamos esta.
             if (token != _playToken) {
@@ -1019,10 +1043,10 @@ class MusicPlayerController extends ChangeNotifier {
               return;
             }
 
-            // Guardar en caché persistente
-            _youtubeUrlCache[videoId] = audioUrl;
-            _saveYoutubeUrlCache();
             debugPrint('[SoundNeed] URL cacheada para $videoId');
+            debugPrint(
+              '[SoundNeed] URL resuelta en ${resolveTimer.elapsedMilliseconds}ms: $videoId',
+            );
           } else {
             debugPrint('[SoundNeed] Usando URL cacheada para $videoId');
           }
@@ -1053,6 +1077,7 @@ class MusicPlayerController extends ChangeNotifier {
       // MANEJO ROBUSTO DE ERRORES EN REPRODUCCIÓN
       // ============================================================
       try {
+        final sourceTimer = Stopwatch()..start();
         await _audioPlayer
             .setAudioSource(
               preparedSource ??
@@ -1074,7 +1099,14 @@ class MusicPlayerController extends ChangeNotifier {
                 throw TimeoutException('Timeout al preparar el audio (20s)');
               },
             );
+        debugPrint(
+          '[SoundNeed] Audio preparado en ${sourceTimer.elapsedMilliseconds}ms: ${song.title}',
+        );
       } on TimeoutException catch (e) {
+        if (token != _playToken) return;
+        try {
+          await _audioPlayer.stop();
+        } catch (_) {}
         if (song.isOnline && _isRefreshableOnlineAudioError(e)) {
           _refreshExpiredOnlineAudioUrl(song, e);
           return;
@@ -1086,6 +1118,7 @@ class MusicPlayerController extends ChangeNotifier {
         debugPrint('[SoundNeed] Timeout en setAudioSource: $e');
         return;
       } on PlayerException catch (e) {
+        if (token != _playToken) return;
         if (song.isOnline && _isRefreshableOnlineAudioError(e)) {
           _refreshExpiredOnlineAudioUrl(song, e);
           return;
@@ -1107,6 +1140,7 @@ class MusicPlayerController extends ChangeNotifier {
         debugPrint('[SoundNeed] PlayerException: ${e.message}');
         return;
       } on PlatformException catch (e) {
+        if (token != _playToken) return;
         // Errores del lado nativo (Android MediaCodec)
         playbackError =
             'Error del sistema: ${e.message}. '
@@ -1115,6 +1149,7 @@ class MusicPlayerController extends ChangeNotifier {
         debugPrint('[SoundNeed] PlatformException: ${e.code} ${e.message}');
         return;
       } catch (e) {
+        if (token != _playToken) return;
         playbackError =
             'Error al preparar el audio: $e. '
             'El stream seleccionado puede no ser compatible.';
@@ -1138,6 +1173,7 @@ class MusicPlayerController extends ChangeNotifier {
       // Se ejecuta en segundo plano, sin timeout de 45 s.
       unawaited(_startAudioPlayback(token));
     } catch (e) {
+      if (token != _playToken) return;
       playbackError = 'Error inesperado: $e';
       _waitForNetworkReconnect(song);
       debugPrint('[SoundNeed] Error general en playSong: $e');

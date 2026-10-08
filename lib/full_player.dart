@@ -334,6 +334,27 @@ class _FullPlayerState extends State<FullPlayer>
     await controller.seekTo(requestedPosition);
   }
 
+  Stream<Duration> get _lyricsPositionStream {
+    final controller = _onlineVideoMode ? _videoController : null;
+    if (controller == null || !controller.value.isInitialized) {
+      return player.positionStream;
+    }
+    // The audio player is paused during video playback, so lyrics must follow
+    // the video controller's clock while video mode is active.
+    return Stream<Duration>.periodic(
+      const Duration(milliseconds: 100),
+      (_) => controller.value.position,
+    );
+  }
+
+  Duration get _lyricsCurrentPosition {
+    final controller = _onlineVideoMode ? _videoController : null;
+    if (controller != null && controller.value.isInitialized) {
+      return controller.value.position;
+    }
+    return player.audioPlayer.position;
+  }
+
   void _startVideoThemeSampling() {
     _videoThemeTimer?.cancel();
     unawaited(_sampleVideoTheme());
@@ -1009,7 +1030,7 @@ class _FullPlayerState extends State<FullPlayer>
     }
 
     return StreamBuilder<Duration>(
-      stream: player.positionStream,
+      stream: _lyricsPositionStream,
       initialData: Duration.zero,
       builder: (context, snapshot) {
         final position = snapshot.data ?? Duration.zero;
@@ -1334,7 +1355,7 @@ class _FullPlayerState extends State<FullPlayer>
     }
 
     return StreamBuilder<Duration>(
-      stream: player.positionStream,
+      stream: _lyricsPositionStream,
       initialData: Duration.zero,
       builder: (context, snapshot) {
         final position = snapshot.data ?? Duration.zero;
@@ -1481,6 +1502,7 @@ class _FullPlayerState extends State<FullPlayer>
           song: song,
           loadLyricsForSong: _loadLyrics,
           loadThemeForSong: _themeForLyricsSong,
+          lyricsPosition: () => _lyricsCurrentPosition,
           themeColor: _themeColor,
           themeDark: _themeDark,
         );
@@ -1763,6 +1785,7 @@ class _LyricsSheet extends StatefulWidget {
   final dynamic song;
   final Future<LyricsData?> Function(dynamic song) loadLyricsForSong;
   final Future<(Color, Color, Color)> Function(dynamic song) loadThemeForSong;
+  final Duration Function() lyricsPosition;
   final Color themeColor;
   final Color themeDark;
 
@@ -1771,6 +1794,7 @@ class _LyricsSheet extends StatefulWidget {
     required this.song,
     required this.loadLyricsForSong,
     required this.loadThemeForSong,
+    required this.lyricsPosition,
     required this.themeColor,
     required this.themeDark,
   });
@@ -1943,7 +1967,10 @@ class _LyricsSheetState extends State<_LyricsSheet> {
         }
 
         return StreamBuilder<Duration>(
-          stream: widget.player.positionStream,
+          stream: Stream<Duration>.periodic(
+            const Duration(milliseconds: 100),
+            (_) => widget.lyricsPosition(),
+          ),
           initialData: Duration.zero,
           builder: (context, positionSnapshot) {
             final position = positionSnapshot.data ?? Duration.zero;

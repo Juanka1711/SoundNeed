@@ -1,18 +1,33 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
+/// Normalized lyrics used by the existing SoundNeed player.
 class LyricsData {
   final String? plainLyrics;
   final String? syncedLyrics;
   final List<LyricLine> lines;
 
-  /// Duración de la canción que LRCLIB asocia con estas letras.
+  /// Duration reported by LRCLIB for the selected lyrics record.
   final Duration? sourceDuration;
 
-  /// Diferencia entre la duración del audio actual y la de LRCLIB.
+  /// Current audio duration - LRCLIB duration.
   final Duration? durationDifference;
+
+  /// Offset automatically applied to lyric timestamps.
+  ///
+  /// Positive = lyrics are moved forward.
+  /// Negative = lyrics are moved backward.
+  final Duration syncOffset;
+
+  /// LRCLIB record ID.
+  final int? sourceId;
+
+  /// Whether LRCLIB reports word-level timing.
+  final bool hasWordSync;
 
   const LyricsData({
     this.plainLyrics,
@@ -20,105 +35,79 @@ class LyricsData {
     this.lines = const [],
     this.sourceDuration,
     this.durationDifference,
+    this.syncOffset = Duration.zero,
+    this.sourceId,
+    this.hasWordSync = false,
   });
 
   bool get hasSyncedLyrics => lines.isNotEmpty;
 
-  bool get hasPlainLyrics =>
-      plainLyrics?.trim().isNotEmpty ?? false;
+  bool get hasPlainLyrics => plainLyrics?.trim().isNotEmpty ?? false;
 
-  bool get hasLyrics =>
-      hasSyncedLyrics || hasPlainLyrics;
+  bool get hasLyrics => hasSyncedLyrics || hasPlainLyrics;
 
-  /// Consideramos que las marcas LRC corresponden al audio actual
-  /// cuando la diferencia de duración es suficientemente pequeña.
-  bool get isSyncedToCurrentAudio {
-    if (!hasSyncedLyrics || durationDifference == null) {
-      return false;
-    }
-
-    return durationDifference!.inMilliseconds.abs() <= 3000;
-  }
+  bool get isSyncedToCurrentAudio =>
+      hasSyncedLyrics &&
+      durationDifference != null &&
+      durationDifference!.inMilliseconds.abs() <= 3000;
 }
 
+/// A synchronized lyric line.
 class LyricLine {
   final Duration timestamp;
   final String text;
 
-  const LyricLine({
-    required this.timestamp,
-    required this.text,
-  });
+  const LyricLine({required this.timestamp, required this.text});
 }
 
-class _AiSongInfo {
-  final String songTitle;
-  final String artist;
-
-  const _AiSongInfo({
-    required this.songTitle,
-    required this.artist,
-  });
-}
-
-class _ScoredLyrics {
-  final LyricsData lyrics;
-  final double score;
-  final double durationDifferenceSeconds;
-  final Map<String, dynamic> record;
-
-  const _ScoredLyrics({
-    required this.lyrics,
-    required this.score,
-    required this.durationDifferenceSeconds,
-    required this.record,
-  });
-}
-
+/// LRCLIB lyrics service.
+///
+/// Strategy:
+///
+/// 1. Try LRCLIB /api/get with title + artist + album + duration.
+/// 2. If the exact duration match fails, query /api/search.
+/// 3. Rank the returned candidates by:
+///    - title similarity
+///    - artist similarity
+///    - duration similarity
+///    - presence of synchronized lyrics
+/// 4. Parse syncedLyrics (LRC).
+/// 5. If the selected record has a different duration, calculate a
+///    conservative sync offset only when there is reasonable evidence
+///    that the difference is caused by a leading intro.
+/// 6. Keep the original player-facing API unchanged.
+///
+/// This means FullPlayer can continue using:
+///
+/// LyricsService.instance.getLyrics(...)
 class LyricsService {
   LyricsService._();
 
   static final LyricsService instance = LyricsService._();
 
+  static const String _baseUrl = 'https://lrclib.net';
+
+  static final Uri _getEndpoint = Uri.parse('$_baseUrl/api/get');
+
+  static final Uri _searchEndpoint = Uri.parse('$_baseUrl/api/search');
+
   final http.Client _client = http.Client();
 
-  // ============================================================
-  // GROQ
-  // ============================================================
+  /// Store only successful lyrics as cache values; failed requests are retried.
+  final Map<String, LyricsData> _cache = {};
+  final Map<String, Future<LyricsData?>> _inFlight = {};
 
-  //
-  // API key de Groq para extracción de nombres de canciones con IA
-  //
-  // Ejecuta Flutter con:
-  //
-  // flutter run --dart-define=GROQ_API_KEY=TU_API_KEY
-  //
-  // O configura GROQ_API_KEY en el build de tu aplicación.
-  //
-  static const String _groqApiKey =
-      String.fromEnvironment('GROQ_API_KEY');
+  /// Small delay between fallback requests.
+  ///
+  /// LRCLIB recommends sequential requests with a short delay to avoid
+  /// hitting rate limits.
+  static const Duration _requestDelay = Duration(milliseconds: 250);
 
-  static const String _groqModel = 'openai/gpt-oss-120b';
-
-  // ============================================================
-  // LRCLIB
-  // ============================================================
-
-  static const String _lrclibUserAgent =
-      'SoundNeed/1.0 (Music Player)';
-
-  // Evita golpear LRCLIB demasiado rápido.
-  DateTime? _lastLrcRequest;
-
-  // ============================================================
-  // CACHE DE EXTRACCIÓN IA
-  // ============================================================
-
-  final Map<String, _AiSongInfo?> _aiCache = {};
-
-  // ============================================================
-  // MÉTODO PRINCIPAL
-  // ============================================================
+  /// Maximum acceptable difference when considering a search candidate.
+  ///
+  /// We don't reject candidates solely because of this value; it is used
+  /// by the scoring algorithm.
+  static const double _maximumDurationDifferenceSeconds = 30.0;
 
   Future<LyricsData?> getLyrics({
     required String title,
@@ -127,1304 +116,1194 @@ class LyricsService {
     String? album,
     Duration? duration,
     bool isOnline = false,
-  }) async {
-    final originalTitle = title.trim();
+  }) {
+    final track = title.trim().isNotEmpty
+        ? title.trim()
+        : (alternateTitle ?? '').trim();
 
-    if (originalTitle.isEmpty) {
-      return null;
+    final performer = artist.trim();
+
+    if (track.isEmpty) {
+      return Future.value(null);
     }
 
-    _log('START title="$title" artist="$artist" online=$isOnline '
-        'duration=${duration?.inSeconds}s alternate="$alternateTitle"');
+    final key = _buildCacheKey(
+      title: track,
+      artist: performer,
+      album: album,
+      duration: duration,
+    );
 
-    try {
-      // ----------------------------------------------------------
-      // 1. OBTENER NOMBRE REAL DE LA CANCIÓN
-      // ----------------------------------------------------------
+    final cached = _cache[key];
+    if (cached != null) return Future.value(cached);
+    final pending = _inFlight[key];
+    if (pending != null) return pending;
 
-      _AiSongInfo? aiSong;
-
-      if (isOnline) {
-        _log('Groq extraction: starting');
-        aiSong = await _extractSongWithAI(
-          originalTitle,
-          artist: artist,
-        );
-        _log(aiSong == null
-            ? 'Groq extraction unavailable; using fallback titles'
-            : 'Groq extracted title="${aiSong.songTitle}" artist="${aiSong.artist}"');
-      }
-
-      // ----------------------------------------------------------
-      // 2. GENERAR CANDIDATOS
-      // ----------------------------------------------------------
-
-      final candidates = <String>[];
-
-      void addCandidate(String? value) {
-        if (value == null) return;
-
-        final cleaned = value.trim();
-
-        if (cleaned.isEmpty) return;
-
-        final normalized = _normalize(cleaned);
-
-        if (normalized.isEmpty) return;
-
-        if (!candidates.any(
-          (existing) => _normalize(existing) == normalized,
-        )) {
-          candidates.add(cleaned);
+    late final Future<LyricsData?> future;
+    future = _fetchLyrics(
+      track: track,
+      artist: performer,
+      album: album?.trim(),
+      duration: duration,
+    );
+    _inFlight[key] = future;
+    future.then(
+      (lyrics) {
+        if (identical(_inFlight[key], future)) {
+          if (lyrics != null) _cache[key] = lyrics;
+          _inFlight.remove(key);
         }
-      }
-
-      // La respuesta de la IA tiene prioridad.
-      if (aiSong != null) {
-        addCandidate(aiSong.songTitle);
-      }
-
-      // Título proporcionado por el reproductor.
-      addCandidate(_cleanTitle(originalTitle));
-
-      // Si existe título alternativo.
-      if (alternateTitle != null) {
-        addCandidate(_cleanTitle(alternateTitle));
-      }
-
-      // Extraer manualmente el lado derecho de:
-      //
-      // ARTISTA - CANCIÓN
-      //
-      // Esto funciona como respaldo si la IA no está disponible.
-      for (final value in [
-        originalTitle,
-        alternateTitle ?? '',
-      ]) {
-        final extracted = _extractSongTitleLocally(value);
-
-        if (extracted != null) {
-          addCandidate(extracted);
-        }
-      }
-
-      if (candidates.isEmpty) {
-        _log('No usable title candidates');
-        return null;
-      }
-      _log('LRCLIB search candidates: ${candidates.join(' | ')}');
-
-      // ----------------------------------------------------------
-      // 3. BUSCAR EN LRCLIB
-      // ----------------------------------------------------------
-
-      _ScoredLyrics? bestSynced;
-      _ScoredLyrics? bestPlain;
-      final scoredById = <String, _ScoredLyrics>{};
-
-      for (final candidate in candidates) {
-        final records = await _searchLrcLib(
-          candidate,
-        );
-        _log('LRCLIB query "$candidate": ${records.length} result(s)');
-
-        for (final record in records) {
-          final scored = _scoreRecord(
-            record: record,
-            requestedTitle: candidate,
-            requestedArtist: aiSong?.artist.isNotEmpty == true
-                ? aiSong!.artist
-                : artist,
-            requestedDuration: duration,
-          );
-
-          if (scored == null) {
-            _log('Candidate rejected: ${record['trackName']} — ${record['artistName']}');
-            continue;
-          }
-
-          final recordId = record['id']?.toString();
-          if (recordId != null && recordId.isNotEmpty) {
-            final previous = scoredById[recordId];
-            if (previous == null || scored.score > previous.score) {
-              scoredById[recordId] = scored;
-            }
-          }
-          final lyrics = scored.lyrics;
-          _log('Candidate id=${record['id']} "${record['trackName']}" — '
-              '"${record['artistName']}" duration=${record['duration']}s '
-              'synced=${lyrics.hasSyncedLyrics} score=${scored.score.toStringAsFixed(1)} '
-              'durationDelta=${scored.durationDifferenceSeconds.toStringAsFixed(2)}s');
-
-          if (lyrics.hasSyncedLyrics) {
-            if (bestSynced == null ||
-                scored.score > bestSynced.score) {
-              bestSynced = scored;
-            }
-          } else if (lyrics.hasPlainLyrics) {
-            if (bestPlain == null ||
-                scored.score > bestPlain.score) {
-              bestPlain = scored;
-            }
-          }
-        }
-      }
-
-      // ----------------------------------------------------------
-      // 4. GROQ ELIGE SOLO ENTRE LOS IDs DEVUELTOS POR LRCLIB
-      // ----------------------------------------------------------
-
-      if (isOnline && scoredById.isNotEmpty) {
-        final candidatesForSelection = _prioritizeSyncedCandidates(
-          scoredById.values.toList(),
-        );
-        final selectedId = await _selectLyricsWithAI(
-          songTitle: aiSong?.songTitle ?? candidates.first,
-          artist: aiSong?.artist.isNotEmpty == true ? aiSong!.artist : artist,
-          audioDuration: duration,
-          candidates: candidatesForSelection,
-        );
-        if (selectedId != null) {
-          _ScoredLyrics? selected;
-          for (final candidate in candidatesForSelection) {
-            if (candidate.record['id']?.toString() == selectedId) {
-              selected = candidate;
-              break;
-            }
-          }
-          if (selected == null) {
-            _log('Groq selection rejected: id=$selectedId is absent from LRCLIB results');
-          } else {
-            _log('Groq selected LRCLIB id=$selectedId '
-                '"${selected.record['trackName']}" — "${selected.record['artistName']}" '
-                'durationDelta=${selected.durationDifferenceSeconds.toStringAsFixed(2)}s '
-                'synced=${selected.lyrics.hasSyncedLyrics}');
-            return selected.lyrics;
-          }
-        }
-      }
-
-      _log('Using deterministic fallback selection');
-
-      if (bestSynced != null) {
-        _log('Selected deterministic synced lyrics: id=${bestSynced.record['id']}');
-        return bestSynced.lyrics;
-      }
-
-      if (bestPlain != null) {
-        _log('Selected deterministic plain lyrics: id=${bestPlain.record['id']}');
-        return bestPlain.lyrics;
-      }
-
-      _log('No lyrics found');
-      return null;
-    } catch (e, stack) {
-      _log('ERROR: $e\n$stack');
-      return null;
-    }
+      },
+      onError: (Object error, StackTrace _) {
+        if (identical(_inFlight[key], future)) _inFlight.remove(key);
+        debugPrint('[SoundNeed][Lyrics] Request failed: $error');
+      },
+    );
+    return future;
   }
 
-  // ============================================================
-  // GROQ: EXTRAER NOMBRE DE LA CANCIÓN
-  // ============================================================
-
-  Future<_AiSongInfo?> _extractSongWithAI(
-    String youtubeTitle, {
-    String? artist,
-  }) async {
-    if (_groqApiKey.trim().isEmpty) {
-      // Si no hay API key, continuamos con el extractor local.
-      _log('Groq extraction skipped: GROQ_API_KEY is not configured');
-      return null;
-    }
-
-    final cacheKey =
-        '${youtubeTitle.trim().toLowerCase()}|${artist?.trim().toLowerCase() ?? ''}';
-
-    if (_aiCache.containsKey(cacheKey)) {
-      _log('Groq extraction cache hit');
-      return _aiCache[cacheKey];
-    }
-
-    try {
-      final prompt = '''
-You are the song-title extraction engine for a music player.
-
-Analyze this YouTube music video title and identify the actual SONG TITLE.
-
-Do NOT return:
-- "Lyrics"
-- "Letra"
-- "Official Video"
-- "Official Music Video"
-- "Audio"
-- "Visualizer"
-- "Video"
-- "CantoYo Video Lyrics"
-- channel names
-- YouTube metadata
-- emojis
-- hashtags
-- promotional text
-
-If the title has the common format:
-
-ARTIST - SONG TITLE
-
-return only the SONG TITLE.
-
-Examples:
-
-"Kris R X GEEZYDEE - TUKI TUKI (Lyrics) [CantoYo Video Lyrics]"
-=> "TUKI TUKI"
-
-"Kris R - TUKI TUKI | Official Video"
-=> "TUKI TUKI"
-
-"TUKI TUKI - Kris R. ft. GeezyDee (Letra)"
-=> "TUKI TUKI"
-
-Do not invent information.
-
-Return ONLY valid JSON using exactly this structure:
-
-{
-  "song_title": "...",
-  "artist": "..."
-}
-
-YouTube title:
-$youtubeTitle
-
-Known artist, if available:
-${artist?.trim() ?? ''}
-''';
-
-      final response = await _client
-          .post(
-            Uri.https(
-              'api.groq.com',
-              '/openai/v1/chat/completions',
-            ),
-            headers: {
-              'Authorization': 'Bearer $_groqApiKey',
-              'Content-Type': 'application/json',
-            },
-            body: jsonEncode({
-              'model': _groqModel,
-              'messages': [
-                {
-                  'role': 'system',
-                  'content':
-                      'You extract song titles from music video titles. '
-                      'Return only valid JSON.',
-                },
-                {
-                  'role': 'user',
-                  'content': prompt,
-                },
-              ],
-              'temperature': 0,
-              // Allow enough room for the reasoning model to finish its JSON.
-              'max_completion_tokens': 1024,
-              'top_p': 1,
-              'reasoning_effort': 'low',
-              'stream': false,
-            }),
-          )
-          .timeout(
-            const Duration(seconds: 15),
-          );
-
-      if (response.statusCode < 200 ||
-          response.statusCode >= 300) {
-        _log('Groq extraction HTTP ${response.statusCode}: ${response.body}');
-        _aiCache[cacheKey] = null;
-        return null;
-      }
-
-      final decoded =
-          jsonDecode(utf8.decode(response.bodyBytes));
-
-      if (decoded is! Map<String, dynamic>) {
-        _aiCache[cacheKey] = null;
-        return null;
-      }
-
-      final choices = decoded['choices'];
-
-      if (choices is! List || choices.isEmpty) {
-        _aiCache[cacheKey] = null;
-        return null;
-      }
-
-      final firstChoice = choices.first;
-
-      if (firstChoice is! Map<String, dynamic>) {
-        _aiCache[cacheKey] = null;
-        return null;
-      }
-
-      final message = firstChoice['message'];
-
-      if (message is! Map<String, dynamic>) {
-        _aiCache[cacheKey] = null;
-        return null;
-      }
-
-      var content = message['content']?.toString() ?? '';
-
-      content = content.trim();
-
-      if (content.isEmpty) {
-        _aiCache[cacheKey] = null;
-        return null;
-      }
-
-      // Algunos modelos pueden devolver:
-      //
-      // ```json
-      // {...}
-      // ```
-      //
-      // Lo limpiamos antes de hacer jsonDecode.
-      content = _extractJson(content);
-
-      final json = jsonDecode(content);
-
-      if (json is! Map<String, dynamic>) {
-        _aiCache[cacheKey] = null;
-        return null;
-      }
-
-      final songTitle =
-          json['song_title']?.toString().trim() ?? '';
-
-      final extractedArtist =
-          json['artist']?.toString().trim() ?? '';
-
-      if (songTitle.isEmpty) {
-        _aiCache[cacheKey] = null;
-        return null;
-      }
-
-      // Seguridad: si la IA devolviera basura de YouTube,
-      // hacemos una limpieza final.
-      final cleanSongTitle = _cleanTitle(songTitle);
-
-      if (cleanSongTitle.isEmpty) {
-        _aiCache[cacheKey] = null;
-        return null;
-      }
-
-      final result = _AiSongInfo(
-        songTitle: cleanSongTitle,
-        artist: extractedArtist,
-      );
-
-      _aiCache[cacheKey] = result;
-
-      return result;
-    } catch (error) {
-      _log('Groq extraction error: $error');
-      _aiCache[cacheKey] = null;
-      return null;
-    }
-  }
-
-  // ============================================================
-  // GROQ: ELEGIR SOLO UN ID QUE LRCLIB YA DEVOLVIÓ
-  // ============================================================
-
-  Future<String?> _selectLyricsWithAI({
-    required String songTitle,
+  String _buildCacheKey({
+    required String title,
     required String artist,
-    required Duration? audioDuration,
-    required List<_ScoredLyrics> candidates,
+    required String? album,
+    required Duration? duration,
+  }) {
+    final normalizedTitle = _normalizeForComparison(title);
+    final normalizedArtist = _normalizeForComparison(artist);
+    final normalizedAlbum = _normalizeForComparison(album ?? '');
+
+    final durationSeconds = duration == null ? 0 : duration.inSeconds;
+
+    return '$normalizedTitle|'
+        '$normalizedArtist|'
+        '$normalizedAlbum|'
+        '$durationSeconds';
+  }
+
+  Future<LyricsData?> _fetchLyrics({
+    required String track,
+    required String artist,
+    required String? album,
+    required Duration? duration,
   }) async {
-    if (_groqApiKey.trim().isEmpty) {
-      _log('Groq selection skipped: GROQ_API_KEY is not configured');
-      return null;
-    }
-
-    final eligible = candidates.where((candidate) {
-      final id = candidate.record['id']?.toString();
-      return id != null && id.isNotEmpty && candidate.lyrics.hasLyrics;
-    }).toList()
-      ..sort((a, b) {
-        final durationOrder = a.durationDifferenceSeconds
-            .compareTo(b.durationDifferenceSeconds);
-        return durationOrder != 0
-            ? durationOrder
-            : b.score.compareTo(a.score);
-      });
-    if (eligible.length > 9) {
-      eligible.removeRange(9, eligible.length);
-    }
-    if (eligible.isEmpty) {
-      _log('Groq selection skipped: no eligible LRCLIB IDs');
-      return null;
-    }
-
-    final payload = eligible.map((candidate) {
-      final record = candidate.record;
-      return {
-        'id': record['id'],
-        'trackName': record['trackName'],
-        'artistName': record['artistName'],
-        'duration': record['duration'],
-        'hasSyncedLyrics': candidate.lyrics.hasSyncedLyrics,
-        'hasPlainLyrics': candidate.lyrics.hasPlainLyrics,
-        'durationDifferenceSeconds':
-            candidate.durationDifferenceSeconds == 999999
-                ? null
-                : candidate.durationDifferenceSeconds,
-        'localScore': candidate.score,
-      };
-    }).toList();
-
-    final prompt = '''
-Compare the video's duration with the duration of every supplied LRCLIB result.
-Choose the result with the SMALLEST absolute duration difference, as long as
-its title is a plausible match for the song. Duration closeness is the primary
-choice criterion. When two results have the same duration (or differ by no
-more than 1 second), prefer the one with synced lyrics, then use artist/title
-to resolve the tie. Never choose a clearly longer-duration result just because
-it has synced lyrics. You may select ONLY an id from the supplied results.
-Never invent an id. If none has a plausible title match, return null.
-
-Return only JSON: {"selected_id": 123} or {"selected_id": null}.
-
-Audio title: $songTitle
-Audio artist: $artist
-Audio duration seconds: ${audioDuration?.inMilliseconds == null ? 'unknown' : audioDuration!.inMilliseconds / 1000}
-LRCLIB results: ${jsonEncode(payload)}
-''';
-
     try {
-      _log('Groq selection: sending ${eligible.length} LRCLIB candidate(s) '
-          '(maximum 9), ordered by closest duration');
-      final response = await _client
-          .post(
-            Uri.https('api.groq.com', '/openai/v1/chat/completions'),
-            headers: {
-              'Authorization': 'Bearer $_groqApiKey',
-              'Content-Type': 'application/json',
-            },
-            body: jsonEncode({
-              'model': _groqModel,
-              'messages': [
-                {
-                  'role': 'system',
-                  'content': 'Select only among supplied LRCLIB IDs. Return JSON.',
-                },
-                {'role': 'user', 'content': prompt},
-              ],
-              'temperature': 0,
-              // gpt-oss counts reasoning tokens toward this limit. 150 often
-              // ends before the final JSON (finish_reason=length).
-              'max_completion_tokens': 1024,
-              'reasoning_effort': 'low',
-              'stream': false,
-            }),
-          )
-          .timeout(const Duration(seconds: 20));
-
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        _log('Groq selection HTTP ${response.statusCode}: ${response.body}');
-        return null;
-      }
-      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
-      if (decoded is! Map || decoded['choices'] is! List) {
-        _log('Groq selection returned an invalid response envelope');
-        return null;
-      }
-      final choices = decoded['choices'] as List;
-      if (choices.isEmpty || choices.first is! Map) {
-        _log('Groq selection returned no choices');
-        return null;
-      }
-      final choice = choices.first as Map;
-      final message = choice['message'];
-      final content = message is Map
-          ? message['content']?.toString().trim() ?? ''
-          : '';
-      if (content.isEmpty) {
-        _log('Groq selection returned empty content '
-            '(finish_reason=${choice['finish_reason']})');
-        return null;
-      }
-
-      final cleanedContent = _extractJson(content);
-      dynamic selection;
-      try {
-        selection = jsonDecode(cleanedContent);
-      } on FormatException {
-        _log('Groq selection returned non-JSON content: $content');
-        return null;
-      }
-      if (selection is! Map || selection['selected_id'] == null) {
-        _log('Groq selection response: no candidate selected');
-        return null;
-      }
-      final selectedId = selection['selected_id'].toString();
-      _log('Groq selection response: selected_id=$selectedId');
-      return selectedId;
-    } catch (error) {
-      _log('Groq selection error: $error');
-      return null;
-    }
-  }
-
-  void _log(String message) {
-    debugPrint('[LyricsService] $message');
-  }
-
-  List<_ScoredLyrics> _prioritizeSyncedCandidates(
-    List<_ScoredLyrics> candidates,
-  ) {
-    final withKnownDuration = candidates
-        .where((candidate) => candidate.durationDifferenceSeconds < 999999)
-        .toList();
-    if (withKnownDuration.isEmpty) {
-      final synced = candidates
-          .where((candidate) => candidate.lyrics.hasSyncedLyrics)
-          .toList();
-      if (synced.isNotEmpty) {
-        _log('Synced priority: restricting selection to ${synced.length} '
-            'synced candidate(s); audio duration unavailable');
-        return synced;
-      }
-      return candidates;
-    }
-
-    final closestDifference = withKnownDuration
-        .map((candidate) => candidate.durationDifferenceSeconds)
-        .reduce((a, b) => a < b ? a : b);
-    final syncedWithinTolerance = candidates.where((candidate) {
-      return candidate.lyrics.hasSyncedLyrics &&
-          candidate.durationDifferenceSeconds <= closestDifference + 1.0;
-    }).toList();
-
-    if (syncedWithinTolerance.isNotEmpty) {
-      _log('Synced priority: closest duration delta '
-          '${closestDifference.toStringAsFixed(2)}s; sending only synced '
-          'candidate(s) within ${(closestDifference + 1).toStringAsFixed(2)}s');
-      return syncedWithinTolerance;
-    }
-
-    _log('Synced priority: no synced candidate within 1s of the closest '
-        'duration; keeping all candidates');
-    return candidates;
-  }
-
-  String _extractJson(String content) {
-    var value = content.trim();
-
-    if (value.startsWith('```')) {
-      value = value.replaceFirst(
-        RegExp(r'^```(?:json)?\s*'),
-        '',
+      debugPrint(
+        '[SoundNeed][Lyrics] Searching LRCLIB: '
+        '"$track" — "$artist" '
+        'duration=${duration?.inSeconds}s',
       );
 
-      value = value.replaceFirst(
-        RegExp(r'\s*```$'),
-        '',
-      );
-    }
+      LyricsRecord? record;
 
-    final firstBrace = value.indexOf('{');
-    final lastBrace = value.lastIndexOf('}');
+      // Try direct lookups with progressively cleaner metadata. LRCLIB's
+      // duration match allows only a narrow tolerance, so repeat candidates
+      // without duration before moving to its less reliable search endpoint.
+      final titleCandidates = _titleCandidates(track);
+      final artistCandidates = _artistCandidates(artist, track);
+      final attempts =
+          <
+            ({String track, String artist, Duration? duration, String? album})
+          >[];
+      final seenAttempts = <String>{};
+      var getEndpointUnavailable = false;
 
-    if (firstBrace >= 0 &&
-        lastBrace > firstBrace) {
-      value = value.substring(
-        firstBrace,
-        lastBrace + 1,
-      );
-    }
-
-    return value.trim();
-  }
-
-  // ============================================================
-  // LRCLIB SEARCH
-  // ============================================================
-
-  Future<List<Map<String, dynamic>>> _searchLrcLib(
-    String title,
-  ) async {
-    try {
-      await _respectLrcRateLimit();
-
-      final uri = Uri.https(
-        'lrclib.net',
-        '/api/search',
-        {
-          'track_name': title,
-        },
-      );
-
-      final response = await _client
-          .get(
-            uri,
-            headers: const {
-              'User-Agent': _lrclibUserAgent,
-            },
-          )
-          .timeout(
-            const Duration(seconds: 12),
-          );
-
-      _lastLrcRequest = DateTime.now();
-
-      if (response.statusCode == 429) {
-        _log('LRCLIB rate limited the query "$title"');
-        final retryAfter =
-            response.headers['retry-after'];
-
-        final seconds =
-            int.tryParse(retryAfter ?? '');
-
-        if (seconds != null &&
-            seconds > 0 &&
-            seconds <= 10) {
-          await Future<void>.delayed(
-            Duration(seconds: seconds),
-          );
-        }
-
-        return const [];
-      }
-
-      if (response.statusCode != 200) {
-        _log('LRCLIB HTTP ${response.statusCode} for "$title"');
-        return const [];
-      }
-
-      final decoded =
-          jsonDecode(utf8.decode(response.bodyBytes));
-
-      if (decoded is! List) {
-        return const [];
-      }
-
-      return decoded
-          .whereType<Map>()
-          .map(
-            (record) => Map<String, dynamic>.from(
-              record,
-            ),
-          )
-          .toList();
-    } catch (error) {
-      _log('LRCLIB search error for "$title": $error');
-      return const [];
-    }
-  }
-
-  Future<void> _respectLrcRateLimit() async {
-    final last = _lastLrcRequest;
-
-    if (last == null) {
-      return;
-    }
-
-    final elapsed =
-        DateTime.now().difference(last);
-
-    const minimumDelay =
-        Duration(milliseconds: 300);
-
-    if (elapsed < minimumDelay) {
-      await Future<void>.delayed(
-        minimumDelay - elapsed,
-      );
-    }
-  }
-
-  // ============================================================
-  // ELEGIR RESULTADO DE LRCLIB
-  // ============================================================
-
-  _ScoredLyrics? _scoreRecord({
-    required Map<String, dynamic> record,
-    required String requestedTitle,
-    required String requestedArtist,
-    required Duration? requestedDuration,
-  }) {
-    final recordTitle =
-        record['trackName']?.toString().trim() ?? '';
-
-    if (recordTitle.isEmpty) {
-      return null;
-    }
-
-    final recordArtist =
-        record['artistName']?.toString().trim() ?? '';
-
-    final lyrics =
-        _lyricsFromRecord(
-      record,
-      requestedDuration: requestedDuration,
-    );
-
-    if (lyrics == null || !lyrics.hasLyrics) {
-      return null;
-    }
-
-    final requestedNormalized =
-        _normalize(requestedTitle);
-
-    final recordNormalized =
-        _normalize(recordTitle);
-
-    if (requestedNormalized.isEmpty ||
-        recordNormalized.isEmpty) {
-      return null;
-    }
-
-    double score = 0;
-
-    // ----------------------------------------------------------
-    // TÍTULO
-    // ----------------------------------------------------------
-
-    if (recordNormalized == requestedNormalized) {
-      score += 100;
-    } else if (recordNormalized.contains(
-          requestedNormalized,
-        ) ||
-        requestedNormalized.contains(
-          recordNormalized,
-        )) {
-      score += 75;
-    } else {
-      final similarity = _titleSimilarity(
-        recordNormalized,
-        requestedNormalized,
-      );
-
-      if (similarity >= 0.90) {
-        score += 65;
-      } else if (similarity >= 0.75) {
-        score += 45;
-      } else if (similarity >= 0.60) {
-        score += 25;
-      } else {
-        // El resultado está demasiado alejado
-        // del nombre buscado.
-        return null;
-      }
-    }
-
-    // ----------------------------------------------------------
-    // DURACIÓN
-    // ----------------------------------------------------------
-
-    double durationDifferenceSeconds = 999999;
-
-    if (requestedDuration != null &&
-        requestedDuration.inMilliseconds > 0) {
-      final rawDuration =
-          record['duration'];
-
-      final recordDurationSeconds =
-          rawDuration is num
-              ? rawDuration.toDouble()
-              : double.tryParse(
-                  rawDuration?.toString() ?? '',
-                );
-
-      if (recordDurationSeconds != null &&
-          recordDurationSeconds > 0) {
-        durationDifferenceSeconds =
-            (recordDurationSeconds -
-                    requestedDuration
-                            .inMilliseconds /
-                        1000)
-                .abs();
-
-        // La duración es el criterio más importante
-        // después del título.
-        if (durationDifferenceSeconds <= 0.5) {
-          score += 150;
-        } else if (durationDifferenceSeconds <= 1) {
-          score += 135;
-        } else if (durationDifferenceSeconds <= 2) {
-          score += 120;
-        } else if (durationDifferenceSeconds <= 3) {
-          score += 90;
-        } else if (durationDifferenceSeconds <= 5) {
-          score += 30;
-        } else if (durationDifferenceSeconds <= 10) {
-          score -= 20;
-        } else if (durationDifferenceSeconds <= 20) {
-          score -= 50;
-        } else {
-          score -= 100;
+      void addAttempt(
+        String lookupTrack,
+        String lookupArtist,
+        Duration? lookupDuration,
+        String? lookupAlbum,
+      ) {
+        if (lookupTrack.trim().isEmpty || lookupArtist.trim().isEmpty) return;
+        final key =
+            '${_normalizeForComparison(lookupTrack)}|'
+            '${_normalizeForComparison(lookupArtist)}|'
+            '${lookupDuration?.inSeconds ?? 0}|'
+            '${_normalizeForComparison(lookupAlbum ?? '')}';
+        if (seenAttempts.add(key)) {
+          attempts.add((
+            track: lookupTrack,
+            artist: lookupArtist,
+            duration: lookupDuration,
+            album: lookupAlbum,
+          ));
         }
       }
-    }
 
-    // ----------------------------------------------------------
-    // ARTISTA
-    // ----------------------------------------------------------
+      // First keep the original metadata, then try normalized variants.
+      // Supplying duration first is useful when it matches; the same query
+      // without duration handles YouTube intros/outros and alternate edits.
+      final usableDuration =
+          duration != null &&
+              duration.inSeconds > 0 &&
+              duration.inSeconds <= 3600
+          ? duration
+          : null;
+      final canonicalArtist = _artistFromTitle(track);
+      final extractedTitle = titleCandidates.isNotEmpty
+          ? titleCandidates.last
+          : _cleanVideoTitle(track);
+      final cleanTitle = _cleanVideoTitle(track);
+      final reliableChannel = _isReliableArtist(artist)
+          ? _cleanArtistName(artist)
+          : null;
+      final extractedArtist = canonicalArtist ??
+          reliableChannel ??
+          (artistCandidates.isNotEmpty ? artistCandidates.first : '');
 
-    //
-    // IMPORTANTE:
-    //
-    // El artista NO puede descartar el resultado.
-    //
-    // Solo sirve como desempate.
-    //
-
-    final wantedArtist =
-        _normalizeArtist(requestedArtist);
-
-    final foundArtist =
-        _normalizeArtist(recordArtist);
-
-    if (wantedArtist.isNotEmpty &&
-        foundArtist.isNotEmpty) {
-      if (wantedArtist == foundArtist) {
-        score += 25;
-      } else if (_artistSimilarity(
-        wantedArtist,
-        foundArtist,
-      )) {
-        score += 15;
-      }
-    }
-
-    // ----------------------------------------------------------
-    // SINCRONIZADAS
-    // ----------------------------------------------------------
-
-    if (lyrics.hasSyncedLyrics) {
-      score += 20;
-
-      // Si las letras sincronizadas tienen una duración
-      // demasiado diferente, no debemos tratarlas como
-      // sincronizadas con nuestro audio.
-      if (durationDifferenceSeconds <= 3) {
-        score += 40;
-      } else if (durationDifferenceSeconds <= 5) {
-        score += 5;
-      }
-    } else if (lyrics.hasPlainLyrics) {
-      score += 5;
-    }
-
-    return _ScoredLyrics(
-      lyrics: lyrics,
-      score: score,
-      durationDifferenceSeconds:
-          durationDifferenceSeconds,
-      record: Map<String, dynamic>.from(record),
-    );
-  }
-
-  // ============================================================
-  // CONVERTIR RESULTADO LRCLIB A LyricsData
-  // ============================================================
-
-  LyricsData? _lyricsFromRecord(
-    dynamic record, {
-    Duration? requestedDuration,
-  }) {
-    if (record is! Map) {
-      return null;
-    }
-
-    final plainLyrics =
-        record['plainLyrics']?.toString();
-
-    final syncedLyrics =
-        record['syncedLyrics']?.toString();
-
-    final rawDuration =
-        record['duration'];
-
-    Duration? sourceDuration;
-
-    final durationSeconds =
-        rawDuration is num
-            ? rawDuration.toDouble()
-            : double.tryParse(
-                rawDuration?.toString() ?? '',
-              );
-
-    if (durationSeconds != null &&
-        durationSeconds > 0) {
-      sourceDuration = Duration(
-        milliseconds:
-            (durationSeconds * 1000).round(),
-      );
-    }
-
-    Duration? durationDifference;
-
-    if (requestedDuration != null &&
-        sourceDuration != null) {
-      durationDifference =
-          sourceDuration - requestedDuration;
-
-      durationDifference =
-          Duration(
-        milliseconds:
-            durationDifference.inMilliseconds.abs(),
-      );
-    }
-
-    final lines =
-        _parseLrc(syncedLyrics);
-
-    final lyrics = LyricsData(
-      plainLyrics: plainLyrics,
-      syncedLyrics: syncedLyrics,
-      lines: lines,
-      sourceDuration: sourceDuration,
-      durationDifference:
-          durationDifference,
-    );
-
-    return lyrics.hasLyrics
-        ? lyrics
-        : null;
-  }
-
-  // ============================================================
-  // EXTRACTOR LOCAL DE RESPALDO
-  // ============================================================
-
-  String? _extractSongTitleLocally(
-    String value,
-  ) {
-    var cleaned = _cleanTitle(value);
-
-    if (cleaned.isEmpty) {
-      return null;
-    }
-
-    // Formato:
-    //
-    // ARTISTA - CANCIÓN
-    //
-    // Tomamos lo que queda después del primer
-    // separador " - ".
-    final match = RegExp(
-      r'^(.+?)\s+[-–—]\s+(.+)$',
-    ).firstMatch(cleaned);
-
-    if (match != null) {
-      final left =
-          match.group(1)?.trim() ?? '';
-
-      final right =
-          match.group(2)?.trim() ?? '';
-
-      if (left.isNotEmpty &&
-          right.isNotEmpty) {
-        // Si hay otro separador después,
-        // eliminamos posibles datos adicionales.
-        final candidate =
-            right.split(
-          RegExp(r'\s+[-–—]\s+'),
-        ).first.trim();
-
-        if (candidate.isNotEmpty) {
-          return _cleanTitle(candidate);
+      // Prioritize the artist/title parsed from YouTube's video title. A
+      // channel name is only used when it looks like a real artist credit.
+      addAttempt(extractedTitle, extractedArtist, usableDuration, null);
+      addAttempt(extractedTitle, extractedArtist, null, null);
+      for (final artistVariant in artistCandidates.skip(2)) {
+        if (artistVariant.toLowerCase().contains('feat') ||
+            artistVariant.contains(',')) {
+          addAttempt(extractedTitle, artistVariant, null, null);
         }
       }
-    }
+      if (cleanTitle != extractedTitle) {
+        addAttempt(cleanTitle, extractedArtist, null, null);
+      }
+      // One fallback to clean channel metadata, never the noisy full title.
+      if (reliableChannel != null && reliableChannel != extractedArtist) {
+        addAttempt(cleanTitle, reliableChannel, null, null);
+      }
+      // Keep the original artist as a last direct lookup only when it is
+      // trustworthy and no title-derived artist was available.
+      if (canonicalArtist == null && reliableChannel != null) {
+        addAttempt(track, reliableChannel, usableDuration, album);
+      }
+      // Bound requests even for long/ambiguous upload titles.
+      if (attempts.length > 5) attempts.removeRange(5, attempts.length);
 
-    return cleaned;
+      for (var index = 0; index < attempts.length; index++) {
+        final attempt = attempts[index];
+        debugPrint(
+          '[SoundNeed][Lyrics] /api/get candidate: '
+          '"${attempt.track}" — "${attempt.artist}" '
+          'duration=${attempt.duration?.inSeconds ?? 'none'}',
+        );
+        final lookup = await _getExactMatch(
+          track: attempt.track,
+          artist: attempt.artist,
+          album: attempt.album,
+          duration: attempt.duration,
+        );
+        record = lookup.record;
+        if (record != null) break;
+        if (lookup.serverUnavailable) {
+          getEndpointUnavailable = true;
+          break;
+        }
+        if (index < attempts.length - 1) {
+          await Future<void>.delayed(_requestDelay);
+        }
+      }
+
+      // ---------------------------------------------------------------
+      // 2. FALLBACK: /api/search
+      // ---------------------------------------------------------------
+
+      if (record == null && !getEndpointUnavailable) {
+        await Future.delayed(_requestDelay);
+
+        record = await _searchBestMatch(
+          track: extractedTitle,
+          artist: extractedArtist,
+          album: album,
+          duration: duration,
+        );
+      }
+
+      if (record == null) {
+        debugPrint(
+          '[SoundNeed][Lyrics] LRCLIB: no suitable match '
+          'for "$track" — "$artist"',
+        );
+        return null;
+      }
+
+      debugPrint(
+        '[SoundNeed][Lyrics] Selected: '
+        'id=${record.id} '
+        '"${record.trackName}" — "${record.artistName}" '
+        'duration=${record.duration}s '
+        'wordSync=${record.hasWordSync}',
+      );
+
+      if (record.instrumental) {
+        debugPrint('[SoundNeed][Lyrics] LRCLIB says instrumental.');
+        return null;
+      }
+
+      // ---------------------------------------------------------------
+      // 3. PARSE LRC
+      // ---------------------------------------------------------------
+
+      final lines = _parseLrc(record.syncedLyrics);
+
+      // If syncedLyrics is missing but plain lyrics exist, we can still
+      // show normal lyrics.
+      final plain = _cleanPlainLyrics(record.plainLyrics);
+
+      if (lines.isEmpty && plain == null) {
+        debugPrint('[SoundNeed][Lyrics] Record contains no usable lyrics.');
+        return null;
+      }
+
+      // ---------------------------------------------------------------
+      // 4. DURATION ANALYSIS
+      // ---------------------------------------------------------------
+
+      Duration? sourceDuration;
+      Duration? durationDifference;
+
+      if (record.duration > 0) {
+        sourceDuration = Duration(
+          milliseconds: (record.duration * 1000).round(),
+        );
+
+        if (duration != null && duration.inMilliseconds > 0) {
+          durationDifference = duration - sourceDuration;
+        }
+      }
+
+      // ---------------------------------------------------------------
+      // 5. CONSERVATIVE SYNC CORRECTION
+      // ---------------------------------------------------------------
+
+      final offset = _calculateSafeOffset(
+        lines: lines,
+        sourceDuration: sourceDuration,
+        audioDuration: duration,
+      );
+
+      final adjustedLines = offset == Duration.zero
+          ? lines
+          : _applyOffset(lines, offset);
+
+      if (offset != Duration.zero) {
+        debugPrint(
+          '[SoundNeed][Lyrics] Automatic sync offset: '
+          '${offset.inMilliseconds}ms',
+        );
+      }
+
+      // ---------------------------------------------------------------
+      // 6. NORMALIZED RESULT
+      // ---------------------------------------------------------------
+
+      final syncedText = adjustedLines.isEmpty
+          ? null
+          : adjustedLines.map((line) => line.text).join('\n');
+
+      final result = LyricsData(
+        plainLyrics: plain,
+        syncedLyrics: syncedText,
+        lines: adjustedLines,
+        sourceDuration: sourceDuration,
+        durationDifference: durationDifference,
+        syncOffset: offset,
+        sourceId: record.id,
+        hasWordSync: record.hasWordSync,
+      );
+
+      debugPrint(
+        '[SoundNeed][Lyrics] OK '
+        'id=${record.id} '
+        'lines=${adjustedLines.length} '
+        'sourceDuration=${sourceDuration?.inSeconds}s '
+        'difference=${durationDifference?.inMilliseconds}ms '
+        'offset=${offset.inMilliseconds}ms '
+        'wordSync=${record.hasWordSync}',
+      );
+
+      return result.hasLyrics ? result : null;
+    } on TimeoutException {
+      debugPrint('[SoundNeed][Lyrics] LRCLIB timeout for "$track"');
+      return null;
+    } catch (error, stackTrace) {
+      debugPrint('[SoundNeed][Lyrics] Request failed for "$track": $error');
+
+      debugPrint(stackTrace.toString());
+
+      return null;
+    }
   }
 
-  // ============================================================
-  // LIMPIEZA
-  // ============================================================
+  // =====================================================================
+  // LRCLIB /api/get
+  // =====================================================================
 
-  String _cleanTitle(String value) {
-    var cleaned = value.trim();
+  Future<_LyricsLookupResult> _getExactMatch({
+    required String track,
+    required String artist,
+    required String? album,
+    required Duration? duration,
+  }) async {
+    final params = <String, String>{'track_name': track, 'artist_name': artist};
 
-    if (cleaned.isEmpty) {
-      return '';
+    if (album != null && album.isNotEmpty) {
+      params['album_name'] = album;
     }
 
-    // Extensiones.
-    cleaned = cleaned.replaceAll(
-      RegExp(
-        r'\.(?:mp3|m4a|aac|flac|wav|ogg|opus|wma)$',
-        caseSensitive: false,
-      ),
-      '',
-    );
-
-    // Número inicial:
-    //
-    // 01 - Song
-    // 01. Song
-    cleaned = cleaned.replaceFirst(
-      RegExp(
-        r'^\s*\d{1,3}\s*[-._]\s*',
-      ),
-      '',
-    );
-
-    // Contenido entre corchetes.
-    cleaned = cleaned.replaceAll(
-      RegExp(
-        r'\s*\[(?:'
-        r'official|'
-        r'lyrics?|'
-        r'letra|'
-        r'audio|'
-        r'video|'
-        r'visualizer|'
-        r'music\s*video|'
-        r'hd|'
-        r'4k|'
-        r'canto(?:yo)?[^]]*'
-        r')[^\]]*\]',
-        caseSensitive: false,
-      ),
-      '',
-    );
-
-    // Contenido entre paréntesis relacionado con YouTube.
-    cleaned = cleaned.replaceAll(
-      RegExp(
-        r'\s*\((?:official|lyrics?|letra|audio|video|visualizer|music\s*video|hd|4k[^)]*)\)',
-        caseSensitive: false,
-      ),
-      '',
-    );
-
-    // Sufijos comunes.
-    cleaned = cleaned.replaceAll(
-      RegExp(
-        r'\s*[-|]\s*(?:official\s*)?(?:music\s*)?(?:video|audio|lyrics?|letra)(?:\s*video)?$',
-        caseSensitive: false,
-      ),
-      '',
-    );
-
-    cleaned = cleaned.replaceAll(
-      RegExp(
-        r'\s+(?:official|lyrics?|letra|audio|video|visualizer)\s*$',
-        caseSensitive: false,
-      ),
-      '',
-    );
-
-    return cleaned
-        .replaceAll(
-          RegExp(r'\s{2,}'),
-          ' ',
-        )
-        .trim();
-  }
-
-  // ============================================================
-  // NORMALIZACIÓN
-  // ============================================================
-
-  String _normalize(String value) {
-    return value
-        .toLowerCase()
-        .replaceAll(
-          RegExp(
-            r'[^a-z0-9áéíóúüñ]+',
-            caseSensitive: false,
-          ),
-          ' ',
-        )
-        .trim();
-  }
-
-  String _normalizeArtist(String value) {
-    var normalized = value.toLowerCase();
-
-    normalized = normalized.replaceAll(
-      RegExp(r'\b(feat\.?|ft\.?|featuring)\b'),
-      ' ',
-    );
-
-    normalized = normalized.replaceAll(
-      RegExp(r'[-&,x×+]'),
-      ' ',
-    );
-
-    normalized = normalized.replaceAll(
-      RegExp(r'[^a-z0-9áéíóúüñ]+'),
-      ' ',
-    );
-
-    return normalized
-        .replaceAll(
-          RegExp(r'\s{2,}'),
-          ' ',
-        )
-        .trim();
-  }
-
-  bool _artistSimilarity(
-    String first,
-    String second,
-  ) {
-    if (first == second) {
-      return true;
+    if (duration != null &&
+        duration.inSeconds > 0 &&
+        duration.inSeconds <= 3600) {
+      params['duration'] = duration.inSeconds.toString();
     }
 
-    final firstWords = first
-        .split(' ')
-        .where((word) => word.isNotEmpty)
-        .toSet();
+    final uri = _getEndpoint.replace(queryParameters: params);
 
-    final secondWords = second
-        .split(' ')
-        .where((word) => word.isNotEmpty)
-        .toSet();
+    final response = await _safeGet(uri);
 
-    if (firstWords.isEmpty ||
-        secondWords.isEmpty) {
-      return false;
+    if (response == null) {
+      return const _LyricsLookupResult(serverUnavailable: true);
     }
 
-    final overlap =
-        firstWords.intersection(secondWords).length;
-
-    final minimum =
-        firstWords.length < secondWords.length
-            ? firstWords.length
-            : secondWords.length;
-
-    return minimum > 0 &&
-        overlap / minimum >= 0.5;
-  }
-
-  // ============================================================
-  // SIMILITUD DE TÍTULOS
-  // ============================================================
-
-  double _titleSimilarity(
-    String candidate,
-    String requested,
-  ) {
-    final candidateWords = candidate
-        .split(' ')
-        .where((word) => word.isNotEmpty)
-        .toSet();
-
-    final requestedWords = requested
-        .split(' ')
-        .where((word) => word.isNotEmpty)
-        .toSet();
-
-    if (candidateWords.isEmpty ||
-        requestedWords.isEmpty) {
-      return 0;
+    if (response.statusCode == 404) {
+      debugPrint('[SoundNeed][Lyrics] /api/get: 404');
+      return const _LyricsLookupResult();
     }
 
-    final overlap =
-        candidateWords.intersection(
-      requestedWords,
-    ).length;
-
-    return overlap / requestedWords.length;
-  }
-
-  // ============================================================
-  // PARSER LRC
-  // ============================================================
-
-  List<LyricLine> _parseLrc(
-    String? lrc,
-  ) {
-    if (lrc == null ||
-        lrc.trim().isEmpty) {
-      return const [];
+    if (response.statusCode != 200) {
+      debugPrint(
+        '[SoundNeed][Lyrics] /api/get HTTP '
+        '${response.statusCode}',
+      );
+      return _LyricsLookupResult(
+        serverUnavailable:
+            response.statusCode >= 500 || response.statusCode == 429,
+      );
     }
 
-    final result = <LyricLine>[];
+    final decoded = _decodeJson(response);
 
-    final timestampPattern = RegExp(
-      r'\[(\d{1,2}):(\d{2})(?:[.:](\d{1,3}))?\]',
+    if (decoded is! Map) {
+      return const _LyricsLookupResult();
+    }
+
+    return _LyricsLookupResult(
+      record: LyricsRecord.fromJson(Map<String, dynamic>.from(decoded)),
     );
+  }
 
-    for (final rawLine
-        in lrc.split(RegExp(r'\r?\n'))) {
-      final timestamps =
-          timestampPattern
-              .allMatches(rawLine)
-              .toList();
+  // =====================================================================
+  // LRCLIB /api/search
+  // =====================================================================
 
-      if (timestamps.isEmpty) {
+  Future<LyricsRecord?> _searchBestMatch({
+    required String track,
+    required String artist,
+    required String? album,
+    required Duration? duration,
+  }) async {
+    final queries = <Map<String, String>>[];
+
+    // Most precise search.
+    queries.add({'track_name': track, 'artist_name': artist});
+
+    // If title has a YouTube-style suffix, this second search can recover
+    // the actual track.
+    final cleanedTrack = _cleanVideoTitle(track);
+
+    if (_normalizeForComparison(cleanedTrack) !=
+        _normalizeForComparison(track)) {
+      queries.add({'track_name': cleanedTrack, 'artist_name': artist});
+    }
+
+    // Final broad search.
+    queries.add({'q': '$track $artist'});
+
+    final allCandidates = <LyricsRecord>[];
+
+    for (final params in queries) {
+      final uri = _searchEndpoint.replace(queryParameters: params);
+
+      final response = await _safeGet(uri);
+
+      if (response == null) {
         continue;
       }
 
-      final text = rawLine
-          .substring(timestamps.last.end)
-          .trim();
+      if (response.statusCode != 200) {
+        debugPrint(
+          '[SoundNeed][Lyrics] /api/search HTTP '
+          '${response.statusCode}',
+        );
+        if (response.statusCode >= 500 || response.statusCode == 429) break;
+        continue;
+      }
+
+      final decoded = _decodeJson(response);
+
+      if (decoded is! List) {
+        continue;
+      }
+
+      for (final item in decoded) {
+        if (item is! Map) {
+          continue;
+        }
+
+        try {
+          final record = LyricsRecord.fromJson(Map<String, dynamic>.from(item));
+
+          if (!_containsSameRecord(allCandidates, record)) {
+            allCandidates.add(record);
+          }
+        } catch (_) {
+          // Ignore malformed candidates.
+        }
+      }
+
+      // Avoid hammering the API.
+      await Future.delayed(_requestDelay);
+    }
+
+    if (allCandidates.isEmpty) {
+      return null;
+    }
+
+    final ranked = allCandidates
+        .map(
+          (record) => _ScoredRecord(
+            record: record,
+            score: _scoreCandidate(
+              record: record,
+              track: track,
+              artist: artist,
+              album: album,
+              duration: duration,
+            ),
+          ),
+        )
+        .toList();
+
+    ranked.sort((a, b) => b.score.compareTo(a.score));
+
+    for (final candidate in ranked.take(5)) {
+      debugPrint(
+        '[SoundNeed][Lyrics] Candidate '
+        'score=${candidate.score.toStringAsFixed(3)} '
+        'id=${candidate.record.id} '
+        '"${candidate.record.trackName}" — '
+        '"${candidate.record.artistName}" '
+        '${candidate.record.duration}s '
+        'synced=${candidate.record.syncedLyrics != null}',
+      );
+    }
+
+    final best = ranked.first;
+
+    // Do not accept terrible matches.
+    if (best.score < 0.58) {
+      debugPrint(
+        '[SoundNeed][Lyrics] Best candidate rejected: '
+        'score=${best.score.toStringAsFixed(3)}',
+      );
+      return null;
+    }
+
+    return best.record;
+  }
+
+  // =====================================================================
+  // HTTP
+  // =====================================================================
+
+  Future<http.Response?> _safeGet(Uri uri) async {
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        final response = await _client
+            .get(
+              uri,
+              headers: const {
+                // LRCLIB asks applications to identify themselves.
+                'User-Agent': 'SoundNeed/1.0 (Flutter music player)',
+                'Accept': 'application/json',
+              },
+            )
+            .timeout(const Duration(seconds: 12));
+
+        if (attempt == 0 &&
+            (response.statusCode == 503 || response.statusCode == 429)) {
+          debugPrint(
+            '[SoundNeed][Lyrics] LRCLIB HTTP ${response.statusCode}; '
+            'retrying once after a short wait.',
+          );
+          if (response.statusCode == 429) {
+            await _respectRetryAfter(response);
+          } else {
+            await Future<void>.delayed(const Duration(milliseconds: 700));
+          }
+          continue;
+        }
+        return response;
+      } on TimeoutException {
+        debugPrint('[SoundNeed][Lyrics] HTTP timeout: $uri');
+        if (attempt == 0) {
+          await Future<void>.delayed(const Duration(milliseconds: 400));
+          continue;
+        }
+        return null;
+      } catch (error) {
+        debugPrint('[SoundNeed][Lyrics] HTTP error: $error');
+        return null;
+      }
+    }
+    return null;
+  }
+
+  dynamic _decodeJson(http.Response response) {
+    try {
+      return jsonDecode(utf8.decode(response.bodyBytes));
+    } catch (error) {
+      debugPrint('[SoundNeed][Lyrics] JSON decode error: $error');
+      return null;
+    }
+  }
+
+  Future<void> _respectRetryAfter(http.Response response) async {
+    final value = response.headers['retry-after'];
+
+    final seconds = int.tryParse(value ?? '');
+
+    if (seconds == null) {
+      await Future.delayed(const Duration(seconds: 1));
+      return;
+    }
+
+    final safeSeconds = math.min(seconds, 10).toInt();
+
+    debugPrint(
+      '[SoundNeed][Lyrics] LRCLIB rate limit. '
+      'Waiting ${safeSeconds}s.',
+    );
+
+    await Future.delayed(Duration(seconds: safeSeconds));
+  }
+
+  // =====================================================================
+  // CANDIDATE SCORING
+  // =====================================================================
+
+  double _scoreCandidate({
+    required LyricsRecord record,
+    required String track,
+    required String artist,
+    required String? album,
+    required Duration? duration,
+  }) {
+    final titleScore = _similarity(track, record.trackName);
+
+    final artistScore = _similarity(artist, record.artistName);
+
+    final cleanedTitleScore = _similarity(
+      _cleanVideoTitle(track),
+      record.trackName,
+    );
+
+    final bestTitle = math.max(titleScore, cleanedTitleScore);
+
+    double durationScore = 0.5;
+
+    if (duration != null &&
+        duration.inMilliseconds > 0 &&
+        record.duration > 0) {
+      final difference = (duration.inSeconds - record.duration).abs();
+
+      if (difference <= 2) {
+        durationScore = 1.0;
+      } else if (difference <= 5) {
+        durationScore = 0.9;
+      } else if (difference <= 10) {
+        durationScore = 0.75;
+      } else if (difference <= 20) {
+        durationScore = 0.55;
+      } else if (difference <= _maximumDurationDifferenceSeconds) {
+        durationScore = 0.3;
+      } else {
+        durationScore = 0.0;
+      }
+    }
+
+    double albumScore = 0.5;
+
+    if (album != null &&
+        album.trim().isNotEmpty &&
+        record.albumName.trim().isNotEmpty) {
+      albumScore = _similarity(album, record.albumName);
+    }
+
+    final syncedBonus =
+        record.syncedLyrics != null && record.syncedLyrics!.trim().isNotEmpty
+        ? 0.10
+        : 0.0;
+
+    final wordSyncBonus = record.hasWordSync ? 0.05 : 0.0;
+
+    final instrumentalPenalty = record.instrumental ? 1.0 : 0.0;
+
+    final score =
+        (bestTitle * 0.42) +
+        (artistScore * 0.30) +
+        (durationScore * 0.18) +
+        (albumScore * 0.05) +
+        syncedBonus +
+        wordSyncBonus -
+        instrumentalPenalty;
+
+    return score.clamp(0.0, 1.0).toDouble();
+  }
+
+  bool _containsSameRecord(List<LyricsRecord> list, LyricsRecord candidate) {
+    return list.any((item) => item.id == candidate.id);
+  }
+
+  // =====================================================================
+  // SYNC OFFSET
+  // =====================================================================
+
+  Duration _calculateSafeOffset({
+    required List<LyricLine> lines,
+    required Duration? sourceDuration,
+    required Duration? audioDuration,
+  }) {
+    // Duration alone cannot distinguish an intro from an outro or a different
+    // edit. Preserve LRCLIB timestamps until there is stronger evidence.
+    return Duration.zero;
+  }
+
+  List<LyricLine> _applyOffset(List<LyricLine> lines, Duration offset) {
+    final result = <LyricLine>[];
+
+    for (final line in lines) {
+      var timestamp = line.timestamp + offset;
+
+      // Never allow negative timestamps.
+      if (timestamp.isNegative) {
+        timestamp = Duration.zero;
+      }
+
+      result.add(LyricLine(timestamp: timestamp, text: line.text));
+    }
+
+    result.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+
+    return result;
+  }
+
+  // =====================================================================
+  // LRC PARSER
+  // =====================================================================
+
+  List<LyricLine> _parseLrc(String? lrc) {
+    if (lrc == null || lrc.trim().isEmpty) {
+      return [];
+    }
+
+    final lines = <LyricLine>[];
+
+    final sourceLines = lrc.replaceAll('\r\n', '\n').split('\n');
+
+    // Supports:
+    //
+    // [00:12.34]Text
+    // [01:02.345]Text
+    // [01:02]Text
+    //
+    // Also supports multiple timestamps:
+    //
+    // [00:10.00][00:20.00]Text
+    final timestampPattern = RegExp(r'\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?\]');
+
+    for (final rawLine in sourceLines) {
+      final matches = timestampPattern.allMatches(rawLine);
+
+      if (matches.isEmpty) {
+        continue;
+      }
+
+      final text = rawLine.replaceAll(timestampPattern, '').trim();
 
       if (text.isEmpty) {
         continue;
       }
 
-      for (final match in timestamps) {
-        final minutes =
-            int.tryParse(
-          match.group(1) ?? '',
-        );
+      for (final match in matches) {
+        final minutes = int.tryParse(match.group(1) ?? '');
 
-        final seconds =
-            int.tryParse(
-          match.group(2) ?? '',
-        );
+        final seconds = int.tryParse(match.group(2) ?? '');
 
-        if (minutes == null ||
-            seconds == null) {
+        final fractionRaw = match.group(3);
+
+        if (minutes == null || seconds == null || seconds > 59) {
           continue;
         }
 
-        var fraction =
-            match.group(3) ?? '';
+        var milliseconds = 0;
 
-        if (fraction.isNotEmpty) {
-          fraction =
-              fraction.padRight(3, '0');
+        if (fractionRaw != null) {
+          final fraction = int.tryParse(fractionRaw) ?? 0;
 
-          if (fraction.length > 3) {
-            fraction =
-                fraction.substring(0, 3);
+          if (fractionRaw.length == 1) {
+            milliseconds = fraction * 100;
+          } else if (fractionRaw.length == 2) {
+            milliseconds = fraction * 10;
+          } else {
+            milliseconds = fraction.clamp(0, 999).toInt();
           }
         }
 
-        final milliseconds =
-            fraction.isEmpty
-                ? 0
-                : int.tryParse(fraction) ?? 0;
-
-        result.add(
-          LyricLine(
-            timestamp: Duration(
-              minutes: minutes,
-              seconds: seconds,
-              milliseconds: milliseconds,
-            ),
-            text: text,
-          ),
+        final timestamp = Duration(
+          minutes: minutes,
+          seconds: seconds,
+          milliseconds: milliseconds,
         );
+
+        lines.add(LyricLine(timestamp: timestamp, text: text));
       }
     }
 
-    result.sort(
-      (a, b) =>
-          a.timestamp.compareTo(b.timestamp),
+    lines.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+
+    // Remove exact duplicates.
+    final deduplicated = <LyricLine>[];
+
+    for (final line in lines) {
+      if (deduplicated.isNotEmpty) {
+        final previous = deduplicated.last;
+
+        if (previous.timestamp == line.timestamp &&
+            previous.text == line.text) {
+          continue;
+        }
+      }
+
+      deduplicated.add(line);
+    }
+
+    return deduplicated;
+  }
+
+  // =====================================================================
+  // TEXT / TITLE NORMALIZATION
+  // =====================================================================
+
+  String? _cleanPlainLyrics(String? value) {
+    if (value == null) {
+      return null;
+    }
+
+    final cleaned = value.trim();
+
+    return cleaned.isEmpty ? null : cleaned;
+  }
+
+  String _cleanVideoTitle(String title) {
+    var value = title.trim();
+
+    // Drop a YouTube suffix after a pipe (for example "| Official Video").
+    final pipeSuffix = RegExp(
+      r'\s*\|\s*(?:official|music|lyric|lyrics|visualizer|audio|video|4k|hd).*$',
+      caseSensitive: false,
+    );
+    value = value.replaceAll(pipeSuffix, '');
+
+    // Remove bracketed YouTube labels, including "Lyric Video" variants.
+    value = value.replaceAll(
+      RegExp(
+        r'\s*[\(\[][^\)\]]*'
+        r'(official|music\s*video|video|lyrics?|audio|visualizer|4k|hd|topic|'
+        r'rip|slowed|reverb|sped\s*up|nightcore)'
+        r'[^\)\]]*[\)\]]',
+        caseSensitive: false,
+      ),
+      '',
     );
 
+    // Remove bracketless remix decorations and production/channel credits.
+    value = value.replaceAll(
+      RegExp(
+        r'\s*(?:[-–—]\s*)?(?:prod\.?|produced\s+by|production\s+by)\s+.+$',
+        caseSensitive: false,
+      ),
+      '',
+    );
+
+    // Remove common unbracketed suffixes and featured-artist annotations.
+    value = value.replaceAll(
+      RegExp(
+        r'\s*(?:[-–—|]\s*)?(?:official\s+)?(?:music\s+)?'
+        r'(?:lyric\s+video|lyrics?\s+video|music\s+video|official\s+video|'
+        r'video|official\s+audio|audio|visualizer|4k|hd|topic)\s*$',
+        caseSensitive: false,
+      ),
+      '',
+    );
+    value = value.replaceAll(
+      RegExp(r'\s+(?:ft\.?|feat\.?|featuring)\s+.+$', caseSensitive: false),
+      '',
+    );
+
+    return value.trim();
+  }
+
+  List<String> _titleCandidates(String title) {
+    final result = <String>[];
+    void add(String value) {
+      final cleaned = value.trim();
+      if (cleaned.isNotEmpty &&
+          !result.any(
+            (item) =>
+                _normalizeForComparison(item) ==
+                _normalizeForComparison(cleaned),
+          )) {
+        result.add(cleaned);
+      }
+    }
+
+    add(title);
+    final cleaned = _cleanVideoTitle(title);
+    add(cleaned);
+
+    final split = RegExp(r'^\s*(.+?)\s+[-–—]\s+(.+?)\s*$').firstMatch(cleaned);
+    if (split != null) {
+      final prefix = split.group(1)!.trim();
+      final rightSide = split.group(2)!.trim();
+      if (_looksLikeArtistCredit(prefix)) {
+        if (rightSide.startsWith('@') ||
+            RegExp(
+              r'^(?:prod\.?|produced\s+by)',
+              caseSensitive: false,
+            ).hasMatch(rightSide)) {
+          // Some upload titles have no track name after the artist; keep the
+          // artist itself as a last-resort track candidate.
+          add(prefix);
+        } else {
+          add(_cleanVideoTitle(rightSide));
+        }
+      }
+    }
     return result;
   }
+
+  List<String> _artistCandidates(String artist, String title) {
+    final result = <String>[];
+    void add(String value) {
+      final cleaned = value.trim();
+      if (cleaned.isNotEmpty &&
+          !result.any(
+            (item) =>
+                _normalizeForComparison(item) ==
+                _normalizeForComparison(cleaned),
+          )) {
+        result.add(cleaned);
+      }
+    }
+
+    add(artist);
+    add(_cleanArtistName(artist));
+
+    final split = RegExp(r'^\s*(.+?)\s+[-–—]\s+(.+?)\s*$').firstMatch(title);
+    if (split != null) {
+      final titleArtist = split.group(1)!.trim();
+      if (_looksLikeArtistCredit(titleArtist)) {
+        add(_cleanArtistName(titleArtist));
+      }
+    }
+
+    // A YouTube channel named "llllllll" or "ArtistMusic" is not reliable.
+    // Put a recognizable artist parsed from the video title after metadata
+    // variants so direct lookups try it as their strongest candidate.
+    final canonical = _artistFromTitle(title);
+    if (canonical != null) {
+      if (result.length > 1) result.remove(canonical);
+      add(canonical);
+
+      final featured = RegExp(
+        r'\b(?:ft\.?|feat\.?|featuring)\s+(.+)$',
+        caseSensitive: false,
+      ).firstMatch(title)?.group(1)?.trim();
+      if (featured != null && featured.isNotEmpty) {
+        add('$canonical feat. $featured');
+        add('$canonical, $featured');
+      }
+    }
+    return result;
+  }
+
+  String? _artistFromTitle(String title) {
+    final split = RegExp(r'^\s*(.+?)\s+[-–—]\s+(.+?)\s*$').firstMatch(title);
+    final prefix = split?.group(1)?.trim();
+    if (prefix == null || !_looksLikeArtistCredit(prefix)) return null;
+    return _cleanArtistName(prefix);
+  }
+
+  bool _looksLikeArtistCredit(String value) {
+    final normalized = value.trim();
+    if (normalized.length < 2 || normalized.length > 48) return false;
+    if (RegExp(
+      r'^(?:official|audio|video|lyrics?|topic|prod\.?|produced\s+by)$',
+      caseSensitive: false,
+    ).hasMatch(normalized)) {
+      return false;
+    }
+    return RegExp(r'[\p{L}]', unicode: true).hasMatch(normalized);
+  }
+
+  bool _isReliableArtist(String value) {
+    final candidate = value.trim();
+    if (!_looksLikeArtistCredit(candidate)) return false;
+    final compact = candidate.replaceAll(
+      RegExp(r'[^\p{L}\p{N}]', unicode: true),
+      '',
+    );
+    if (compact.isEmpty) return false;
+    // Common YouTube channel labels and autogenerated uploader names are not
+    // song-artist metadata. Prefer an artist parsed from "Artist - Title".
+    if (RegExp(r'^(.)\1{4,}$', caseSensitive: false).hasMatch(compact)) {
+      return false;
+    }
+    if (RegExp(r'(?:music|official|channel)$', caseSensitive: false)
+        .hasMatch(compact)) {
+      return false;
+    }
+    if (RegExp(r'\d{2,}$').hasMatch(compact)) return false;
+    return true;
+  }
+
+  String _cleanArtistName(String artist) {
+    var value = artist.trim();
+    value = value.replaceAll(
+      RegExp(r'\s*[-–—]\s*topic$', caseSensitive: false),
+      '',
+    );
+    value = value.replaceAll(
+      RegExp(
+        r'(?:official\s*)?(?:music\s*)?(?:vevo|channel)$',
+        caseSensitive: false,
+      ),
+      '',
+    );
+    value = value.replaceAll(
+      RegExp(r'(?:official\s*)?music$', caseSensitive: false),
+      '',
+    );
+    value = value.replaceAll(RegExp(r'\s+official$', caseSensitive: false), '');
+    value = value.replaceAll(RegExp(r'\s*[@#]+\s*'), ' ');
+    value = value.replaceAllMapped(
+      RegExp(r'([a-z])([A-Z])'),
+      (match) => '${match[1]} ${match[2]}',
+    );
+    return value.trim();
+  }
+
+  String _normalizeForComparison(String value) {
+    var normalized = value.toLowerCase();
+
+    // Normalize common apostrophes.
+    normalized = normalized
+        .replaceAll('’', "'")
+        .replaceAll('‘', "'")
+        .replaceAll('´', "'");
+
+    // Remove accents.
+    normalized = normalized
+        .replaceAll('á', 'a')
+        .replaceAll('é', 'e')
+        .replaceAll('í', 'i')
+        .replaceAll('ó', 'o')
+        .replaceAll('ú', 'u')
+        .replaceAll('ü', 'u')
+        .replaceAll('ñ', 'n');
+
+    // Remove YouTube decorations.
+    normalized = _cleanVideoTitle(normalized);
+
+    // Common separators become spaces.
+    normalized = normalized.replaceAll(RegExp(r'[-_/|•·]+'), ' ');
+
+    // Remove punctuation.
+    normalized = normalized.replaceAll(
+      RegExp(r'[^\p{L}\p{N}\s]', unicode: true),
+      ' ',
+    );
+
+    // Normalize whitespace.
+    normalized = normalized.replaceAll(RegExp(r'\s+'), ' ');
+
+    return normalized.trim();
+  }
+
+  // =====================================================================
+  // STRING SIMILARITY
+  // =====================================================================
+
+  double _similarity(String a, String b) {
+    final left = _normalizeForComparison(a);
+
+    final right = _normalizeForComparison(b);
+
+    if (left.isEmpty || right.isEmpty) {
+      return 0.0;
+    }
+
+    if (left == right) {
+      return 1.0;
+    }
+
+    if (left.contains(right) || right.contains(left)) {
+      final shorter = math.min(left.length, right.length);
+
+      final longer = math.max(left.length, right.length);
+
+      if (longer > 0) {
+        return 0.82 + (shorter / longer) * 0.13;
+      }
+    }
+
+    final leftWords = left.split(' ').where((e) => e.isNotEmpty).toSet();
+
+    final rightWords = right.split(' ').where((e) => e.isNotEmpty).toSet();
+
+    if (leftWords.isEmpty || rightWords.isEmpty) {
+      return 0.0;
+    }
+
+    final intersection = leftWords.intersection(rightWords).length;
+
+    final union = leftWords.union(rightWords).length;
+
+    final jaccard = union == 0 ? 0.0 : intersection / union;
+
+    final distance = _levenshtein(left, right);
+
+    final maxLength = math.max(left.length, right.length);
+
+    final editSimilarity = maxLength == 0 ? 0.0 : 1.0 - (distance / maxLength);
+
+    return ((jaccard * 0.55) + (editSimilarity * 0.45))
+        .clamp(0.0, 1.0)
+        .toDouble();
+  }
+
+  int _levenshtein(String a, String b) {
+    if (a == b) {
+      return 0;
+    }
+
+    if (a.isEmpty) {
+      return b.length;
+    }
+
+    if (b.isEmpty) {
+      return a.length;
+    }
+
+    var previous = List<int>.generate(b.length + 1, (index) => index);
+
+    for (var i = 0; i < a.length; i++) {
+      final current = List<int>.filled(b.length + 1, 0);
+
+      current[0] = i + 1;
+
+      for (var j = 0; j < b.length; j++) {
+        final cost = a.codeUnitAt(i) == b.codeUnitAt(j) ? 0 : 1;
+
+        current[j + 1] = math.min(
+          math.min(current[j] + 1, previous[j + 1] + 1),
+          previous[j] + cost,
+        );
+      }
+
+      previous = current;
+    }
+
+    return previous[b.length];
+  }
+}
+
+// =======================================================================
+// LRCLIB RECORD
+// =======================================================================
+
+class LyricsRecord {
+  final int id;
+  final String trackName;
+  final String artistName;
+  final String albumName;
+  final double duration;
+  final bool instrumental;
+  final bool hasWordSync;
+  final String? plainLyrics;
+  final String? syncedLyrics;
+  final String? lyricsfile;
+
+  const LyricsRecord({
+    required this.id,
+    required this.trackName,
+    required this.artistName,
+    required this.albumName,
+    required this.duration,
+    required this.instrumental,
+    required this.hasWordSync,
+    required this.plainLyrics,
+    required this.syncedLyrics,
+    required this.lyricsfile,
+  });
+
+  factory LyricsRecord.fromJson(Map<String, dynamic> json) {
+    return LyricsRecord(
+      id: _parseInt(json['id']),
+      trackName:
+          json['trackName']?.toString() ?? json['name']?.toString() ?? '',
+      artistName: json['artistName']?.toString() ?? '',
+      albumName: json['albumName']?.toString() ?? '',
+      duration: _parseDouble(json['duration']),
+      instrumental: json['instrumental'] == true,
+      hasWordSync: json['hasWordSync'] == true,
+      plainLyrics: json['plainLyrics']?.toString(),
+      syncedLyrics: json['syncedLyrics']?.toString(),
+      lyricsfile: json['lyricsfile']?.toString(),
+    );
+  }
+
+  static int _parseInt(dynamic value) {
+    if (value is int) {
+      return value;
+    }
+
+    if (value is num) {
+      return value.toInt();
+    }
+
+    return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  static double _parseDouble(dynamic value) {
+    if (value is num) {
+      return value.toDouble();
+    }
+
+    return double.tryParse(value?.toString() ?? '') ?? 0.0;
+  }
+}
+
+class _LyricsLookupResult {
+  final LyricsRecord? record;
+  final bool serverUnavailable;
+
+  const _LyricsLookupResult({this.record, this.serverUnavailable = false});
+}
+
+// =======================================================================
+// SEARCH RESULT
+// =======================================================================
+
+class _ScoredRecord {
+  final LyricsRecord record;
+  final double score;
+
+  const _ScoredRecord({required this.record, required this.score});
 }
