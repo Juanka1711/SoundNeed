@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'music_player.dart';
 import 'player_navigation.dart';
@@ -391,36 +392,10 @@ class _MusicHomePageState extends State<MusicHomePage> {
   // ==========================================================
 
   void _showSettings() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: AppColors.surface,
-      showDragHandle: true,
-      builder: (context) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 8, 20, 30),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Ajustes',
-                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 20),
-                const ListTile(
-                  leading: Icon(
-                    Icons.music_note_outlined,
-                    color: Colors.white70,
-                  ),
-                  title: Text('SoundNeed'),
-                  subtitle: Text('Configuración del reproductor'),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SoundNeedSettingsPage(player: widget.player),
+      ),
     );
   }
 
@@ -877,4 +852,463 @@ class _MusicHomePageState extends State<MusicHomePage> {
       },
     );
   }
+}
+
+class SoundNeedSettingsPage extends StatefulWidget {
+  const SoundNeedSettingsPage({super.key, required this.player});
+
+  final MusicPlayerController player;
+
+  @override
+  State<SoundNeedSettingsPage> createState() => _SoundNeedSettingsPageState();
+}
+
+class _SoundNeedSettingsPageState extends State<SoundNeedSettingsPage>
+    with WidgetsBindingObserver {
+  static const MethodChannel _settingsChannel = MethodChannel(
+    'music_player/media',
+  );
+
+  String _version = 'Cargando…';
+  bool _notificationsEnabled = true;
+  Timer? _sleepTimerUi;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    widget.player.addListener(_onPlayerChanged);
+    _loadSettingsInfo();
+    _sleepTimerUi = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted && widget.player.sleepTimerDeadline != null) {
+        setState(() {});
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    widget.player.removeListener(_onPlayerChanged);
+    _sleepTimerUi?.cancel();
+    super.dispose();
+  }
+
+  void _onPlayerChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _loadNotificationStatus();
+  }
+
+  Future<void> _loadSettingsInfo() async {
+    try {
+      final version = await _settingsChannel.invokeMethod<String>(
+        'getAppVersion',
+      );
+      if (mounted && version != null && version.isNotEmpty) {
+        setState(() => _version = version);
+      }
+    } on PlatformException {
+      if (mounted) setState(() => _version = 'No disponible');
+    }
+    await _loadNotificationStatus();
+  }
+
+  Future<void> _loadNotificationStatus() async {
+    try {
+      final enabled = await _settingsChannel.invokeMethod<bool>(
+        'areNotificationsEnabled',
+      );
+      if (mounted && enabled != null) {
+        setState(() => _notificationsEnabled = enabled);
+      }
+    } on PlatformException {
+      // La pantalla de administración del sistema seguirá disponible.
+    }
+  }
+
+  Future<void> _openNotificationSettings() async {
+    try {
+      await _settingsChannel.invokeMethod<void>('openNotificationSettings');
+    } on PlatformException {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No se pudieron abrir los ajustes del sistema.'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _shareFeedback() async {
+    try {
+      await _settingsChannel.invokeMethod<void>(
+        'shareFeedback',
+        <String, Object>{'version': _version},
+      );
+    } on PlatformException {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No se pudo abrir el menú para enviar comentarios.'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _showSleepTimerOptions() async {
+    final remaining = widget.player.sleepTimerRemaining;
+    final choices = <(String, Duration?)>[
+      ('15 minutos', const Duration(minutes: 15)),
+      ('30 minutos', const Duration(minutes: 30)),
+      ('45 minutos', const Duration(minutes: 45)),
+      ('1 hora', const Duration(hours: 1)),
+      ('2 horas', const Duration(hours: 2)),
+      if (remaining != null) ('Cancelar temporizador', null),
+    ];
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.surface,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 18),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.fromLTRB(8, 8, 8, 12),
+                child: Text(
+                  'Temporizador para dormir',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+                ),
+              ),
+              for (final choice in choices)
+                ListTile(
+                  leading: Icon(
+                    choice.$2 == null
+                        ? Icons.timer_off_outlined
+                        : Icons.bedtime_outlined,
+                    color: const Color(0xFFB99AFF),
+                  ),
+                  title: Text(choice.$1),
+                  onTap: () async {
+                    await widget.player.setSleepTimer(choice.$2);
+                    if (sheetContext.mounted) Navigator.pop(sheetContext);
+                  },
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _formatRemaining(Duration? duration) {
+    if (duration == null)
+      return 'La música se detendrá al terminar el tiempo elegido';
+    final seconds = duration.inSeconds;
+    final minutes = seconds ~/ 60;
+    final remainder = seconds % 60;
+    return 'Se detiene en ${minutes.toString().padLeft(2, '0')}:${remainder.toString().padLeft(2, '0')}';
+  }
+
+  void _showHelp() {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: const Text('Ayuda de SoundNeed'),
+        content: const Text(
+          'Los controles de reproducción aparecen en las notificaciones mientras '
+          'escuchas música. Si no los ves, revisa que SoundNeed tenga permiso para '
+          'mostrar notificaciones en los ajustes de Android.\n\n'
+          'El temporizador pausa la música al cumplirse el tiempo elegido. La '
+          'reproducción automática continúa con canciones recomendadas cuando se '
+          'acaba la cola, y puedes guardar el punto donde dejaste una canción.\n\n'
+          '¿Encontraste un problema o tienes una idea? Envíanos tus comentarios '
+          'desde esta pantalla.',
+          style: TextStyle(color: AppColors.textSecondary, height: 1.45),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Entendido'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _sectionLabel(String title) => Padding(
+    padding: const EdgeInsets.fromLTRB(4, 22, 4, 10),
+    child: Text(
+      title.toUpperCase(),
+      style: const TextStyle(
+        color: AppColors.textSecondary,
+        fontSize: 12,
+        fontWeight: FontWeight.w800,
+        letterSpacing: 1.15,
+      ),
+    ),
+  );
+
+  Widget _settingsCard({required List<Widget> children}) => Container(
+    decoration: BoxDecoration(
+      color: AppColors.card,
+      borderRadius: BorderRadius.circular(22),
+      border: Border.all(color: Colors.white.withValues(alpha: .055)),
+    ),
+    child: Column(children: children),
+  );
+
+  Widget _divider() => const Divider(
+    height: 1,
+    indent: 64,
+    endIndent: 16,
+    color: Colors.white10,
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final statusText = _notificationsEnabled
+        ? 'Permitir controles desde la notificación de Android'
+        : 'Las notificaciones están desactivadas en Android';
+
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      appBar: AppBar(
+        backgroundColor: AppColors.background,
+        title: const Text(
+          'Ajustes',
+          style: TextStyle(fontWeight: FontWeight.w800),
+        ),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(18, 8, 18, 32),
+        children: [
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(24),
+              gradient: LinearGradient(
+                colors: [const Color(0xFF24203B), AppColors.card],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              border: Border.all(color: Colors.white.withValues(alpha: .07)),
+            ),
+            child: const Row(
+              children: [
+                CircleAvatar(
+                  radius: 25,
+                  backgroundColor: Color(0x338B5CF6),
+                  child: Icon(Icons.tune_rounded, color: Color(0xFFB99AFF)),
+                ),
+                SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Tu SoundNeed',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      SizedBox(height: 4),
+                      Text(
+                        'Personaliza tu experiencia',
+                        style: TextStyle(color: AppColors.textSecondary),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          _sectionLabel('Notificaciones'),
+          _settingsCard(
+            children: [
+              ListTile(
+                leading: const _SettingsIcon(icon: Icons.graphic_eq_rounded),
+                title: const Text(
+                  'Controles de reproducción',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                subtitle: Text(
+                  statusText,
+                  style: const TextStyle(color: AppColors.textSecondary),
+                ),
+                trailing: const Icon(
+                  Icons.open_in_new_rounded,
+                  size: 19,
+                  color: AppColors.textSecondary,
+                ),
+                onTap: _openNotificationSettings,
+              ),
+              _divider(),
+              SwitchListTile.adaptive(
+                secondary: const _SettingsIcon(icon: Icons.fiber_new_rounded),
+                title: const Text(
+                  'Música nueva',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                subtitle: Text(
+                  _notificationsEnabled
+                      ? 'Avisos al actualizar las tendencias de Colombia y el mundo'
+                      : 'Activa las notificaciones de SoundNeed en Android',
+                  style: const TextStyle(color: AppColors.textSecondary),
+                ),
+                activeThumbColor: const Color(0xFFB99AFF),
+                value: widget.player.newMusicNotificationsEnabled,
+                onChanged: (enabled) async {
+                  await widget.player.setNewMusicNotificationsEnabled(enabled);
+                  await _loadNotificationStatus();
+                },
+              ),
+            ],
+          ),
+          _sectionLabel('Reproducción'),
+          _settingsCard(
+            children: [
+              ListTile(
+                leading: const _SettingsIcon(icon: Icons.bedtime_outlined),
+                title: const Text(
+                  'Temporizador para dormir',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                subtitle: Text(
+                  _formatRemaining(widget.player.sleepTimerRemaining),
+                  style: const TextStyle(color: AppColors.textSecondary),
+                ),
+                trailing: const Icon(
+                  Icons.chevron_right_rounded,
+                  color: AppColors.textSecondary,
+                ),
+                onTap: _showSleepTimerOptions,
+              ),
+              _divider(),
+              SwitchListTile.adaptive(
+                secondary: const _SettingsIcon(
+                  icon: Icons.playlist_play_rounded,
+                ),
+                title: const Text(
+                  'Continuar automáticamente',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                subtitle: const Text(
+                  'Al terminar la cola, sigue con canciones recomendadas',
+                  style: TextStyle(color: AppColors.textSecondary),
+                ),
+                activeThumbColor: const Color(0xFFB99AFF),
+                value: widget.player.autoContinueEnabled,
+                onChanged: widget.player.setAutoContinueEnabled,
+              ),
+              _divider(),
+              SwitchListTile.adaptive(
+                secondary: const _SettingsIcon(icon: Icons.history_rounded),
+                title: const Text(
+                  'Recordar dónde quedaste',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                subtitle: const Text(
+                  'Restaura la canción y el punto al volver a abrir SoundNeed',
+                  style: TextStyle(color: AppColors.textSecondary),
+                ),
+                activeThumbColor: const Color(0xFFB99AFF),
+                value: widget.player.rememberPlaybackEnabled,
+                onChanged: widget.player.setRememberPlaybackEnabled,
+              ),
+            ],
+          ),
+          _sectionLabel('Acerca de SoundNeed'),
+          _settingsCard(
+            children: [
+              ListTile(
+                leading: const _SettingsIcon(icon: Icons.info_outline_rounded),
+                title: const Text(
+                  'Versión',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                subtitle: Text(
+                  _version,
+                  style: const TextStyle(color: AppColors.textSecondary),
+                ),
+              ),
+              _divider(),
+              ListTile(
+                leading: const _SettingsIcon(icon: Icons.help_outline_rounded),
+                title: const Text(
+                  'Ayuda',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                subtitle: const Text(
+                  'Consejos para usar SoundNeed',
+                  style: TextStyle(color: AppColors.textSecondary),
+                ),
+                trailing: const Icon(
+                  Icons.chevron_right_rounded,
+                  color: AppColors.textSecondary,
+                ),
+                onTap: _showHelp,
+              ),
+              _divider(),
+              ListTile(
+                leading: const _SettingsIcon(
+                  icon: Icons.chat_bubble_outline_rounded,
+                ),
+                title: const Text(
+                  'Comentarios',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                subtitle: const Text(
+                  'Comparte una idea o reporta un problema',
+                  style: TextStyle(color: AppColors.textSecondary),
+                ),
+                trailing: const Icon(
+                  Icons.chevron_right_rounded,
+                  color: AppColors.textSecondary,
+                ),
+                onTap: _shareFeedback,
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          Center(
+            child: Text(
+              'SoundNeed  ·  $_version',
+              style: const TextStyle(
+                color: AppColors.textSecondary,
+                fontSize: 12,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SettingsIcon extends StatelessWidget {
+  const _SettingsIcon({required this.icon});
+
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: 40,
+    height: 40,
+    decoration: BoxDecoration(
+      color: const Color(0x228B5CF6),
+      borderRadius: BorderRadius.circular(13),
+    ),
+    child: Icon(icon, color: const Color(0xFFB99AFF), size: 21),
+  );
 }

@@ -53,7 +53,11 @@ class Song {
       id: (map['id'] as num?)?.toInt() ?? 0,
       title: title,
       displayName: displayName,
-      artist: _resolvedArtist(map['artist']?.toString() ?? '', title, displayName),
+      artist: _resolvedArtist(
+        map['artist']?.toString() ?? '',
+        title,
+        displayName,
+      ),
       album: map['album']?.toString() ?? 'Álbum desconocido',
       albumId: (map['albumId'] as num?)?.toInt(),
       duration: (map['duration'] as num?)?.toInt() ?? 0,
@@ -65,6 +69,22 @@ class Song {
       isMusic: map['isMusic'] == true,
     );
   }
+
+  Map<String, dynamic> toMap() => {
+    'id': id,
+    'title': title,
+    'displayName': displayName,
+    'artist': artist,
+    'album': album,
+    'albumId': albumId,
+    'duration': duration,
+    'mimeType': mimeType,
+    'size': size,
+    'uri': uri,
+    'artworkUri': artworkUri,
+    'folderPath': folderPath,
+    'isMusic': isMusic,
+  };
 
   /// Convierte un resultado de YouTube en una Song.
   /// La URL real del audio se obtiene al reproducir.
@@ -125,8 +145,9 @@ class MusicPlayerController extends ChangeNotifier {
   static const int modeRepeatOne = 3;
   static const MethodChannel _channel = MethodChannel('music_player/media');
   static const EventChannel _networkChannel = EventChannel('soundneed/network');
-  static const EventChannel _downloadProgressChannel =
-      EventChannel('soundneed/download_progress');
+  static const EventChannel _downloadProgressChannel = EventChannel(
+    'soundneed/download_progress',
+  );
 
   final SoundNeedAudioHandler _audioHandler;
   late final AudioPlayer _audioPlayer;
@@ -147,6 +168,17 @@ class MusicPlayerController extends ChangeNotifier {
   bool _isPlaying = false;
 
   int _playbackMode = modeNormal;
+  bool _autoContinueEnabled = true;
+  bool _rememberPlaybackEnabled = true;
+  bool _newMusicNotificationsEnabled = false;
+  bool _preferencesReady = false;
+  bool _loadingAutoContinue = false;
+  DateTime? _sleepTimerDeadline;
+  Timer? _sleepTimer;
+  Timer? _resumeSaveTimer;
+  static const String _resumeSessionKey = 'soundneed_resume_session_v1';
+  static const String _sleepTimerKey = 'soundneed_sleep_timer_deadline_ms';
+  final List<String> _recentPlaybackKeys = [];
 
   int _queueIndex = -1;
 
@@ -199,6 +231,17 @@ class MusicPlayerController extends ChangeNotifier {
   bool get shuffleEnabled => _playbackMode == modeShuffle;
   bool get repeatEnabled => _playbackMode == modeRepeatAll;
   int get playbackMode => _playbackMode;
+  bool get autoContinueEnabled => _autoContinueEnabled;
+  bool get rememberPlaybackEnabled => _rememberPlaybackEnabled;
+  bool get newMusicNotificationsEnabled => _newMusicNotificationsEnabled;
+  DateTime? get sleepTimerDeadline => _sleepTimerDeadline;
+  Duration? get sleepTimerRemaining {
+    final deadline = _sleepTimerDeadline;
+    if (deadline == null) return null;
+    final remaining = deadline.difference(DateTime.now());
+    return remaining.isNegative ? Duration.zero : remaining;
+  }
+
   bool get loadingOnline => _loadingOnline;
   bool get isDownloading => _isDownloading;
   double? get downloadProgress => _downloadProgress;
@@ -221,9 +264,8 @@ class MusicPlayerController extends ChangeNotifier {
     : _audioHandler = audioHandler {
     _audioPlayer = audioHandler.player;
     _audioSessionSubscription = _audioPlayer.androidAudioSessionIdStream.listen(
-      (sessionId) => unawaited(
-        EqualizerService.instance.bindSession(sessionId),
-      ),
+      (sessionId) =>
+          unawaited(EqualizerService.instance.bindSession(sessionId)),
       onError: (Object error) {
         debugPrint('[SoundNeed] No se pudo enlazar el ecualizador: $error');
       },
@@ -244,17 +286,20 @@ class MusicPlayerController extends ChangeNotifier {
     );
     _downloadProgressSubscription = _downloadProgressChannel
         .receiveBroadcastStream()
-        .listen((dynamic event) {
-          if (event is Map) {
-            final rawProgress = event['progress'];
-            _downloadProgress = rawProgress is num
-                ? rawProgress.toDouble().clamp(0.0, 1.0).toDouble()
-                : null;
-            notifyListeners();
-          }
-        }, onError: (Object error) {
-          debugPrint('[SoundNeed] No se pudo observar la descarga: $error');
-        });
+        .listen(
+          (dynamic event) {
+            if (event is Map) {
+              final rawProgress = event['progress'];
+              _downloadProgress = rawProgress is num
+                  ? rawProgress.toDouble().clamp(0.0, 1.0).toDouble()
+                  : null;
+              notifyListeners();
+            }
+          },
+          onError: (Object error) {
+            debugPrint('[SoundNeed] No se pudo observar la descarga: $error');
+          },
+        );
     _audioPlayer.playerStateStream.listen((state) {
       _isPlaying = state.playing;
       if (state.playing && _currentSong?.isOnline == true) {
@@ -338,7 +383,9 @@ class MusicPlayerController extends ChangeNotifier {
     late final Future<String?> request;
     request = () async {
       try {
-        final audioUrl = await YouTubeAudioService.instance.getAudioUrl(videoId);
+        final audioUrl = await YouTubeAudioService.instance.getAudioUrl(
+          videoId,
+        );
         if (audioUrl != null && audioUrl.isNotEmpty) {
           _youtubeUrlCache[videoId] = audioUrl;
           _saveYoutubeUrlCache();
@@ -413,6 +460,9 @@ class MusicPlayerController extends ChangeNotifier {
       if (_audioPlayer.processingState == ProcessingState.completed) {
         await _audioPlayer.seek(Duration.zero);
       }
+      _queueStartListening(song);
+      _recordRecentPlayback(song);
+      unawaited(_savePlaybackSession());
       _startProgressUpdateTimer();
       await _audioPlayer.play();
     } catch (error) {
@@ -440,6 +490,13 @@ class MusicPlayerController extends ChangeNotifier {
     _reconnectedWhileLoading = false;
     _isPlaying = false;
     playbackError = null;
+    _sleepTimer?.cancel();
+    _sleepTimer = null;
+    _sleepTimerDeadline = null;
+    if (_preferencesReady) {
+      unawaited(_preferences.remove(_sleepTimerKey));
+      unawaited(_preferences.remove(_resumeSessionKey));
+    }
     notifyListeners();
   }
 
@@ -450,6 +507,19 @@ class MusicPlayerController extends ChangeNotifier {
     await _requestNotificationPermission();
 
     _preferences = await SharedPreferences.getInstance();
+    _preferencesReady = true;
+    _autoContinueEnabled =
+        _preferences.getBool('auto_continue_playback') ?? true;
+    _rememberPlaybackEnabled =
+        _preferences.getBool('remember_playback_position') ?? true;
+    _newMusicNotificationsEnabled =
+        _preferences.getBool('new_music_notifications') ?? false;
+    _restoreSleepTimer();
+    _resumeSaveTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (_rememberPlaybackEnabled && _currentSong != null) {
+        unawaited(_savePlaybackSession());
+      }
+    });
 
     final savedFavorites = _preferences.getStringList('favorite_song_ids');
 
@@ -467,7 +537,9 @@ class MusicPlayerController extends ChangeNotifier {
         _youtubeUrlCache.addAll(
           decoded.map((k, v) => MapEntry(k, v.toString())),
         );
-        debugPrint('[SoundNeed] Cargado caché de URLs: ${_youtubeUrlCache.length} entradas');
+        debugPrint(
+          '[SoundNeed] Cargado caché de URLs: ${_youtubeUrlCache.length} entradas',
+        );
       } catch (e) {
         debugPrint('[SoundNeed] Error cargando caché de URLs: $e');
       }
@@ -477,6 +549,237 @@ class MusicPlayerController extends ChangeNotifier {
     await RecommendationService.instance.initialize();
 
     await loadSongs();
+    if (_rememberPlaybackEnabled) await _restorePlaybackSession();
+  }
+
+  Future<void> setAutoContinueEnabled(bool enabled) async {
+    _autoContinueEnabled = enabled;
+    if (_preferencesReady) {
+      await _preferences.setBool('auto_continue_playback', enabled);
+    }
+    notifyListeners();
+  }
+
+  Future<void> setRememberPlaybackEnabled(bool enabled) async {
+    _rememberPlaybackEnabled = enabled;
+    if (_preferencesReady) {
+      await _preferences.setBool('remember_playback_position', enabled);
+      if (enabled) {
+        await _savePlaybackSession();
+      } else {
+        await _preferences.remove(_resumeSessionKey);
+      }
+    }
+    notifyListeners();
+  }
+
+  Future<void> setNewMusicNotificationsEnabled(bool enabled) async {
+    _newMusicNotificationsEnabled = enabled;
+    if (_preferencesReady) {
+      await _preferences.setBool('new_music_notifications', enabled);
+    }
+    if (enabled) await requestNotificationPermission();
+    notifyListeners();
+  }
+
+  Future<void> requestNotificationPermission() async {
+    try {
+      await _channel.invokeMethod<void>('requestNotificationPermission');
+    } catch (error) {
+      debugPrint(
+        '[SoundNeed] No se pudo solicitar permiso de notificaciones: $error',
+      );
+    }
+  }
+
+  Future<bool> notifyNewMusicDetected(int count) async {
+    if (!_newMusicNotificationsEnabled || count <= 0) return false;
+    try {
+      return await _channel.invokeMethod<bool>(
+            'showNewMusicNotification',
+            <String, Object>{'count': count},
+          ) ??
+          false;
+    } catch (error) {
+      debugPrint(
+        '[SoundNeed] No se pudo mostrar el aviso de música nueva: $error',
+      );
+      return false;
+    }
+  }
+
+  Future<void> setSleepTimer(Duration? duration) async {
+    _sleepTimer?.cancel();
+    _sleepTimer = null;
+    _sleepTimerDeadline = null;
+
+    if (duration != null && duration > Duration.zero) {
+      final deadline = DateTime.now().add(duration);
+      _sleepTimerDeadline = deadline;
+      if (_preferencesReady) {
+        await _preferences.setInt(
+          _sleepTimerKey,
+          deadline.millisecondsSinceEpoch,
+        );
+      }
+      _scheduleSleepTimer(duration);
+    } else if (_preferencesReady) {
+      await _preferences.remove(_sleepTimerKey);
+    }
+    notifyListeners();
+  }
+
+  void _restoreSleepTimer() {
+    final deadlineMs = _preferences.getInt(_sleepTimerKey);
+    if (deadlineMs == null) return;
+
+    final deadline = DateTime.fromMillisecondsSinceEpoch(deadlineMs);
+    final remaining = deadline.difference(DateTime.now());
+    if (remaining <= Duration.zero) {
+      unawaited(_preferences.remove(_sleepTimerKey));
+      return;
+    }
+    _sleepTimerDeadline = deadline;
+    _scheduleSleepTimer(remaining);
+  }
+
+  void _scheduleSleepTimer(Duration duration) {
+    _sleepTimer?.cancel();
+    _sleepTimer = Timer(duration, () => unawaited(_expireSleepTimer()));
+  }
+
+  Future<void> _expireSleepTimer() async {
+    _sleepTimer?.cancel();
+    _sleepTimer = null;
+    _sleepTimerDeadline = null;
+    if (_preferencesReady) await _preferences.remove(_sleepTimerKey);
+
+    if (_loadingOnline) {
+      ++_playToken;
+      _loadingOnline = false;
+      _isPlaying = false;
+    }
+    try {
+      await _audioPlayer.pause();
+    } catch (_) {
+      // El temporizador también puede vencer antes de cargar la primera pista.
+    }
+    _progressUpdateTimer?.cancel();
+    await _savePlaybackSession();
+    notifyListeners();
+  }
+
+  Future<void> _savePlaybackSession() async {
+    if (!_preferencesReady || !_rememberPlaybackEnabled) return;
+    final current = _currentSong;
+    if (current == null) {
+      await _preferences.remove(_resumeSessionKey);
+      return;
+    }
+
+    const maxSavedQueueItems = 160;
+    final safeIndex = _queueIndex.clamp(
+      0,
+      _queue.isEmpty ? 0 : _queue.length - 1,
+    );
+    var start = 0;
+    if (_queue.length > maxSavedQueueItems) {
+      start = (safeIndex - maxSavedQueueItems ~/ 2).clamp(
+        0,
+        _queue.length - maxSavedQueueItems,
+      );
+    }
+    final savedQueue = _queue
+        .skip(start)
+        .take(maxSavedQueueItems)
+        .map((song) => song.toMap())
+        .toList();
+
+    await _preferences.setString(
+      _resumeSessionKey,
+      jsonEncode({
+        'song': current.toMap(),
+        'queue': savedQueue,
+        'queueIndex': safeIndex - start,
+        'playbackMode': _playbackMode,
+        'positionMs': _audioPlayer.position.inMilliseconds,
+      }),
+    );
+  }
+
+  Future<void> _restorePlaybackSession() async {
+    final raw = _preferences.getString(_resumeSessionKey);
+    if (raw == null || raw.isEmpty) return;
+
+    try {
+      final data = jsonDecode(raw) as Map<String, dynamic>;
+      Song? resolveSong(dynamic value) {
+        if (value is! Map) return null;
+        final saved = Song.fromMap(value);
+        if (saved.isOnline || saved.isPodcast) return saved;
+        for (final local in _songs) {
+          if (local.id == saved.id || local.uri == saved.uri) return local;
+        }
+        return null;
+      }
+
+      final current = resolveSong(data['song']);
+      if (current == null) {
+        await _preferences.remove(_resumeSessionKey);
+        return;
+      }
+
+      final restoredQueue = <Song>[];
+      final savedQueue = data['queue'];
+      if (savedQueue is List) {
+        for (final item in savedQueue) {
+          final song = resolveSong(item);
+          if (song != null &&
+              !restoredQueue.any((queued) => _sameSong(queued, song))) {
+            restoredQueue.add(song);
+          }
+        }
+      }
+      if (!restoredQueue.any((queued) => _sameSong(queued, current))) {
+        restoredQueue.add(current);
+      }
+      _queue = restoredQueue;
+      _queueIndex = restoredQueue.indexWhere(
+        (song) => _sameSong(song, current),
+      );
+      _playbackMode =
+          (data['playbackMode'] as num?)?.toInt().clamp(0, 3).toInt() ??
+          modeNormal;
+      _recordRecentPlayback(current);
+
+      final positionMs = (data['positionMs'] as num?)?.toInt() ?? 0;
+      await playSong(
+        current,
+        createQueue: false,
+        retry: true,
+        startPaused: true,
+        initialPosition: Duration(milliseconds: positionMs),
+      );
+    } catch (error) {
+      debugPrint(
+        '[SoundNeed] No se pudo restaurar la última reproducción: $error',
+      );
+      await _preferences.remove(_resumeSessionKey);
+    }
+  }
+
+  bool _sameSong(Song first, Song second) =>
+      first.id == second.id && first.uri == second.uri;
+
+  String _songPlaybackKey(Song song) => '${song.id}|${song.uri}';
+
+  void _recordRecentPlayback(Song song) {
+    final key = _songPlaybackKey(song);
+    _recentPlaybackKeys.remove(key);
+    _recentPlaybackKeys.add(key);
+    if (_recentPlaybackKeys.length > 40) {
+      _recentPlaybackKeys.removeRange(0, _recentPlaybackKeys.length - 40);
+    }
   }
 
   // ============================================================
@@ -639,15 +942,15 @@ class MusicPlayerController extends ChangeNotifier {
       return false;
     }
 
-    final deleted = await _channel.invokeMethod<bool>(
-          'deleteSong',
-          <String, Object?>{'uri': song.uri},
-        ) ??
+    final deleted =
+        await _channel.invokeMethod<bool>('deleteSong', <String, Object?>{
+          'uri': song.uri,
+        }) ??
         false;
     if (!deleted) return false;
 
-    final wasCurrent = _currentSong?.id == song.id &&
-        _currentSong?.uri == song.uri;
+    final wasCurrent =
+        _currentSong?.id == song.id && _currentSong?.uri == song.uri;
     if (wasCurrent) {
       await _audioHandler.stop();
     } else {
@@ -655,7 +958,9 @@ class MusicPlayerController extends ChangeNotifier {
       final removedIndex = _queue.indexWhere(
         (queued) => queued.id == song.id && queued.uri == song.uri,
       );
-      _queue.removeWhere((queued) => queued.id == song.id && queued.uri == song.uri);
+      _queue.removeWhere(
+        (queued) => queued.id == song.id && queued.uri == song.uri,
+      );
       if (removedIndex >= 0 && removedIndex < oldIndex) {
         _queueIndex = oldIndex - 1;
       }
@@ -675,13 +980,17 @@ class MusicPlayerController extends ChangeNotifier {
     try {
       debugPrint('[SoundNeed] Iniciando descarga: ${song.title}');
       final sourceMetadata = song.isOnline
-          ? await YouTubeAudioService.instance.getVideoMetadata(song.onlineVideoId)
+          ? await YouTubeAudioService.instance.getVideoMetadata(
+              song.onlineVideoId,
+            )
           : const <String, String>{};
       final sourceTitle = sourceMetadata['title']?.trim();
-      final downloadTitle = sourceTitle?.isNotEmpty == true ? sourceTitle! : song.title;
+      final downloadTitle = sourceTitle?.isNotEmpty == true
+          ? sourceTitle!
+          : song.title;
       final sourceArtist = sourceMetadata['artist']?.trim() ?? '';
-      final artworkFuture = loadArtwork(song).then<Uint8List?>((value) => value,
-          onError: (_) => null);
+      final artworkFuture = loadArtwork(song)
+          .then<Uint8List?>((value) => value, onError: (_) => null);
 
       // Reintentos automáticos para errores 403/410
       const maxRetries = 2;
@@ -706,7 +1015,9 @@ class MusicPlayerController extends ChangeNotifier {
           audioUrl = await YouTubeAudioService.instance.getAudioUrl(
             song.onlineVideoId,
           );
-          debugPrint('[SoundNeed] URL obtenida: ${audioUrl?.substring(0, 50)}...');
+          debugPrint(
+            '[SoundNeed] URL obtenida: ${audioUrl?.substring(0, 50)}...',
+          );
         } else if (song.isPodcast ||
             song.uri.startsWith('http://') ||
             song.uri.startsWith('https://')) {
@@ -728,7 +1039,9 @@ class MusicPlayerController extends ChangeNotifier {
             ? sourceArtist
             : _artistForDownload(song);
         final songTitle = _songTitleForDownload(downloadTitle, artist);
-        debugPrint('[SoundNeed] Descargando archivo (intento $attempt): $artist - $songTitle');
+        debugPrint(
+          '[SoundNeed] Descargando archivo (intento $attempt): $artist - $songTitle',
+        );
 
         try {
           saved = await _channel.invokeMapMethod<String, dynamic>(
@@ -756,7 +1069,8 @@ class MusicPlayerController extends ChangeNotifier {
         } catch (e) {
           final errorStr = e.toString().toLowerCase();
           // Errores recuperables: 403, 410, connection reset, socket exception, timeout, eof
-          final isRecoverable = errorStr.contains('403') ||
+          final isRecoverable =
+              errorStr.contains('403') ||
               errorStr.contains('410') ||
               errorStr.contains('connection reset') ||
               errorStr.contains('socketexception') ||
@@ -765,7 +1079,9 @@ class MusicPlayerController extends ChangeNotifier {
               errorStr.contains('download_failed');
 
           if (attempt <= maxRetries && isRecoverable) {
-            debugPrint('[SoundNeed] Error recuperable ($e) - Reintentando con nueva URL...');
+            debugPrint(
+              '[SoundNeed] Error recuperable ($e) - Reintentando con nueva URL...',
+            );
             await Future.delayed(const Duration(milliseconds: 500));
             continue;
           } else {
@@ -776,7 +1092,9 @@ class MusicPlayerController extends ChangeNotifier {
       }
 
       if (saved == null) {
-        throw StateError('No se pudo descargar después de ${maxRetries + 1} intentos.');
+        throw StateError(
+          'No se pudo descargar después de ${maxRetries + 1} intentos.',
+        );
       }
 
       await loadSongs();
@@ -790,11 +1108,13 @@ class MusicPlayerController extends ChangeNotifier {
   Future<int> downloadPlaylist(List<Song> songs) async {
     if (_isDownloadingPlaylist || _isDownloading) return 0;
     final downloadable = songs
-        .where((song) =>
-            song.isOnline ||
-            song.isPodcast ||
-            song.uri.startsWith('http://') ||
-            song.uri.startsWith('https://'))
+        .where(
+          (song) =>
+              song.isOnline ||
+              song.isPodcast ||
+              song.uri.startsWith('http://') ||
+              song.uri.startsWith('https://'),
+        )
         .toList();
     if (downloadable.isEmpty) return 0;
 
@@ -829,12 +1149,21 @@ class MusicPlayerController extends ChangeNotifier {
 
     // Si el artista es un placeholder, intentar extraer del título
     final title = song.title.trim();
-    for (final separator in [' - ', ' – ', ' — ', ' | ', ' • ', ' ft. ', ' feat. ']) {
+    for (final separator in [
+      ' - ',
+      ' – ',
+      ' — ',
+      ' | ',
+      ' • ',
+      ' ft. ',
+      ' feat. ',
+    ]) {
       final index = title.indexOf(separator);
       if (index > 0) {
         final extractedArtist = title.substring(0, index).trim();
         // Verificar que el artista extraído no esté ya en el título para evitar duplicación
-        if (extractedArtist.isNotEmpty && !title.startsWith('$extractedArtist - $extractedArtist')) {
+        if (extractedArtist.isNotEmpty &&
+            !title.startsWith('$extractedArtist - $extractedArtist')) {
           return extractedArtist;
         }
       }
@@ -891,7 +1220,9 @@ class MusicPlayerController extends ChangeNotifier {
           normalizedArtist.isNotEmpty &&
           (normalizedArtist.contains(normalizedPrefix) ||
               normalizedPrefix.contains(normalizedArtist))) {
-        songTitle = songTitle.substring(separatorIndex + separator.length).trim();
+        songTitle = songTitle
+            .substring(separatorIndex + separator.length)
+            .trim();
       }
     }
 
@@ -982,6 +1313,8 @@ class MusicPlayerController extends ChangeNotifier {
     Song song, {
     bool createQueue = true,
     bool retry = false,
+    bool startPaused = false,
+    Duration? initialPosition,
   }) async {
     // Tocar otra vez la canción seleccionada no debe cancelar una extracción
     // activa ni reiniciar el stream. La interfaz abre el reproductor completo.
@@ -1012,6 +1345,7 @@ class MusicPlayerController extends ChangeNotifier {
     if (token != _playToken) return;
 
     _currentSong = song;
+    _recordRecentPlayback(song);
     _loadingOnline = song.isOnline;
     _isPlaying = false;
     _audioHandler.setPendingMediaItem(_mediaItemFor(song));
@@ -1024,6 +1358,7 @@ class MusicPlayerController extends ChangeNotifier {
       if (createQueue && !song.isOnline) {
         _createQueueFromSong(song);
       }
+      unawaited(_savePlaybackSession());
 
       final Uri sourceUri;
       AudioSource? preparedSource;
@@ -1174,6 +1509,22 @@ class MusicPlayerController extends ChangeNotifier {
 
       if (token != _playToken) return;
 
+      if (initialPosition != null && initialPosition > Duration.zero) {
+        final duration = _audioPlayer.duration;
+        final requested = initialPosition.inMilliseconds;
+        final maximum = duration?.inMilliseconds;
+        final safePosition = maximum != null && maximum > 0
+            ? Duration(milliseconds: requested.clamp(0, maximum - 1).toInt())
+            : initialPosition;
+        try {
+          await _audioPlayer.seek(safePosition);
+        } catch (error) {
+          debugPrint(
+            '[SoundNeed] Esta fuente no permitió restaurar la posición: $error',
+          );
+        }
+      }
+
       _retryOnReconnect = false;
       _reconnectedWhileLoading = false;
       _loadedSong = song;
@@ -1181,11 +1532,15 @@ class MusicPlayerController extends ChangeNotifier {
       _isPlaying = false;
       notifyListeners();
 
-      _queueStartListening(song);
-      _startProgressUpdateTimer();
-      // Esta espera solo termina al pausar o al terminar toda la canción.
-      // Se ejecuta en segundo plano, sin timeout de 45 s.
-      unawaited(_startAudioPlayback(token));
+      if (startPaused) {
+        await _savePlaybackSession();
+      } else {
+        _queueStartListening(song);
+        _startProgressUpdateTimer();
+        // Esta espera solo termina al pausar o al terminar toda la canción.
+        // Se ejecuta en segundo plano, sin timeout de 45 s.
+        unawaited(_startAudioPlayback(token));
+      }
     } catch (e) {
       if (token != _playToken) return;
       playbackError = 'Error inesperado: $e';
@@ -1287,7 +1642,9 @@ class MusicPlayerController extends ChangeNotifier {
       if (token != _playToken) return;
       playbackError = 'Error al reproducir: $error';
       final song = _currentSong;
-      if (song != null && song.isOnline && _isRefreshableOnlineAudioError(error)) {
+      if (song != null &&
+          song.isOnline &&
+          _isRefreshableOnlineAudioError(error)) {
         _refreshExpiredOnlineAudioUrl(song, error);
       } else if (song != null) {
         _waitForNetworkReconnect(song);
@@ -1409,7 +1766,8 @@ class MusicPlayerController extends ChangeNotifier {
     late final Future<void> pending;
     pending = queueFuture
         .then((results) {
-          if (_currentSong?.onlineVideoId != currentVideoId || results.length < 2) {
+          if (_currentSong?.onlineVideoId != currentVideoId ||
+              results.length < 2) {
             return;
           }
           final songs = results.map(Song.fromYouTube).toList();
@@ -1419,11 +1777,12 @@ class MusicPlayerController extends ChangeNotifier {
           if (currentIndex < 0) return;
           _queue = songs;
           _queueIndex = currentIndex;
-          _playbackMode = modeRepeatAll;
           notifyListeners();
         })
         .catchError((Object error) {
-          debugPrint('[SoundNeed] No se pudo completar la cola de tendencias: $error');
+          debugPrint(
+            '[SoundNeed] No se pudo completar la cola de tendencias: $error',
+          );
         })
         .whenComplete(() {
           if (identical(_pendingChartQueue, pending)) _pendingChartQueue = null;
@@ -1456,6 +1815,7 @@ class MusicPlayerController extends ChangeNotifier {
     if (_audioPlayer.playing) {
       await _audioPlayer.pause();
       _progressUpdateTimer?.cancel();
+      await _savePlaybackSession();
     } else {
       final song = _currentSong!;
       if (_loadedSong == null ||
@@ -1464,6 +1824,12 @@ class MusicPlayerController extends ChangeNotifier {
         await playSong(song, createQueue: false, retry: true);
         return;
       }
+      if (_audioPlayer.processingState == ProcessingState.completed) {
+        await _audioPlayer.seek(Duration.zero);
+      }
+      _queueStartListening(song);
+      _recordRecentPlayback(song);
+      unawaited(_savePlaybackSession());
       _startProgressUpdateTimer();
       unawaited(_startAudioPlayback(_playToken));
     }
@@ -1500,6 +1866,11 @@ class MusicPlayerController extends ChangeNotifier {
           _queueIndex = 0;
         } else {
           _queueIndex = _queue.length - 1;
+
+          if (_autoContinueEnabled) {
+            await _continueWithRecommendations();
+            return;
+          }
 
           await _audioPlayer.pause();
           await _audioPlayer.seek(Duration.zero);
@@ -1561,6 +1932,7 @@ class MusicPlayerController extends ChangeNotifier {
   // ============================================================
 
   Future<void> _handleSongCompleted() async {
+    if (_loadingAutoContinue) return;
     if (_queue.length <= 1 && _pendingChartQueue != null) {
       await _pendingChartQueue;
     }
@@ -1582,7 +1954,10 @@ class MusicPlayerController extends ChangeNotifier {
       return;
     }
 
-    if (_queue.isEmpty) return;
+    if (_queue.isEmpty) {
+      if (_autoContinueEnabled) await _continueWithRecommendations();
+      return;
+    }
 
     final nextIndex = _queueIndex + 1;
 
@@ -1591,8 +1966,13 @@ class MusicPlayerController extends ChangeNotifier {
         _queueIndex = 0;
 
         await playSong(_queue[_queueIndex], createQueue: false);
+      } else if (_autoContinueEnabled) {
+        _isPlaying = false;
+        notifyListeners();
+        await _continueWithRecommendations();
       } else {
         _isPlaying = false;
+        await _savePlaybackSession();
         notifyListeners();
       }
 
@@ -1602,6 +1982,103 @@ class MusicPlayerController extends ChangeNotifier {
     _queueIndex = nextIndex;
 
     await playSong(_queue[_queueIndex], createQueue: false);
+  }
+
+  Future<void> _continueWithRecommendations() async {
+    if (_loadingAutoContinue || !_autoContinueEnabled) return;
+    _loadingAutoContinue = true;
+    final token = _playToken;
+    try {
+      final candidates = <Song>[];
+      final seen = <String>{};
+
+      void addCandidate(Song song) {
+        final key = _songPlaybackKey(song);
+        if (song.id == _currentSong?.id && song.uri == _currentSong?.uri)
+          return;
+        if (_recentPlaybackKeys.contains(key) || !seen.add(key)) return;
+        candidates.add(song);
+      }
+
+      void addLearnedSong(LearnedSong learned) {
+        if (learned.source == 'local') {
+          for (final local in _songs) {
+            if (local.id.toString() == learned.id) {
+              addCandidate(local);
+              return;
+            }
+          }
+          return;
+        }
+
+        if (learned.source != 'youtube' ||
+            !RegExp(r'^[A-Za-z0-9_-]{11}$').hasMatch(learned.id)) {
+          return;
+        }
+        addCandidate(
+          Song.fromYouTube(
+            YouTubeSearchResult(
+              videoId: learned.id,
+              title: learned.title,
+              artist: learned.artist,
+              duration: learned.durationSeconds,
+              thumbnail: learned.thumbnail,
+              url: 'https://www.youtube.com/watch?v=${learned.id}',
+            ),
+          ),
+        );
+      }
+
+      final recommendations = await RecommendationService.instance
+          .getRecommendations(limit: 40);
+      for (final learned in recommendations) {
+        addLearnedSong(learned);
+        if (candidates.length >= 12) break;
+      }
+
+      if (candidates.length < 5) {
+        final discoveries = await RecommendationService.instance
+            .discoverNewSongs(limit: 16);
+        for (final learned in discoveries) {
+          addLearnedSong(learned);
+          if (candidates.length >= 12) break;
+        }
+      }
+
+      // Si no hay red o historial suficiente, recorre música local sin
+      // repetir las últimas canciones escuchadas.
+      if (candidates.isEmpty) {
+        for (final local in _songs) {
+          addCandidate(local);
+        }
+      }
+      if (candidates.isEmpty && _songs.isNotEmpty) {
+        _recentPlaybackKeys.clear();
+        for (final local in _songs) {
+          addCandidate(local);
+        }
+      }
+      if (token != _playToken || candidates.isEmpty) {
+        _isPlaying = false;
+        await _savePlaybackSession();
+        notifyListeners();
+        return;
+      }
+
+      _queue = candidates;
+      _queueIndex = 0;
+      _playbackMode = modeNormal;
+      notifyListeners();
+      await playSong(_queue.first, createQueue: false);
+    } catch (error) {
+      debugPrint(
+        '[SoundNeed] No se pudo continuar con recomendaciones: $error',
+      );
+      _isPlaying = false;
+      notifyListeners();
+    } finally {
+      _loadingAutoContinue = false;
+    }
   }
 
   // ============================================================
@@ -1653,6 +2130,7 @@ class MusicPlayerController extends ChangeNotifier {
 
   Future<void> seek(Duration position) async {
     await _audioPlayer.seek(position);
+    unawaited(_savePlaybackSession());
 
     // Si se hace seek al inicio, contarlo como replay
     if (position.inSeconds < 3 &&
@@ -1846,6 +2324,7 @@ class MusicPlayerController extends ChangeNotifier {
 
   void setQueueIndex(int index) {
     _queueIndex = index;
+    unawaited(_savePlaybackSession());
   }
 
   // ============================================================
@@ -1875,6 +2354,9 @@ class MusicPlayerController extends ChangeNotifier {
     _controllerDisposed = true;
     _audioHandler.onStopRequested = null;
     _progressUpdateTimer?.cancel();
+    _resumeSaveTimer?.cancel();
+    _sleepTimer?.cancel();
+    unawaited(_savePlaybackSession());
     unawaited(_networkSubscription?.cancel() ?? Future<void>.value());
     unawaited(_downloadProgressSubscription?.cancel() ?? Future<void>.value());
     unawaited(_playerErrorSubscription?.cancel() ?? Future<void>.value());

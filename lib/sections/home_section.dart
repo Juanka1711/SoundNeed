@@ -193,6 +193,7 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
         _currentChart = tracks;
         _loadingChart = false;
       });
+      await _checkForNewMusic(tracks, 'soundneed_seen_colombia_chart_v1');
     } catch (_) {
       if (mounted) setState(() => _loadingChart = false);
     }
@@ -205,8 +206,40 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
       );
       if (!mounted) return;
       setState(() => _worldChart = tracks);
+      await _checkForNewMusic(tracks, 'soundneed_seen_world_chart_v1');
     } catch (_) {
       // Colombia sigue disponible si la consulta multi país falla.
+    }
+  }
+
+  Future<void> _checkForNewMusic(
+    List<MusicChartTrack> tracks,
+    String storageKey,
+  ) async {
+    if (tracks.isEmpty) return;
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      final currentIds = tracks
+          .take(40)
+          .map(
+            (track) => track.id.isNotEmpty
+                ? track.id
+                : '${track.title.trim().toLowerCase()}|${track.artist.trim().toLowerCase()}',
+          )
+          .toList(growable: false);
+      final previousIds = preferences.getStringList(storageKey);
+      if (previousIds != null) {
+        final known = previousIds.toSet();
+        final addedCount = currentIds.where((id) => !known.contains(id)).length;
+        if (addedCount > 0) {
+          await widget.player.notifyNewMusicDetected(addedCount);
+        }
+      }
+      await preferences.setStringList(storageKey, currentIds);
+    } catch (error) {
+      debugPrint(
+        '[SoundNeed] No se pudo revisar la música nueva del chart: $error',
+      );
     }
   }
 
@@ -439,9 +472,7 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
           /// ====================================================
           /// YOUTUBE
           /// ====================================================
-          if (showOnlineResults) ...[
-            _buildOnlineResults(),
-          ],
+          if (showOnlineResults) ...[_buildOnlineResults()],
 
           /// Evita que el último contenido
           /// quede pegado al borde inferior.
@@ -2021,7 +2052,11 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
               borderRadius: BorderRadius.circular(12),
               border: Border.all(color: Colors.white.withOpacity(0.10)),
             ),
-            child: const Icon(Icons.music_note, size: 24, color: Colors.white54),
+            child: const Icon(
+              Icons.music_note,
+              size: 24,
+              color: Colors.white54,
+            ),
           ),
           size,
           isPlaying,
@@ -2040,10 +2075,8 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
           artwork,
           if (isPlaying)
             AudioArtworkVisualizer(
-              sessionIds:
-                  widget.player.audioPlayer.androidAudioSessionIdStream,
-              initialSessionId:
-                  widget.player.audioPlayer.androidAudioSessionId,
+              sessionIds: widget.player.audioPlayer.androidAudioSessionIdStream,
+              initialSessionId: widget.player.audioPlayer.androidAudioSessionId,
               isPlaying: true,
             ),
         ],
@@ -2137,10 +2170,8 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
                                 .player
                                 .audioPlayer
                                 .androidAudioSessionIdStream,
-                            initialSessionId: widget
-                                .player
-                                .audioPlayer
-                                .androidAudioSessionId,
+                            initialSessionId:
+                                widget.player.audioPlayer.androidAudioSessionId,
                             isPlaying: true,
                           ),
                       ],

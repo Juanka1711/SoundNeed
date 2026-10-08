@@ -7,6 +7,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.app.RecoverableSecurityException
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.graphics.BitmapFactory
 import android.media.MediaScannerConnection
 import android.media.audiofx.Equalizer
@@ -20,6 +23,7 @@ import android.os.Build
 import android.os.Environment
 import android.provider.DocumentsContract
 import android.provider.MediaStore
+import android.provider.Settings
 import android.util.Log
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -32,6 +36,8 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
 import androidx.core.app.ActivityCompat
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 
 import com.ryanheise.audioservice.AudioServiceActivity
@@ -80,6 +86,8 @@ class MainActivity : AudioServiceActivity() {
         private const val YOUTUBE_CHANNEL = "youtube/extractor"
         private const val WIDGET_CHANNEL = "soundneed/widget"
         private const val NOTIFICATION_PERMISSION_REQUEST_CODE = 200
+        private const val NEW_MUSIC_NOTIFICATION_CHANNEL_ID = "soundneed.new.music"
+        private const val NEW_MUSIC_NOTIFICATION_ID = 3107
         private const val PICK_MUSIC_FOLDER_REQUEST_CODE = 201
         private const val DELETE_MUSIC_REQUEST_CODE = 202
         private const val VISUALIZER_PERMISSION_REQUEST_CODE = 203
@@ -126,6 +134,60 @@ class MainActivity : AudioServiceActivity() {
                 "requestNotificationPermission" -> {
                     requestNotificationPermission()
                     result.success(true)
+                }
+
+                "areNotificationsEnabled" -> {
+                    result.success(NotificationManagerCompat.from(this).areNotificationsEnabled())
+                }
+
+                "showNewMusicNotification" -> {
+                    val count = call.argument<Int>("count") ?: 0
+                    result.success(showNewMusicNotification(count))
+                }
+
+                "openNotificationSettings" -> {
+                    try {
+                        val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                                putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                            }
+                        } else {
+                            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                data = Uri.parse("package:$packageName")
+                            }
+                        }
+                        startActivity(intent)
+                        result.success(true)
+                    } catch (error: Exception) {
+                        result.error("NOTIFICATION_SETTINGS", error.message, null)
+                    }
+                }
+
+                "getAppVersion" -> {
+                    val version = try {
+                        packageManager.getPackageInfo(packageName, 0).versionName
+                    } catch (_: Exception) {
+                        null
+                    }
+                    result.success(version ?: "No disponible")
+                }
+
+                "shareFeedback" -> {
+                    try {
+                        val version = call.argument<String>("version") ?: "No disponible"
+                        val intent = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_SUBJECT, "Comentarios sobre SoundNeed")
+                            putExtra(
+                                Intent.EXTRA_TEXT,
+                                "Hola, quiero compartir una idea o reportar un problema de SoundNeed.\n\nVersión: $version\n\n"
+                            )
+                        }
+                        startActivity(Intent.createChooser(intent, "Enviar comentarios"))
+                        result.success(true)
+                    } catch (error: Exception) {
+                        result.error("FEEDBACK_SHARE", error.message, null)
+                    }
                 }
 
                 // ============================================================
@@ -977,6 +1039,59 @@ class MainActivity : AudioServiceActivity() {
                     NOTIFICATION_PERMISSION_REQUEST_CODE
                 )
             }
+        }
+    }
+
+    private fun showNewMusicNotification(count: Int): Boolean {
+        if (count <= 0 || !NotificationManagerCompat.from(this).areNotificationsEnabled()) {
+            return false
+        }
+
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                NEW_MUSIC_NOTIFICATION_CHANNEL_ID,
+                "Novedades musicales",
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply {
+                description = "Avisos cuando se actualizan las tendencias musicales"
+            }
+            manager.createNotificationChannel(channel)
+        }
+
+        val title = if (count == 1) "Hay música nueva para descubrir" else "Las tendencias se actualizaron"
+        val message = if (count == 1) {
+            "Encontramos una canción nueva en tus tendencias."
+        } else {
+            "Encontramos $count canciones nuevas en tus tendencias."
+        }
+        val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
+        val pendingIntent = launchIntent?.let {
+            val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
+            PendingIntent.getActivity(this, 3107, it, flags)
+        }
+        val notification = NotificationCompat.Builder(
+            this,
+            NEW_MUSIC_NOTIFICATION_CHANNEL_ID
+        )
+            .setSmallIcon(applicationInfo.icon)
+            .setContentTitle(title)
+            .setContentText(message)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(true)
+            .apply { if (pendingIntent != null) setContentIntent(pendingIntent) }
+            .build()
+
+        return try {
+            NotificationManagerCompat.from(this).notify(
+                NEW_MUSIC_NOTIFICATION_ID,
+                notification
+            )
+            true
+        } catch (_: SecurityException) {
+            false
         }
     }
 
