@@ -15,4 +15,12 @@
     <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
         <item name="android:windowBackground">?android:colorBackground</item>
     </style>
+
+    <!-- Opaque AppCompat theme required by Google's MediaRouteButton. -->
+    <style name="SoundNeedCastButtonTheme" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="colorPrimary">#17131F</item>
+        <item name="colorPrimaryDark">#080808</item>
+        <item name="colorAccent">#C7F36B</item>
+        <item name="android:windowBackground">#17131F</item>
+    </style>
 </resources>

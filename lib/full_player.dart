@@ -13,6 +13,8 @@ import 'mini_player.dart';
 import 'playlist_actions.dart';
 import 'services/youtube_audio_service.dart';
 import 'services/equalizer_service.dart';
+import 'widgets/cast_devices_sheet.dart';
+import 'services/cast_discovery_service.dart';
 import 'sections/media_collection_section.dart';
 import 'sections/discovered_album_page.dart';
 import 'widgets/overflow_marquee_text.dart';
@@ -650,20 +652,67 @@ class _FullPlayerState extends State<FullPlayer>
         duration: const Duration(milliseconds: 600),
         curve: Curves.easeOutCubic,
         color: _themeDark.withOpacity(1 - (_dismissProgress * 0.25)),
-        child: Scaffold(
-          backgroundColor: Colors.transparent,
-          body: SafeArea(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                return Column(
-                  children: [
-                    _buildTopBar(song, screenHeight),
-
-                    Expanded(child: _buildPlayerContent(context, song)),
-                  ],
-                );
-              },
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (_onlineVideoMode) _buildLiveVideoBackdrop(),
+            if (_onlineVideoMode)
+              Positioned.fill(
+                child: ColoredBox(color: Colors.black.withOpacity(0.64)),
+              ),
+            Scaffold(
+              backgroundColor: Colors.transparent,
+              body: SafeArea(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    return Column(
+                      children: [
+                        _buildTopBar(song, screenHeight),
+                        Expanded(child: _buildPlayerContent(context, song)),
+                      ],
+                    );
+                  },
+                ),
+              ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLiveVideoBackdrop() {
+    final controller = _videoController;
+    if (controller == null || !controller.value.isInitialized) {
+      return const SizedBox.shrink();
+    }
+
+    return Positioned.fill(
+      child: ClipRect(
+        child: ImageFiltered(
+          imageFilter: ui.ImageFilter.blur(sigmaX: 32, sigmaY: 32),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final frameAspectRatio =
+                  constraints.maxWidth / constraints.maxHeight;
+              final videoAspectRatio = controller.value.aspectRatio;
+              if (frameAspectRatio <= 0 || videoAspectRatio <= 0) {
+                return const SizedBox.shrink();
+              }
+              final videoWidth = videoAspectRatio > frameAspectRatio
+                  ? constraints.maxHeight * videoAspectRatio
+                  : constraints.maxWidth;
+              final videoHeight = videoAspectRatio > frameAspectRatio
+                  ? constraints.maxHeight
+                  : constraints.maxWidth / videoAspectRatio;
+              return Center(
+                child: SizedBox(
+                  width: videoWidth,
+                  height: videoHeight,
+                  child: VideoPlayer(controller),
+                ),
+              );
+            },
           ),
         ),
       ),
@@ -671,8 +720,6 @@ class _FullPlayerState extends State<FullPlayer>
   }
 
   Widget _buildTopBar(dynamic song, double screenHeight) {
-    final favorite = isSongLiked(player, song);
-
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onVerticalDragStart: (_) => setState(() => _draggingToDismiss = true),
@@ -707,15 +754,13 @@ class _FullPlayerState extends State<FullPlayer>
         padding: const EdgeInsets.fromLTRB(14, 8, 14, 0),
         child: Row(
           children: [
-            _glassButton(
-              icon: favorite
-                  ? Icons.favorite_rounded
-                  : Icons.favorite_border_rounded,
-              color: favorite ? Colors.redAccent : Colors.white,
-              onTap: () async {
-                await toggleSongLiked(player, song);
-                if (mounted) setState(() {});
-              },
+            Tooltip(
+              message: 'Transmitir a un dispositivo',
+              child: _glassButton(
+                icon: Icons.cast,
+                color: Colors.white,
+                onTap: () => _showCastDevices(context),
+              ),
             ),
 
             Expanded(
@@ -736,7 +781,7 @@ class _FullPlayerState extends State<FullPlayer>
                             Tooltip(
                               message: 'Solo audio',
                               child: _onlineModeButton(
-                                icon: Icons.music_note_rounded,
+                                icon: Icons.graphic_eq,
                                 selected: !_onlineVideoMode,
                                 onTap: () => _setOnlineVideoMode(false, song),
                               ),
@@ -744,7 +789,7 @@ class _FullPlayerState extends State<FullPlayer>
                             Tooltip(
                               message: 'Reproducir video',
                               child: _onlineModeButton(
-                                icon: Icons.videocam_rounded,
+                                icon: Icons.smart_display,
                                 selected: _onlineVideoMode,
                                 onTap: () => song is Song
                                     ? _setOnlineVideoMode(true, song)
@@ -1240,16 +1285,26 @@ class _FullPlayerState extends State<FullPlayer>
   }
 
   Widget _buildSecondaryControls() {
+    final song = player.currentSong;
     return SizedBox(
       width: double.infinity,
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // COLA
+          // El favorito ocupa el espacio que antes tenía la cola.
           _smallActionButton(
-            icon: Icons.queue_music_rounded,
-            onTap: () => _showQueue(context),
+            icon: song != null && isSongLiked(player, song)
+                ? Icons.favorite_rounded
+                : Icons.favorite_border_rounded,
+            color: song != null && isSongLiked(player, song)
+                ? Colors.redAccent
+                : Colors.white.withOpacity(0.88),
+            onTap: () async {
+              if (song == null) return;
+              await toggleSongLiked(player, song);
+              if (mounted) setState(() {});
+            },
           ),
 
           const SizedBox(width: 10),
@@ -1312,10 +1367,10 @@ class _FullPlayerState extends State<FullPlayer>
           mainAxisSize: hasLyrics ? MainAxisSize.max : MainAxisSize.min,
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.lyrics_rounded, size: 17, color: _themeColor),
-
-            const SizedBox(width: 7),
-
+            if (!hasLyrics) ...[
+              Icon(Icons.lyrics_rounded, size: 17, color: _themeColor),
+              const SizedBox(width: 7),
+            ],
             if (hasLyrics)
               Expanded(child: _buildLyricsPreview(song, lyrics!))
             else
@@ -1468,6 +1523,7 @@ class _FullPlayerState extends State<FullPlayer>
   Widget _smallActionButton({
     required IconData icon,
     required VoidCallback onTap,
+    Color color = Colors.white,
   }) {
     return Material(
       color: Colors.transparent,
@@ -1482,10 +1538,57 @@ class _FullPlayerState extends State<FullPlayer>
             borderRadius: BorderRadius.circular(18),
             border: Border.all(color: Colors.white.withOpacity(0.07)),
           ),
-          child: Icon(icon, color: Colors.white.withOpacity(0.88), size: 21),
+          child: Icon(icon, color: color, size: 21),
         ),
       ),
     );
+  }
+
+  void _showCastDevices(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withOpacity(0.62),
+      builder: (_) => CastDevicesSheet(
+        accentColor: _themeColor,
+        backgroundColor: _themeDark,
+        onTransmitCurrentSong: _transmitCurrentSong,
+      ),
+    );
+  }
+
+  Future<void> _transmitCurrentSong() async {
+    final song = player.currentSong;
+    if (song == null) throw StateError('No hay una canción seleccionada.');
+    if (!song.isOnline && !song.isPodcast) {
+      throw StateError('Por ahora Cast transmite canciones en línea y podcasts. Las descargas locales se agregarán después.');
+    }
+
+    final url = song.isOnline
+        ? await YouTubeAudioService.instance.getAudioUrl(song.onlineVideoId)
+        : song.uri;
+    if (url == null || url.isEmpty) {
+      throw StateError(YouTubeAudioService.instance.lastError ?? 'No se pudo preparar el audio para Google Cast.');
+    }
+
+    await CastSenderService.instance.loadMedia(
+      url: url,
+      title: song.title,
+      artist: song.artist,
+      artwork: song.artworkUri,
+      contentType: song.isOnline ? 'audio/mp4' : _castContentType(song.uri),
+    );
+    await player.audioPlayer.pause();
+  }
+
+  String _castContentType(String url) {
+    final path = Uri.tryParse(url)?.path.toLowerCase() ?? '';
+    if (path.endsWith('.mp3')) return 'audio/mpeg';
+    if (path.endsWith('.m4a') || path.endsWith('.mp4')) return 'audio/mp4';
+    if (path.endsWith('.ogg') || path.endsWith('.opus')) return 'audio/ogg';
+    if (path.endsWith('.wav')) return 'audio/wav';
+    return 'audio/mpeg';
   }
 
   void _openLyrics(BuildContext context, dynamic song) {

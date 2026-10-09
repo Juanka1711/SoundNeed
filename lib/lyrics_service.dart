@@ -769,8 +769,8 @@ class LyricsService {
     required Duration? sourceDuration,
     required Duration? audioDuration,
   }) {
-    // Duration alone cannot distinguish an intro from an outro or a different
-    // edit. Preserve LRCLIB timestamps until there is stronger evidence.
+    // Keep LRCLIB timestamps unchanged. Duration differences alone cannot
+    // prove where an intro or outro occurs in this audio version.
     return Duration.zero;
   }
 

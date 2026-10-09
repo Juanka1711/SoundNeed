@@ -25,6 +25,8 @@ class AudioArtworkVisualizer extends StatefulWidget {
 class _AudioArtworkVisualizerState extends State<AudioArtworkVisualizer> {
   static const _methods = MethodChannel('soundneed/visualizer');
   static const _events = EventChannel('soundneed/visualizer_data');
+  static final Stream<dynamic> _eventStream =
+      _events.receiveBroadcastStream().asBroadcastStream();
 
   StreamSubscription<dynamic>? _subscription;
   StreamSubscription<int?>? _sessionSubscription;
@@ -82,7 +84,7 @@ class _AudioArtworkVisualizerState extends State<AudioArtworkVisualizer> {
   }
 
   void _subscribe() {
-    _subscription = _events.receiveBroadcastStream().listen((dynamic event) {
+    _subscription = _eventStream.listen((dynamic event) {
       if (!mounted || event is! List) return;
       setState(() {
         _bands = event.map((value) => (value as num).toDouble()).toList();

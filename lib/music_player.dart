@@ -2283,31 +2283,9 @@ class MusicPlayerController extends ChangeNotifier {
       }
     }
 
-    final albumId = song.albumId;
-
-    // Intentar obtener por albumId primero
-    if (albumId != null && albumId > 0) {
-      if (_artworkCache.containsKey(albumId)) {
-        return _artworkCache[albumId];
-      }
-
-      try {
-        final Uint8List? artwork = await _channel.invokeMethod<Uint8List>(
-          'getArtwork',
-          {'albumId': albumId},
-        );
-
-        _artworkCache[albumId] = artwork;
-
-        if (artwork != null) {
-          return artwork;
-        }
-      } catch (e) {
-        debugPrint('Error obteniendo portada por albumId: $e');
-      }
-    }
-
-    // Fallback: intentar obtener por URI de la canción
+    // Leer primero la portada incrustada en el archivo. Usar albumId primero
+    // puede asignar la misma carátula a canciones distintas que comparten
+    // álbum en MediaStore (por ejemplo, descargas de YouTube).
     final cacheKey = song.id;
     if (_artworkCache.containsKey(cacheKey)) {
       return _artworkCache[cacheKey];
@@ -2319,16 +2297,30 @@ class MusicPlayerController extends ChangeNotifier {
         {'uri': song.uri},
       );
 
-      _artworkCache[cacheKey] = artwork;
-
-      return artwork;
+      if (artwork != null && artwork.isNotEmpty) {
+        _artworkCache[cacheKey] = artwork;
+        return artwork;
+      }
     } catch (e) {
       debugPrint('Error obteniendo portada por URI: $e');
-
-      _artworkCache[cacheKey] = null;
-
-      return null;
     }
+
+    final albumId = song.albumId;
+    if (albumId != null && albumId > 0) {
+      try {
+        final Uint8List? artwork = await _channel.invokeMethod<Uint8List>(
+          'getArtwork',
+          {'albumId': albumId},
+        );
+        _artworkCache[cacheKey] = artwork;
+        return artwork;
+      } catch (e) {
+        debugPrint('Error obteniendo portada por albumId: $e');
+      }
+    }
+
+    _artworkCache[cacheKey] = null;
+    return null;
   }
 
   // ============================================================

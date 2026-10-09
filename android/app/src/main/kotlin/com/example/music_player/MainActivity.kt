@@ -18,6 +18,7 @@ import android.graphics.Typeface
 import android.graphics.LinearGradient
 import android.graphics.Shader
 import android.media.MediaScannerConnection
+import android.media.MediaMetadataRetriever
 import android.media.audiofx.Equalizer
 import android.media.audiofx.Visualizer
 import android.net.ConnectivityManager
@@ -89,6 +90,8 @@ class MainActivity : AudioServiceActivity() {
     private var pendingVisualizerSessionId: Int? = null
     private var equalizer: Equalizer? = null
     private var equalizerSessionId: Int? = null
+    private var castDiscoveryManager: CastDiscoveryManager? = null
+    private var castSenderManager: CastSenderManager? = null
 
     companion object {
         private const val CHANNEL = "music_player/media"
@@ -111,6 +114,16 @@ class MainActivity : AudioServiceActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        castDiscoveryManager?.dispose()
+        castDiscoveryManager = CastDiscoveryManager(
+            this,
+            flutterEngine.dartExecutor.binaryMessenger
+        )
+        castSenderManager?.dispose()
+        castSenderManager = CastSenderManager(
+            this,
+            flutterEngine.dartExecutor.binaryMessenger
+        )
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
@@ -384,12 +397,11 @@ class MainActivity : AudioServiceActivity() {
 
                 "getArtwork" -> {
                     val albumId = call.argument<Number>("albumId")?.toLong()
-
-                    if (albumId == null) {
-                        result.success(null)
-                    } else {
-                        result.success(getArtwork(albumId))
-                    }
+                    val songUri = call.argument<String>("uri")
+                    val embeddedArtwork = songUri
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let { getEmbeddedArtwork(it) }
+                    result.success(embeddedArtwork ?: albumId?.let { getArtwork(it) })
                 }
 
                 "cacheOnlineArtwork" -> {
@@ -839,6 +851,14 @@ class MainActivity : AudioServiceActivity() {
                 }
             }
         }
+    }
+
+    override fun onDestroy() {
+        castDiscoveryManager?.dispose()
+        castDiscoveryManager = null
+        castSenderManager?.dispose()
+        castSenderManager = null
+        super.onDestroy()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -2172,6 +2192,23 @@ class MainActivity : AudioServiceActivity() {
         } catch (e: Exception) {
 
             null
+        }
+    }
+
+    private fun getEmbeddedArtwork(songUri: String): ByteArray? {
+        val retriever = MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(this, Uri.parse(songUri))
+            retriever.embeddedPicture
+        } catch (error: Exception) {
+            Log.d("SoundNeedArtwork", "No se pudo leer portada incrustada de $songUri", error)
+            null
+        } finally {
+            try {
+                retriever.release()
+            } catch (_: RuntimeException) {
+                // El recurso puede no haberse inicializado correctamente.
+            }
         }
     }
 
