@@ -261,9 +261,8 @@ class MainActivity : AudioServiceFragmentActivity() {
                 "sharePlaylist" -> {
                     try {
                         val name = call.argument<String>("name") ?: "Playlist de SoundNeed"
-                        val payload = call.argument<String>("payload")
-                            ?: throw IllegalArgumentException("La playlist está vacía")
-                        val link = buildSoundNeedPlaylistShareLink(payload)
+                        val link = call.argument<String>("shareUrl")
+                            ?: throw IllegalArgumentException("Falta el enlace público de SoundNeed")
                         val songCount = call.argument<Int>("songCount") ?: 0
                         val shareText = "🎧 $name · $songCount canciones\nGuárdala en SoundNeed:\n$link"
                         val intent = Intent(Intent.ACTION_SEND).apply {
@@ -951,23 +950,14 @@ class MainActivity : AudioServiceFragmentActivity() {
             val soundNeedLink = uri.scheme.equals("soundneed", ignoreCase = true) &&
                 (host.equals("track", ignoreCase = true) ||
                     host.equals("playlist", ignoreCase = true))
-            val verifiedSongLink =
+            val verifiedShareLink =
                 uri.scheme.equals("https", ignoreCase = true) &&
                     host.equals("soundneed-shares.breinermuleth64.workers.dev", ignoreCase = true) &&
                     uri.pathSegments.size == 2 &&
-                    uri.pathSegments[0] == "s" &&
+                    uri.pathSegments[0] in setOf("s", "p") &&
                     uri.pathSegments[1].matches(Regex("[A-Za-z0-9_-]{12,24}"))
-            soundNeedLink || verifiedSongLink
+            soundNeedLink || verifiedShareLink
         } == true
-
-    private fun buildSoundNeedPlaylistShareLink(payload: String): String =
-        Uri.Builder()
-            .scheme("https")
-            .authority("soundneed-shares.breinermuleth64.workers.dev")
-            .appendPath("share.html")
-            .appendQueryParameter("p", payload)
-            .build()
-            .toString()
 
     private fun buildSoundNeedShareLink(
         deepLink: String,

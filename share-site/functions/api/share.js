@@ -18,15 +18,11 @@ export async function onRequestPost({ request, env }) {
   const artist = String(payload.artist || "").trim().slice(0, 180);
   const album = String(payload.album || "").trim().slice(0, 180);
   const deepLink = String(payload.deepLink || "");
-  const fallbackUrl = String(payload.fallbackUrl || "");
   const coverType = String(payload.coverType || "image/jpeg").toLowerCase();
   const coverBase64 = String(payload.coverBase64 || "");
 
   if (!validId(id) || !title || !artist || !deepLink.startsWith("soundneed://track")) {
     return jsonResponse({ error: "Faltan datos válidos de la canción." }, 400);
-  }
-  if (fallbackUrl && !/^https:\/\/(www\.)?youtube\.com\/watch\?v=[A-Za-z0-9_-]{11}$/.test(fallbackUrl)) {
-    return jsonResponse({ error: "Enlace alternativo no válido." }, 400);
   }
   if (!ALLOWED_IMAGE_TYPES.has(coverType)) {
     return jsonResponse({ error: "La portada debe ser JPEG, PNG o WebP." }, 400);
@@ -38,12 +34,12 @@ export async function onRequestPost({ request, env }) {
   }
 
   await env.DB.prepare(
-    `INSERT INTO shared_songs (id, title, artist, album, cover_base64, cover_type, deep_link, fallback_url, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `INSERT INTO shared_songs (id, title, artist, album, cover_base64, cover_type, deep_link, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
      ON CONFLICT(id) DO UPDATE SET title=excluded.title, artist=excluded.artist, album=excluded.album,
        cover_base64=excluded.cover_base64, cover_type=excluded.cover_type, deep_link=excluded.deep_link,
-       fallback_url=excluded.fallback_url, created_at=CURRENT_TIMESTAMP`,
-  ).bind(id, title, artist, album, coverBase64, coverType, deepLink, fallbackUrl).run();
+       created_at=CURRENT_TIMESTAMP`,
+  ).bind(id, title, artist, album, coverBase64, coverType, deepLink).run();
 
   return jsonResponse({ url: new URL(`/s/${id}`, request.url).toString() }, 201);
 }

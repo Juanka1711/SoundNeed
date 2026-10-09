@@ -8,6 +8,7 @@ import 'music_ui.dart';
 import 'services/audio_handler.dart';
 import 'services/youtube_audio_service.dart';
 import 'services/song_share_service.dart';
+import 'services/playlist_share_service.dart';
 import 'playlist_manager.dart';
 import 'playlist_sharing.dart';
 import 'full_player.dart';
@@ -222,24 +223,31 @@ class _SoundNeedHomeState extends State<SoundNeedHome> {
     if (uri == null) return;
     if (uri.scheme == 'https' &&
         uri.host == 'soundneed-shares.breinermuleth64.workers.dev' &&
-        uri.pathSegments.length == 2 &&
-        uri.pathSegments.first == 's') {
-      try {
-        uri = await SongShareService.resolveSongLink(uri);
-      } catch (error) {
-        debugPrint('[SoundNeed] No se pudo resolver la canción compartida: $error');
-        uri = null;
-      }
-      if (!mounted || uri == null) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              behavior: SnackBarBehavior.floating,
-              content: Text('No se pudo abrir esta canción compartida.'),
-            ),
-          );
+        uri.pathSegments.length == 2) {
+      if (uri.pathSegments.first == 's') {
+        try {
+          uri = await SongShareService.resolveSongLink(uri);
+        } catch (error) {
+          debugPrint('[SoundNeed] No se pudo resolver la canción compartida: $error');
+          uri = null;
         }
-        return;
+        if (!mounted || uri == null) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                behavior: SnackBarBehavior.floating,
+                content: Text('No se pudo abrir esta canción compartida.'),
+              ),
+            );
+          }
+          return;
+        }
+      } else if (uri.pathSegments.first == 'p') {
+        uri = Uri(
+          scheme: 'soundneed',
+          host: 'playlist',
+          queryParameters: {'shareId': uri.pathSegments.last},
+        );
       }
     }
     if (uri.scheme != 'soundneed') return;
@@ -321,7 +329,16 @@ class _SoundNeedHomeState extends State<SoundNeedHome> {
     var loadingDialogOpen = true;
     try {
       await PlaylistManager.instance.initialize();
-      final shared = decodeSharedPlaylist(uri.queryParameters['p'] ?? '');
+      var encodedPlaylist = uri.queryParameters['p'] ?? '';
+      final shareId = uri.queryParameters['shareId'];
+      if (encodedPlaylist.isEmpty && shareId != null) {
+        encodedPlaylist =
+            await PlaylistShareService.resolvePlaylistId(shareId) ?? '';
+      }
+      if (encodedPlaylist.isEmpty) {
+        throw const FormatException('No encontramos esta playlist compartida.');
+      }
+      final shared = decodeSharedPlaylist(encodedPlaylist);
       final name = shared['n']?.toString().trim().isNotEmpty == true
           ? shared['n'].toString().trim()
           : 'Playlist compartida';

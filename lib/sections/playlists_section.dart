@@ -11,6 +11,7 @@ import '../playlist_actions.dart';
 import '../widgets/local_music_badge.dart';
 import '../playlist_manager.dart';
 import '../playlist_sharing.dart';
+import '../services/playlist_share_service.dart';
 import '../services/youtube_audio_service.dart';
 import '../services/artwork_palette.dart';
 import '../widgets/soundneed_search_field.dart';
@@ -454,9 +455,18 @@ class _PlaylistContentsState extends State<_PlaylistContents> {
     }
     try {
       final payload = encodeSharedPlaylist(name, songs);
+      final coverArtworks = await Future.wait(
+        songs.take(4).map(widget.player.loadArtwork),
+      );
+      final shareUrl = await PlaylistShareService.createPlaylistLink(
+        name: name,
+        songCount: songs.length,
+        payload: payload,
+        coverArtworks: coverArtworks,
+      );
       await _mediaChannel.invokeMethod<void>('sharePlaylist', {
         'name': name,
-        'payload': payload,
+        'shareUrl': shareUrl.toString(),
         'songCount': songs.length,
       });
     } on PlatformException catch (error) {
@@ -470,6 +480,19 @@ class _PlaylistContentsState extends State<_PlaylistContents> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Compartir playlists no está disponible.')),
+        );
+      }
+    } on Object catch (error) {
+      debugPrint('[SoundNeed] No se pudo preparar el enlace de la playlist: $error');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              error is StateError
+                  ? error.message.toString()
+                  : 'No se pudo preparar el enlace. Revisa tu conexión e inténtalo de nuevo.',
+            ),
+          ),
         );
       }
     }

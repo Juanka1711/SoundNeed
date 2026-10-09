@@ -2107,39 +2107,52 @@ class _FullPlayerState extends State<FullPlayer>
       );
 
   Future<void> _shareSong(Song song) async {
-    final title = song.title.isEmpty ? song.displayName : song.title;
+    String cleanPlatformLabel(String value) => value
+        .replaceFirst(
+          RegExp(r'\s*[|·-]\s*YouTube\s*$', caseSensitive: false),
+          '',
+        )
+        .trim();
+
+    final cleanedTitle = cleanPlatformLabel(
+      song.title.isEmpty ? song.displayName : song.title,
+    );
+    final title = cleanedTitle.isEmpty ? 'Canción compartida' : cleanedTitle;
+    final artist = cleanPlatformLabel(song.artist);
+    final album = cleanPlatformLabel(song.album);
+    final safeArtist = artist.isEmpty || artist.toLowerCase() == 'youtube'
+        ? 'Artista desconocido'
+        : artist;
+    final safeAlbum = album.toLowerCase() == 'youtube' ? '' : album;
     try {
       final artwork = await player.loadArtwork(song);
       if (artwork == null || artwork.isEmpty) {
         _showActionMessage('Esta canción no tiene una portada disponible para compartir.');
         return;
       }
-      final deepLink = song.isOnline && song.onlineVideoId.isNotEmpty
-          ? 'soundneed://track/${song.onlineVideoId}'
-          : Uri(
+      final deepLink = Uri(
               scheme: 'soundneed',
               host: 'track',
+              pathSegments: song.isOnline && song.onlineVideoId.isNotEmpty
+                  ? <String>[song.onlineVideoId]
+                  : const <String>[],
               queryParameters: <String, String>{
                 'title': title,
-                'artist': song.artist,
-                'album': song.album,
+                'artist': safeArtist,
+                if (safeAlbum.isNotEmpty) 'album': safeAlbum,
               },
             ).toString();
-      final fallbackUrl = song.isOnline && song.onlineVideoId.isNotEmpty
-          ? 'https://www.youtube.com/watch?v=${song.onlineVideoId}'
-          : '';
       final shareUrl = await SongShareService.createSongLink(
         title: title,
-        artist: song.artist,
-        album: song.album,
+        artist: safeArtist,
+        album: safeAlbum,
         deepLink: deepLink,
         artwork: artwork,
-        fallbackUrl: fallbackUrl,
       );
       await _mediaChannel.invokeMethod<void>('shareSong', <String, Object?>{
         'title': title,
-        'artist': song.artist,
-        'album': song.album,
+        'artist': safeArtist,
+        'album': safeAlbum,
         'link': deepLink,
         'shareUrl': shareUrl.toString(),
       });

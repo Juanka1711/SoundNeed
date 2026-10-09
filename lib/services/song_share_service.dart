@@ -7,6 +7,8 @@ import 'package:flutter/painting.dart';
 import 'package:image/image.dart' as img;
 import 'package:http/http.dart' as http;
 
+import 'share_card_palette.dart';
+
 /// Publishes one song's metadata and artwork so crawlers can read its Open
 /// Graph tags from the initial HTML response. Override the deployed Worker
 /// origin with --dart-define=SOUNDNEED_SHARE_BASE_URL=https://...workers.dev.
@@ -26,7 +28,6 @@ class SongShareService {
     required String album,
     required String deepLink,
     required Uint8List artwork,
-    String fallbackUrl = '',
   }) async {
     final base = Uri.tryParse(_baseUrl.trim());
     if (base == null ||
@@ -55,7 +56,6 @@ class SongShareService {
             'artist': artist,
             'album': album,
             'deepLink': deepLink,
-            'fallbackUrl': fallbackUrl,
             'coverType': coverType,
             'coverBase64': base64Encode(shareArtwork),
             'previewType': 'image/jpeg',
@@ -142,6 +142,7 @@ class SongShareService {
     const width = 1200;
     const height = 630;
     const white = Color(0xfff5f8f6);
+    final palette = ShareCardPalette.fromArtwork(artwork);
     final codec = await ui.instantiateImageCodec(artwork);
     final frame = await codec.getNextFrame();
     final recorder = ui.PictureRecorder();
@@ -151,10 +152,10 @@ class SongShareService {
     canvas.drawRect(
       bounds,
       Paint()
-        ..shader = const LinearGradient(
+        ..shader = LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xff102c23), Color(0xff07130f), Color(0xff101a22)],
+          colors: [palette.primary, const Color(0xff07130f), palette.secondary],
         ).createShader(bounds),
     );
 
@@ -168,7 +169,7 @@ class SongShareService {
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2
-        ..color = const Color(0x337ee5a4),
+        ..color = palette.accent.withValues(alpha: .2),
     );
 
     const coverRect = Rect.fromLTWH(78, 126, 370, 370);
@@ -181,7 +182,7 @@ class SongShareService {
         const Rect.fromLTWH(68, 116, 390, 390),
         const Radius.circular(38),
       ),
-      Paint()..color = const Color(0x3377e2a1),
+      Paint()..color = palette.accent.withValues(alpha: .16),
     );
     canvas.save();
     canvas.clipRRect(coverRRect);
@@ -233,7 +234,7 @@ class SongShareService {
       y: 111,
       maxWidth: 600,
       fontSize: 20,
-      color: const Color(0xff79e5a6),
+      color: palette.accent,
       fontWeight: FontWeight.w500,
       letterSpacing: 2,
     );
@@ -269,7 +270,7 @@ class SongShareService {
       const Rect.fromLTWH(textX, 418, 302, 68),
       const Radius.circular(34),
     );
-    canvas.drawRRect(actionRect, Paint()..color = const Color(0xff79e5a6));
+    canvas.drawRRect(actionRect, Paint()..color = palette.accent);
     drawText(
       '▶   Escuchar canción',
       x: textX + 24,
@@ -285,7 +286,7 @@ class SongShareService {
       const Offset(1122, 538),
       Paint()
         ..strokeWidth = 1.5
-        ..color = const Color(0x33e5f4e9),
+        ..color = palette.accent.withValues(alpha: .18),
     );
     drawText(
       'Compartido desde SoundNeed',
