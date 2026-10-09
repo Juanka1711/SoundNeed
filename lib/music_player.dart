@@ -14,6 +14,7 @@ import 'services/youtube_audio_service.dart';
 import 'services/audio_handler.dart';
 import 'services/recommendation_service.dart';
 import 'services/equalizer_service.dart';
+import 'services/cast_discovery_service.dart';
 
 class Song {
   final int id;
@@ -205,6 +206,20 @@ class MusicPlayerController extends ChangeNotifier {
   StreamSubscription<dynamic>? _downloadProgressSubscription;
   StreamSubscription<PlayerException>? _playerErrorSubscription;
   StreamSubscription<int?>? _audioSessionSubscription;
+  StreamSubscription<CastSessionSnapshot>? _castSessionSubscription;
+  CastSessionSnapshot _castSession = const CastSessionSnapshot();
+  bool _castVideoMode = false;
+  Duration? _localVideoPosition;
+  Duration? _localVideoDuration;
+  late final Stream<Duration> _castPositionStream = Stream<Duration>.periodic(
+    const Duration(milliseconds: 500),
+    (_) => playbackPosition,
+  ).asBroadcastStream();
+  late final Stream<Duration> _localVideoPositionStream =
+      Stream<Duration>.periodic(
+        const Duration(milliseconds: 500),
+        (_) => _localVideoPosition ?? _audioPlayer.position,
+      ).asBroadcastStream();
   bool _isDownloading = false;
   double? _downloadProgress;
   bool _isDownloadingPlaylist = false;
@@ -258,7 +273,50 @@ class MusicPlayerController extends ChangeNotifier {
             .toDouble();
   int get queueIndex => _queueIndex;
   AudioPlayer get audioPlayer => _audioPlayer;
-  Stream<Duration> get positionStream => _audioPlayer.positionStream;
+  bool get castConnected => _castSession.connected;
+  bool get castPlaying => _castSession.playing;
+  bool get castVideoMode => _castVideoMode;
+  Duration get playbackPosition => castConnected
+      ? Duration(milliseconds: _castSession.positionMs)
+      : (_localVideoPosition ?? _audioPlayer.position);
+  Duration get playbackDuration => castConnected
+      ? Duration(milliseconds: _castSession.durationMs)
+      : (_localVideoDuration ?? _audioPlayer.duration ?? Duration.zero);
+  Stream<Duration> get positionStream => castConnected
+      ? _castPositionStream
+      : _localVideoPosition != null
+      ? _localVideoPositionStream
+      : _audioPlayer.positionStream;
+
+  void updateLocalVideoPlayback({
+    required bool playing,
+    required Duration position,
+    required Duration duration,
+  }) {
+    if (_castSession.connected) return;
+    _localVideoPosition = position;
+    _localVideoDuration = duration;
+    _isPlaying = playing;
+    _audioHandler.updateExternalPlayback(
+      playing: playing,
+      position: position,
+      duration: duration,
+    );
+    notifyListeners();
+  }
+
+  void clearLocalVideoPlayback() {
+    if (_castSession.connected) return;
+    _localVideoPosition = null;
+    _localVideoDuration = null;
+    _audioHandler.updateExternalPlayback(
+      playing: null,
+      position: _audioPlayer.position,
+      duration: _audioPlayer.duration ?? Duration.zero,
+    );
+    _isPlaying = _audioPlayer.playing;
+    notifyListeners();
+  }
 
   MusicPlayerController({required SoundNeedAudioHandler audioHandler})
     : _audioHandler = audioHandler {
@@ -275,9 +333,47 @@ class MusicPlayerController extends ChangeNotifier {
       unawaited(EqualizerService.instance.bindSession(initialAudioSessionId));
     }
     _audioHandler.onPlayRequested = _handleExternalPlay;
+    _audioHandler.onPauseRequested = _handleExternalPause;
+    _audioHandler.onSeekRequested = seek;
     _audioHandler.onSkipToNext = nextSong;
     _audioHandler.onSkipToPrevious = previousSong;
     _audioHandler.onStopRequested = _handleExternalStop;
+    _castSessionSubscription = CastSenderService.instance.sessionChanges.listen(
+      (session) {
+        if (_controllerDisposed) return;
+        final previousSession = _castSession;
+        _castSession = session;
+        _isPlaying = session.connected ? session.playing : _audioPlayer.playing;
+        _audioHandler.updateExternalPlayback(
+          playing: session.connected ? session.playing : null,
+          position: Duration(milliseconds: session.positionMs),
+          duration: Duration(milliseconds: session.durationMs),
+        );
+        notifyListeners();
+        if (session.connected && session.ended && !previousSession.ended) {
+          unawaited(_handleSongCompleted());
+        }
+        if (previousSession.connected &&
+            !session.connected &&
+            _currentSong != null) {
+          _castVideoMode = false;
+          unawaited(
+            playSong(
+              _currentSong!,
+              createQueue: false,
+              retry: true,
+              startPaused: !previousSession.playing,
+              initialPosition: Duration(
+                milliseconds: previousSession.positionMs,
+              ),
+            ),
+          );
+        }
+      },
+      onError: (Object error) {
+        debugPrint('[SoundNeed] No se pudo observar la sesión Cast: $error');
+      },
+    );
     _networkSubscription = _networkChannel.receiveBroadcastStream().listen(
       _handleNetworkState,
       onError: (Object error) {
@@ -301,9 +397,23 @@ class MusicPlayerController extends ChangeNotifier {
           },
         );
     _audioPlayer.playerStateStream.listen((state) {
-      _isPlaying = state.playing;
-      if (state.playing && _currentSong?.isOnline == true) {
-        _onlineAudioUrlRefreshAttempts.remove(_currentSong!.onlineVideoId);
+      _isPlaying = _castSession.connected
+          ? _castSession.playing
+          : state.playing;
+      final song = _currentSong;
+      if (state.playing && song?.isOnline == true) {
+        final videoId = song!.onlineVideoId;
+        final token = _playToken;
+        // Una URL recién extraída sólo se considera válida tras reproducir
+        // de forma continua; un inicio fugaz no debe reiniciar los reintentos.
+        Future<void>.delayed(const Duration(seconds: 30), () {
+          if (!_controllerDisposed &&
+              token == _playToken &&
+              _audioPlayer.playing &&
+              _currentSong?.onlineVideoId == videoId) {
+            _onlineAudioUrlRefreshAttempts.remove(videoId);
+          }
+        });
       }
       notifyListeners();
     });
@@ -351,14 +461,6 @@ class MusicPlayerController extends ChangeNotifier {
     }
   }
 
-  void _saveYoutubeUrlCache() {
-    try {
-      _preferences.setString('youtube_url_cache', jsonEncode(_youtubeUrlCache));
-    } catch (e) {
-      debugPrint('[SoundNeed] Error guardando caché de URLs: $e');
-    }
-  }
-
   /// Precarga la URL de audio de YouTube en segundo plano.
   /// Llamar esto cuando el usuario selecciona o muestra una canción online.
   Future<void> preloadYoutubeUrl(String videoId) async {
@@ -388,7 +490,6 @@ class MusicPlayerController extends ChangeNotifier {
         );
         if (audioUrl != null && audioUrl.isNotEmpty) {
           _youtubeUrlCache[videoId] = audioUrl;
-          _saveYoutubeUrlCache();
         }
         return audioUrl;
       } finally {
@@ -417,6 +518,10 @@ class MusicPlayerController extends ChangeNotifier {
   }
 
   Future<void> _handleExternalPlay() async {
+    if (_castSession.connected) {
+      await CastSenderService.instance.play();
+      return;
+    }
     var song = _currentSong;
     if (song == null) {
       final item = _audioHandler.currentMediaItem;
@@ -477,7 +582,20 @@ class MusicPlayerController extends ChangeNotifier {
     }
   }
 
+  Future<void> _handleExternalPause() async {
+    if (_castSession.connected) {
+      await CastSenderService.instance.pause();
+      return;
+    }
+    await _audioPlayer.pause();
+    _progressUpdateTimer?.cancel();
+    await _savePlaybackSession();
+  }
+
   Future<void> _handleExternalStop() async {
+    if (_castSession.connected) {
+      await CastSenderService.instance.stop();
+    }
     ++_playToken;
     _queueStopListening(_currentSong);
     _progressUpdateTimer?.cancel();
@@ -529,21 +647,9 @@ class MusicPlayerController extends ChangeNotifier {
       );
     }
 
-    // Cargar caché de URLs de YouTube
-    final savedUrls = _preferences.getString('youtube_url_cache');
-    if (savedUrls != null) {
-      try {
-        final decoded = jsonDecode(savedUrls) as Map<String, dynamic>;
-        _youtubeUrlCache.addAll(
-          decoded.map((k, v) => MapEntry(k, v.toString())),
-        );
-        debugPrint(
-          '[SoundNeed] Cargado caché de URLs: ${_youtubeUrlCache.length} entradas',
-        );
-      } catch (e) {
-        debugPrint('[SoundNeed] Error cargando caché de URLs: $e');
-      }
-    }
+    // Las URLs directas de YouTube son firmadas y expiran. No se restauran
+    // desde preferencias: cada proceso debe extraer una URL nueva.
+    await _preferences.remove('youtube_url_cache');
 
     // Inicializar servicio de recomendaciones
     await RecommendationService.instance.initialize();
@@ -1007,7 +1113,6 @@ class MusicPlayerController extends ChangeNotifier {
           if (attempt > 1) {
             final videoId = song.onlineVideoId;
             _youtubeUrlCache.remove(videoId);
-            _saveYoutubeUrlCache();
             debugPrint('[SoundNeed] URL cacheada eliminada para reintentar');
           }
 
@@ -1309,6 +1414,162 @@ class MusicPlayerController extends ChangeNotifier {
     _queueIndex = index;
   }
 
+  Future<void> transmitCurrentSongToCast({Duration? position}) async {
+    final song = _currentSong;
+    if (song == null) throw StateError('No hay una canción seleccionada.');
+    _castVideoMode = false;
+    await _sendSongToCast(song, initialPosition: position);
+    await _audioPlayer.pause();
+  }
+
+  Future<void> transmitCurrentVideoToCast({
+    required String url,
+    required Duration position,
+  }) async {
+    final song = _currentSong;
+    if (song == null || !song.isOnline) {
+      throw StateError('No hay un video en línea seleccionado.');
+    }
+    if (!_castSession.connected) {
+      await CastSenderService.instance.sessionChanges
+          .firstWhere((session) => session.connected)
+          .timeout(const Duration(seconds: 20));
+    }
+    _castVideoMode = true;
+    await _sendVideoToCast(song, url, position: position);
+  }
+
+  Future<void> _sendVideoToCast(
+    Song song,
+    String url, {
+    Duration position = Duration.zero,
+  }) async {
+    if (!_castSession.connected) {
+      await CastSenderService.instance.sessionChanges
+          .firstWhere((session) => session.connected)
+          .timeout(const Duration(seconds: 20));
+    }
+    final playbackStarted = Completer<void>();
+    final subscription = CastSenderService.instance.sessionChanges.listen((
+      session,
+    ) {
+      if (session.connected &&
+          session.playing &&
+          session.contentId == url &&
+          !playbackStarted.isCompleted) {
+        playbackStarted.complete();
+      }
+    });
+    try {
+      await CastSenderService.instance.loadMedia(
+        url: url,
+        title: song.title,
+        artist: song.artist,
+        artwork: song.artworkUri,
+        contentType: 'video/mp4',
+        isVideo: true,
+      );
+      await playbackStarted.future.timeout(const Duration(seconds: 30));
+      if (position > Duration.zero) {
+        await CastSenderService.instance.seek(position);
+      }
+      _isPlaying = true;
+      notifyListeners();
+    } finally {
+      await subscription.cancel();
+    }
+  }
+
+  Future<void> _sendSongToCast(Song song, {Duration? initialPosition}) async {
+    if (!_castSession.connected) {
+      await CastSenderService.instance.sessionChanges
+          .firstWhere((session) => session.connected)
+          .timeout(const Duration(seconds: 20));
+    }
+
+    late final String url;
+    late final String contentType;
+    var artwork = song.artworkUri;
+    if (song.isOnline) {
+      final stream = await YouTubeAudioService.instance.getCastAudioStream(
+        song.onlineVideoId,
+      );
+      if (stream == null) {
+        throw StateError(
+          YouTubeAudioService.instance.lastError ??
+              'No se pudo preparar el audio para Google Cast.',
+        );
+      }
+      url = stream.url;
+      contentType = stream.contentType;
+    } else if (song.isPodcast ||
+        song.uri.startsWith('http://') ||
+        song.uri.startsWith('https://')) {
+      url = song.uri;
+      contentType = _castContentType(song.uri, song.mimeType);
+    } else {
+      contentType = _castContentType(song.uri, song.mimeType);
+      final localArtwork = await loadArtwork(song);
+      final localMedia = await CastSenderService.instance.prepareLocalMedia(
+        uri: song.uri,
+        contentType: contentType,
+        artwork: localArtwork,
+      );
+      url = localMedia['url']!;
+      artwork = localMedia['artworkUrl']?.isNotEmpty == true
+          ? localMedia['artworkUrl']!
+          : '';
+    }
+
+    final playbackStarted = Completer<CastSessionSnapshot>();
+    final subscription = CastSenderService.instance.sessionChanges.listen((
+      session,
+    ) {
+      if (session.connected &&
+          session.playing &&
+          session.contentId == url &&
+          !playbackStarted.isCompleted) {
+        playbackStarted.complete(session);
+      }
+    });
+    try {
+      await CastSenderService.instance.loadMedia(
+        url: url,
+        title: song.title,
+        artist: song.artist,
+        artwork: artwork,
+        contentType: contentType,
+      );
+      _castSession = await playbackStarted.future.timeout(
+        const Duration(seconds: 30),
+      );
+      if (initialPosition != null && initialPosition > Duration.zero) {
+        await CastSenderService.instance.seek(initialPosition);
+      }
+      _isPlaying = true;
+      notifyListeners();
+    } on TimeoutException {
+      throw StateError(
+        'El TV se conectó, pero no logró iniciar el audio. Revisa que ambos dispositivos estén en la misma red e inténtalo de nuevo.',
+      );
+    } finally {
+      await subscription.cancel();
+    }
+  }
+
+  String _castContentType(String uri, String declaredMimeType) {
+    final declared = declaredMimeType.trim().toLowerCase();
+    if (declared.startsWith('audio/')) return declared;
+    final path = Uri.tryParse(uri)?.path.toLowerCase() ?? uri.toLowerCase();
+    if (path.endsWith('.mp3')) return 'audio/mpeg';
+    if (path.endsWith('.m4a') || path.endsWith('.mp4')) return 'audio/mp4';
+    if (path.endsWith('.aac')) return 'audio/aac';
+    if (path.endsWith('.ogg') || path.endsWith('.opus')) return 'audio/ogg';
+    if (path.endsWith('.flac')) return 'audio/flac';
+    if (path.endsWith('.wav')) return 'audio/wav';
+    return 'audio/mpeg';
+  }
+
   Future<void> playSong(
     Song song, {
     bool createQueue = true,
@@ -1359,6 +1620,33 @@ class MusicPlayerController extends ChangeNotifier {
         _createQueueFromSong(song);
       }
       unawaited(_savePlaybackSession());
+
+      if (_castSession.connected && !startPaused) {
+        if (_castVideoMode && song.isOnline) {
+          try {
+            final videoUrl = await YouTubeAudioService.instance.getVideoUrl(
+              song.onlineVideoId,
+            );
+            if (videoUrl == null) {
+              throw StateError('No se encontró video reproducible.');
+            }
+            await _sendVideoToCast(song, videoUrl);
+          } catch (error) {
+            debugPrint('[SoundNeed][Cast] Video no disponible; continúa con audio: $error');
+            _castVideoMode = false;
+            await _sendSongToCast(song);
+          }
+        } else {
+          _castVideoMode = false;
+          await _sendSongToCast(song);
+        }
+        if (token != _playToken) return;
+        _loadedSong = song;
+        _isPlaying = _castSession.playing;
+        _loadingOnline = false;
+        notifyListeners();
+        return;
+      }
 
       final Uri sourceUri;
       AudioSource? preparedSource;
@@ -1596,7 +1884,9 @@ class MusicPlayerController extends ChangeNotifier {
     _onlineAudioUrlRefreshAttempts[videoId] = attempts + 1;
     _youtubeUrlCache.remove(videoId);
     _onlineAudioSources.remove(videoId);
-    _saveYoutubeUrlCache();
+    // Puede haber una precarga todavía en curso con la URL vencida. Sacarla
+    // del mapa permite que el reintento solicite una extracción nueva.
+    _youtubeUrlRequests.remove(videoId);
     _retryOnReconnect = false;
     playbackError = 'Actualizando el enlace de audio…';
     _isPlaying = false;
@@ -1817,6 +2107,15 @@ class MusicPlayerController extends ChangeNotifier {
   // ============================================================
 
   Future<void> togglePlayPause() async {
+    if (_castSession.connected) {
+      if (_castSession.playing) {
+        await CastSenderService.instance.pause();
+      } else {
+        await CastSenderService.instance.play();
+      }
+      return;
+    }
+
     if (_currentSong == null) {
       if (_songs.isNotEmpty) {
         await playSong(_songs.first);
@@ -1893,9 +2192,15 @@ class MusicPlayerController extends ChangeNotifier {
             await _continueWithRecommendations();
             return;
           }
-
-          await _audioPlayer.pause();
-          await _audioPlayer.seek(Duration.zero);
+          if (_castSession.connected) {
+            await CastSenderService.instance.pause();
+            await CastSenderService.instance.seek(Duration.zero);
+          } else {
+            await _audioPlayer.pause();
+            await _audioPlayer.seek(Duration.zero);
+          }
+          _isPlaying = false;
+          notifyListeners();
 
           return;
         }
@@ -1920,8 +2225,15 @@ class MusicPlayerController extends ChangeNotifier {
       _queue = List<Song>.from(_songs);
     }
 
-    if (_audioPlayer.position.inSeconds > 3) {
-      await _audioPlayer.seek(Duration.zero);
+    if ((_castSession.connected
+            ? _castSession.positionMs
+            : _audioPlayer.position.inMilliseconds) >
+        3000) {
+      if (_castSession.connected) {
+        await CastSenderService.instance.seek(Duration.zero);
+      } else {
+        await _audioPlayer.seek(Duration.zero);
+      }
       return;
     }
 
@@ -1959,6 +2271,25 @@ class MusicPlayerController extends ChangeNotifier {
       await _pendingChartQueue;
     }
     if (_playbackMode == modeRepeatOne && _currentSong != null) {
+      if (_castSession.connected) {
+        final song = _currentSong!;
+        if (_castVideoMode && song.isOnline) {
+          try {
+            final videoUrl = await YouTubeAudioService.instance.getVideoUrl(
+              song.onlineVideoId,
+            );
+            if (videoUrl != null) {
+              await _sendVideoToCast(song, videoUrl);
+              return;
+            }
+          } catch (error) {
+            debugPrint('[SoundNeed][Cast] No se pudo repetir el video: $error');
+          }
+          _castVideoMode = false;
+        }
+        await _sendSongToCast(song, initialPosition: Duration.zero);
+        return;
+      }
       await _audioPlayer.seek(Duration.zero);
       await _audioPlayer.play();
       _startProgressUpdateTimer();
@@ -2151,6 +2482,10 @@ class MusicPlayerController extends ChangeNotifier {
   // ============================================================
 
   Future<void> seek(Duration position) async {
+    if (_castSession.connected) {
+      await CastSenderService.instance.seek(position);
+      return;
+    }
     await _audioPlayer.seek(position);
     unawaited(_savePlaybackSession());
 
@@ -2367,6 +2702,8 @@ class MusicPlayerController extends ChangeNotifier {
   void dispose() {
     _controllerDisposed = true;
     _audioHandler.onStopRequested = null;
+    _audioHandler.onPauseRequested = null;
+    _audioHandler.onSeekRequested = null;
     _progressUpdateTimer?.cancel();
     _resumeSaveTimer?.cancel();
     _sleepTimer?.cancel();
@@ -2375,6 +2712,7 @@ class MusicPlayerController extends ChangeNotifier {
     unawaited(_downloadProgressSubscription?.cancel() ?? Future<void>.value());
     unawaited(_playerErrorSubscription?.cancel() ?? Future<void>.value());
     unawaited(_audioSessionSubscription?.cancel() ?? Future<void>.value());
+    unawaited(_castSessionSubscription?.cancel() ?? Future<void>.value());
     unawaited(EqualizerService.instance.release());
     super.dispose();
   }

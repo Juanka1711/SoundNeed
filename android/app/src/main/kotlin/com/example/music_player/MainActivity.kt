@@ -32,6 +32,7 @@ import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.provider.Settings
 import android.util.Log
+import android.view.KeyEvent
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.net.HttpURLConnection
@@ -59,6 +60,20 @@ import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.stream.AudioStream
 
 class MainActivity : AudioServiceFragmentActivity() {
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP ||
+            event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN
+        ) {
+            val manager = castSenderManager
+            if (manager?.adjustCastVolumeForKey(event.keyCode, event.action, event.repeatCount) == true) {
+                // Consume both down and up events so Android does not also
+                // change the phone's local media volume.
+                return true
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
 
     private var newPipeInitialized = false
     private var networkEventSink: EventChannel.EventSink? = null
@@ -92,6 +107,7 @@ class MainActivity : AudioServiceFragmentActivity() {
     private var equalizerSessionId: Int? = null
     private var castDiscoveryManager: CastDiscoveryManager? = null
     private var castSenderManager: CastSenderManager? = null
+    private var audioOutputManager: AudioOutputManager? = null
 
     companion object {
         private const val CHANNEL = "music_player/media"
@@ -121,6 +137,11 @@ class MainActivity : AudioServiceFragmentActivity() {
         )
         castSenderManager?.dispose()
         castSenderManager = CastSenderManager(
+            this,
+            flutterEngine.dartExecutor.binaryMessenger
+        )
+        audioOutputManager?.dispose()
+        audioOutputManager = AudioOutputManager(
             this,
             flutterEngine.dartExecutor.binaryMessenger
         )
@@ -634,7 +655,8 @@ class MainActivity : AudioServiceFragmentActivity() {
                         call.argument<String>("title").orEmpty(),
                         call.argument<String>("artist").orEmpty(),
                         call.argument<String>("artUri").orEmpty(),
-                        call.argument<Boolean>("playing") ?: false
+                        call.argument<Boolean>("playing") ?: false,
+                        call.argument<Boolean>("clear") ?: false
                     )
                     result.success(null)
                 }
@@ -768,13 +790,13 @@ class MainActivity : AudioServiceFragmentActivity() {
 
                         try {
 
-                            val url =
-                                getYouTubeAudioUrl(videoId)
+                            val stream =
+                                getYouTubeAudioStream(videoId)
 
                             runOnUiThread {
 
-                                if (url != null) {
-                                    result.success(url)
+                                if (stream != null) {
+                                    result.success(stream.url)
                                 } else {
                                     result.error(
                                         "NO_AUDIO",
@@ -798,6 +820,34 @@ class MainActivity : AudioServiceFragmentActivity() {
                                     e.message ?: "Error desconocido",
                                     null
                                 )
+                            }
+                        }
+                    }
+                }
+
+                "getAudioStream" -> {
+                    val videoId = call.argument<String>("videoId")
+                    if (videoId.isNullOrBlank()) {
+                        result.error("INVALID_VIDEO_ID", "El videoId está vacío", null)
+                        return@setMethodCallHandler
+                    }
+                    extractorExecutor.execute {
+                        try {
+                            val stream = getYouTubeAudioStream(videoId)
+                            runOnUiThread {
+                                if (stream == null) {
+                                    result.error("NO_AUDIO", "No se encontró un stream de audio", null)
+                                } else {
+                                    result.success(mapOf(
+                                        "url" to stream.url,
+                                        "contentType" to stream.contentType,
+                                    ))
+                                }
+                            }
+                        } catch (error: Exception) {
+                            Log.e("SoundNeedYouTube", "Error preparando audio para Cast", error)
+                            runOnUiThread {
+                                result.error("CAST_AUDIO_EXTRACTION_ERROR", error.message ?: "Error preparando audio para Cast", null)
                             }
                         }
                     }
@@ -849,6 +899,8 @@ class MainActivity : AudioServiceFragmentActivity() {
         castDiscoveryManager = null
         castSenderManager?.dispose()
         castSenderManager = null
+        audioOutputManager?.dispose()
+        audioOutputManager = null
         super.onDestroy()
     }
 
@@ -2208,9 +2260,14 @@ class MainActivity : AudioServiceFragmentActivity() {
     // OBTENER URL DE AUDIO DE YOUTUBE (NEWPIPE)
     // ============================================================
 
-    private fun getYouTubeAudioUrl(
+    private data class YouTubeAudioStreamInfo(
+        val url: String,
+        val contentType: String,
+    )
+
+    private fun getYouTubeAudioStream(
         videoId: String
-    ): String? {
+    ): YouTubeAudioStreamInfo? {
 
         initializeNewPipe()
 
@@ -2450,7 +2507,21 @@ class MainActivity : AudioServiceFragmentActivity() {
             return null
         }
 
-        return selectedUrl
+        val codec = selectedMime.lowercase()
+        val contentType = when {
+            codec.contains("mp4a.40.5") -> "audio/mp4; codecs=\"mp4a.40.5\""
+            codec.contains("mp4a") || codec.contains("aac") -> "audio/mp4; codecs=\"mp4a.40.2\""
+            codec.contains("opus") -> "audio/webm; codecs=\"opus\""
+            codec.contains("vorbis") -> "audio/webm; codecs=\"vorbis\""
+            codec.contains("mpeg") || codec.contains("mp3") -> "audio/mpeg"
+            else -> when (Uri.parse(selectedUrl).lastPathSegment?.substringAfterLast('.', "")?.lowercase()) {
+                "m4a", "mp4" -> "audio/mp4; codecs=\"mp4a.40.2\""
+                "webm", "opus" -> "audio/webm; codecs=\"opus\""
+                "mp3" -> "audio/mpeg"
+                else -> "audio/mp4; codecs=\"mp4a.40.2\""
+            }
+        }
+        return YouTubeAudioStreamInfo(selectedUrl, contentType)
     }
 
     // ============================================================

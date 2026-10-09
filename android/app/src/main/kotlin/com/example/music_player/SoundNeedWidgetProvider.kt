@@ -68,36 +68,50 @@ class SoundNeedWidgetProvider : AppWidgetProvider() {
             title: String,
             artist: String,
             artUri: String,
-            playing: Boolean
+            playing: Boolean,
+            clear: Boolean = false
         ) {
 
             val preferences =
                 context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
             val previousArtUri = preferences.getString(KEY_ART_URI, "") ?: ""
-            // MediaSession puede publicar metadata vacía durante stop/reinicio.
-            // No permitimos que eso borre la última canción visible.
-            val safeTitle = title.trim().ifBlank {
-                preferences.getString(KEY_TITLE, "")?.trim().orEmpty()
-            }
-            val safeArtist = artist.trim().ifBlank {
-                if (title.isBlank()) {
-                    preferences.getString(KEY_ARTIST, "")?.trim().orEmpty()
-                } else {
-                    "Artista desconocido"
+            val refreshArtwork: Boolean
+            if (clear) {
+                preferences.edit()
+                    .remove(KEY_TITLE)
+                    .remove(KEY_ARTIST)
+                    .remove(KEY_ART_URI)
+                    .putBoolean(KEY_PLAYING, false)
+                    .putLong(KEY_POSITION, 0L)
+                    .putLong(KEY_DURATION, 0L)
+                    .apply()
+                refreshArtwork = true
+            } else {
+                // MediaSession puede publicar metadata vacía durante una carga.
+                // Sólo conservamos valores previos en esos eventos intermedios.
+                val safeTitle = title.trim().ifBlank {
+                    preferences.getString(KEY_TITLE, "")?.trim().orEmpty()
                 }
+                val safeArtist = artist.trim().ifBlank {
+                    if (title.isBlank()) {
+                        preferences.getString(KEY_ARTIST, "")?.trim().orEmpty()
+                    } else {
+                        "Artista desconocido"
+                    }
+                }
+                val safeArtUri = artUri.trim().ifBlank { previousArtUri }
+                val artworkCacheMissing =
+                    cachedArtworkFile(context, safeArtUri)?.exists() != true
+                refreshArtwork = previousArtUri != safeArtUri || artworkCacheMissing
+
+                preferences.edit()
+                    .putString(KEY_TITLE, safeTitle)
+                    .putString(KEY_ARTIST, safeArtist)
+                    .putString(KEY_ART_URI, safeArtUri)
+                    .putBoolean(KEY_PLAYING, playing)
+                    .apply()
             }
-            val safeArtUri = artUri.trim().ifBlank { previousArtUri }
-
-            val artworkCacheMissing =
-                cachedArtworkFile(context, safeArtUri)?.exists() != true
-
-            preferences.edit()
-                .putString(KEY_TITLE, safeTitle)
-                .putString(KEY_ARTIST, safeArtist)
-                .putString(KEY_ART_URI, safeArtUri)
-                .putBoolean(KEY_PLAYING, playing)
-                .apply()
 
             val manager =
                 AppWidgetManager.getInstance(context)
@@ -115,7 +129,7 @@ class SoundNeedWidgetProvider : AppWidgetProvider() {
                     context,
                     manager,
                     widgetId,
-                    refreshArtwork = previousArtUri != safeArtUri || artworkCacheMissing
+                    refreshArtwork = refreshArtwork
                 )
             }
         }
@@ -371,12 +385,12 @@ class SoundNeedWidgetProvider : AppWidgetProvider() {
 
                 views.setImageViewResource(
                     R.id.widget_artwork,
-                    R.drawable.soundneed_widget_placeholder
+                    R.drawable.soundneed_widget_empty
                 )
 
-                views.setImageViewBitmap(
+                views.setImageViewResource(
                     R.id.widget_background_image,
-                    createDefaultBackground()
+                    R.drawable.soundneed_widget_empty
                 )
 
                 views.setImageViewBitmap(
