@@ -881,8 +881,8 @@ class MainActivity : AudioServiceFragmentActivity() {
         val source = Uri.parse(deepLink)
         val result = Uri.Builder()
             .scheme("https")
-            .authority("breinermuleth64-cyber.github.io")
-            .appendPath("soundneed-links")
+            .authority("juanka1711.github.io")
+            .appendPath("SoundNeed")
             .appendPath("share.html")
             .appendQueryParameter("preview", "v2")
 
