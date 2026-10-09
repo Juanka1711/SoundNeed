@@ -15,12 +15,14 @@ class MediaCollectionSection extends StatefulWidget {
     required this.songs,
     required this.kind,
     this.searchText = '',
+    this.initiallySelectedSong,
   });
 
   final MusicPlayerController player;
   final List<Song> songs;
   final MediaCollectionKind kind;
   final String searchText;
+  final Song? initiallySelectedSong;
 
   @override
   State<MediaCollectionSection> createState() =>
@@ -29,6 +31,13 @@ class MediaCollectionSection extends StatefulWidget {
 
 class _MediaCollectionSectionState extends State<MediaCollectionSection> {
   String? _selectedGroupKey;
+
+  @override
+  void initState() {
+    super.initState();
+    final song = widget.initiallySelectedSong;
+    if (song != null) _selectedGroupKey = _groupKeyForSong(song);
+  }
 
   bool get _isArtist => widget.kind == MediaCollectionKind.artists;
   String get _sectionTitle => _isArtist ? 'Artistas' : 'Álbumes';
@@ -49,7 +58,7 @@ class _MediaCollectionSectionState extends State<MediaCollectionSection> {
     if (widget.player.loading) {
       return const Center(child: CircularProgressIndicator(color: Colors.white));
     }
-    if (widget.player.permissionDenied) {
+    if (widget.player.permissionDenied && widget.songs.isEmpty) {
       return _buildMessage(
         Icons.lock_outline_rounded,
         'Permiso necesario',
@@ -57,7 +66,7 @@ class _MediaCollectionSectionState extends State<MediaCollectionSection> {
         button: 'Conceder permiso',
       );
     }
-    if (widget.player.songs.isEmpty) {
+    if (groups.isEmpty && widget.songs.isEmpty) {
       return _buildMessage(
         Icons.music_off_rounded,
         'No hay música',
@@ -408,6 +417,16 @@ class _MediaCollectionSectionState extends State<MediaCollectionSection> {
         .toList()
       ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
     return groups;
+  }
+
+  String _groupKeyForSong(Song song) {
+    if (_isArtist) return 'artist:${song.artist.trim().toLowerCase()}';
+    final album = song.album.trim().isEmpty || song.album == '<unknown>'
+        ? 'Álbum sin nombre'
+        : song.album.trim();
+    return song.albumId != null && song.albumId! > 0
+        ? 'album-id:${song.albumId}'
+        : 'album:${album.toLowerCase()}|${song.artist.trim().toLowerCase()}';
   }
 
   String _trackCount(int count) =>

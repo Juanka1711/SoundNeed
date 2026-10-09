@@ -1,8 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:audio_service/audio_service.dart';
 import 'music_player.dart';
 import 'music_ui.dart';
 import 'services/audio_handler.dart';
+import 'services/youtube_audio_service.dart';
+import 'full_player.dart';
 
 late final SoundNeedAudioHandler soundNeedAudioHandler;
 
@@ -188,17 +193,102 @@ class SoundNeedHome extends StatefulWidget {
 }
 
 class _SoundNeedHomeState extends State<SoundNeedHome> {
+  static const EventChannel _sharedSongEvents =
+      EventChannel('soundneed/shared_song');
   late final MusicPlayerController _player;
+  late final Future<void> _playerInitialization;
+  StreamSubscription<dynamic>? _sharedSongSubscription;
 
   @override
   void initState() {
     super.initState();
     _player = MusicPlayerController(audioHandler: widget.audioHandler);
-    _player.initialize();
+    _playerInitialization = _player.initialize();
+    _sharedSongSubscription = _sharedSongEvents.receiveBroadcastStream().listen(
+      (dynamic link) => unawaited(_openSharedSong(link.toString())),
+      onError: (Object error) {
+        debugPrint('[SoundNeed] No se pudo recibir el enlace compartido: $error');
+      },
+    );
   }
+
+  Future<void> _openSharedSong(String link) async {
+    await _playerInitialization;
+    if (!mounted) return;
+    final uri = Uri.tryParse(link);
+    if (uri == null) return;
+    final isCustomLink = uri.scheme == 'soundneed' && uri.host == 'track';
+    if (!isCustomLink) return;
+
+    var title = uri.queryParameters['title']?.trim() ?? '';
+    var artist = uri.queryParameters['artist']?.trim() ?? '';
+    final pathVideoId = uri.pathSegments.isNotEmpty ? uri.pathSegments.first : '';
+    final videoId = (uri.queryParameters['videoId'] ?? pathVideoId).trim();
+    var opened = false;
+
+    if (RegExp(r'^[A-Za-z0-9_-]{11}$').hasMatch(videoId)) {
+      if (title.isEmpty || artist.isEmpty) {
+        final metadata = await YouTubeAudioService.instance.getVideoMetadata(videoId);
+        title = metadata['title']?.trim().isNotEmpty == true
+            ? metadata['title']!.trim()
+            : 'Canción compartida';
+        artist = metadata['artist']?.trim().isNotEmpty == true
+            ? metadata['artist']!.trim()
+            : 'SoundNeed';
+      }
+      final sharedResult = YouTubeSearchResult(
+        videoId: videoId,
+        title: title.isEmpty ? 'Canción compartida' : title,
+        artist: artist.isEmpty ? 'SoundNeed' : artist,
+        duration: 0,
+        thumbnail: 'https://i.ytimg.com/vi/$videoId/hqdefault.jpg',
+        url: 'https://www.youtube.com/watch?v=$videoId',
+      );
+      opened = await _player.playOnline(sharedResult);
+    } else {
+      final normalizedTitle = _sharedTrackKey(title);
+      Song? localSong;
+      for (final candidate in _player.songs) {
+        final candidateTitle = candidate.title.isEmpty
+            ? candidate.displayName
+            : candidate.title;
+        final sameTitle = _sharedTrackKey(candidateTitle) == normalizedTitle;
+        final sameArtist = artist.isEmpty ||
+            _sharedTrackKey(candidate.artist) == _sharedTrackKey(artist);
+        if (sameTitle && sameArtist) {
+          localSong = candidate;
+          break;
+        }
+      }
+      if (localSong != null) {
+        await _player.playSong(localSong);
+        opened = _player.currentSong?.id == localSong.id;
+      }
+    }
+
+    if (!mounted) return;
+    if (!opened) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('SoundNeed no encontró esa canción en este dispositivo.'),
+        ),
+      );
+      return;
+    }
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(builder: (_) => FullPlayer(player: _player)),
+    );
+  }
+
+  String _sharedTrackKey(String value) => value
+      .toLowerCase()
+      .replaceAll(RegExp(r'\([^)]*\)|\[[^]]*\]'), '')
+      .replaceAll(RegExp(r'[^a-z0-9áéíóúüñ]'), '');
 
   @override
   void dispose() {
+    _sharedSongSubscription?.cancel();
     _player.dispose();
     super.dispose();
   }

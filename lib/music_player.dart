@@ -1725,6 +1725,28 @@ class MusicPlayerController extends ChangeNotifier {
     await playSong(selected, createQueue: false);
   }
 
+  /// Adds a track at the end of the current queue without interrupting it.
+  void addToQueue(Song song) {
+    if (_queue.isEmpty) {
+      if (_currentSong != null) {
+        _queue = <Song>[_currentSong!];
+        _queueIndex = 0;
+        _queue.add(song);
+      } else {
+        _queue = <Song>[song];
+        _queueIndex = -1;
+      }
+    } else {
+      if (_queueIndex < 0 && _currentSong != null) {
+        _queue.insert(0, _currentSong!);
+        _queueIndex = 0;
+      }
+      _queue.add(song);
+    }
+    unawaited(_savePlaybackSession());
+    notifyListeners();
+  }
+
   /// Reproduce un resultado de YouTube. Si pasas [playlist], esos
   /// resultados forman la cola (siguiente / anterior funcionan).
   /// Devuelve false si falló (ver [playbackError]).

@@ -11,6 +11,12 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.graphics.BitmapFactory
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Typeface
+import android.graphics.LinearGradient
+import android.graphics.Shader
 import android.media.MediaScannerConnection
 import android.media.audiofx.Equalizer
 import android.media.audiofx.Visualizer
@@ -39,6 +45,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 
 import com.ryanheise.audioservice.AudioServiceActivity
 import aman.taglib.TagLib
@@ -55,6 +62,8 @@ class MainActivity : AudioServiceActivity() {
     private var newPipeInitialized = false
     private var networkEventSink: EventChannel.EventSink? = null
     private var downloadProgressSink: EventChannel.EventSink? = null
+    private var sharedSongEventSink: EventChannel.EventSink? = null
+    private var pendingSharedSongLink: String? = null
     private var connectivityManager: ConnectivityManager? = null
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
@@ -187,6 +196,34 @@ class MainActivity : AudioServiceActivity() {
                         result.success(true)
                     } catch (error: Exception) {
                         result.error("FEEDBACK_SHARE", error.message, null)
+                    }
+                }
+
+                "shareSong" -> {
+                    try {
+                        val title = call.argument<String>("title") ?: "Canción"
+                        val artist = call.argument<String>("artist") ?: "SoundNeed"
+                        val link = call.argument<String>("link") ?: "soundneed://track"
+                        val artwork = call.argument<ByteArray>("artwork")
+                        val imageUri = createSongShareCard(title, artist, artwork)
+                        val shareLink = buildSoundNeedShareLink(link, title, artist)
+                        val shareText = "Escúchala en SoundNeed:\n$shareLink"
+                        val intent = Intent(Intent.ACTION_SEND).apply {
+                            type = "image/jpeg"
+                            putExtra(Intent.EXTRA_SUBJECT, "$title · SoundNeed")
+                            putExtra(Intent.EXTRA_TEXT, shareText)
+                            putExtra(Intent.EXTRA_STREAM, imageUri)
+                            clipData = android.content.ClipData.newUri(
+                                contentResolver,
+                                "Canción de SoundNeed",
+                                imageUri
+                            )
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        startActivity(Intent.createChooser(intent, "Compartir desde SoundNeed"))
+                        result.success(true)
+                    } catch (error: Exception) {
+                        result.error("SONG_SHARE", error.message, null)
                     }
                 }
 
@@ -655,6 +692,25 @@ class MainActivity : AudioServiceActivity() {
             }
         })
 
+        EventChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "soundneed/shared_song"
+        ).setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                sharedSongEventSink = events
+                val link = pendingSharedSongLink ?: intent?.dataString
+                if (isSoundNeedTrackLink(link)) {
+                    pendingSharedSongLink = null
+                    intent?.data = null
+                    events?.success(link)
+                }
+            }
+
+            override fun onCancel(arguments: Any?) {
+                sharedSongEventSink = null
+            }
+        })
+
         // ============================================================
         // CANAL YOUTUBE EXTRACTOR
         // ============================================================
@@ -783,6 +839,268 @@ class MainActivity : AudioServiceActivity() {
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val link = intent.dataString
+        if (isSoundNeedTrackLink(link)) {
+            if (sharedSongEventSink == null) {
+                pendingSharedSongLink = link
+            } else {
+                sharedSongEventSink?.success(link)
+            }
+            intent.data = null
+        }
+    }
+
+    private fun isSoundNeedTrackLink(link: String?): Boolean =
+        link?.let {
+            val uri = Uri.parse(it)
+            uri.scheme.equals("soundneed", ignoreCase = true) &&
+                uri.host.equals("track", ignoreCase = true)
+        } == true
+
+    private fun buildSoundNeedShareLink(
+        deepLink: String,
+        title: String,
+        artist: String,
+    ): String {
+        val source = Uri.parse(deepLink)
+        val result = Uri.Builder()
+            .scheme("https")
+            .authority("breinermuleth64-cyber.github.io")
+            .appendPath("soundneed-links")
+            .appendPath("share.html")
+
+        source.pathSegments.firstOrNull()?.let {
+            result.appendQueryParameter("videoId", it)
+        }
+        source.queryParameterNames.forEach { name ->
+            source.getQueryParameters(name).forEach { value ->
+                result.appendQueryParameter(name, value)
+            }
+        }
+        if (!source.queryParameterNames.contains("title")) {
+            result.appendQueryParameter("title", title)
+        }
+        if (!source.queryParameterNames.contains("artist")) {
+            result.appendQueryParameter("artist", artist)
+        }
+        return result.build().toString()
+    }
+
+    private fun createSongShareCard(
+        title: String,
+        artist: String,
+        artworkBytes: ByteArray?,
+    ): Uri {
+        val width = 1080
+        val height = 1350
+        val coverHeight = 960
+        val background = android.graphics.Color.rgb(7, 15, 21)
+        val accent = android.graphics.Color.rgb(47, 205, 190)
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val backgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            shader = LinearGradient(
+                0f,
+                0f,
+                0f,
+                height.toFloat(),
+                intArrayOf(
+                    android.graphics.Color.rgb(13, 37, 43),
+                    android.graphics.Color.rgb(17, 24, 39),
+                    background,
+                ),
+                null,
+                Shader.TileMode.CLAMP,
+            )
+        }
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), backgroundPaint)
+        backgroundPaint.shader = null
+
+        val cardBounds = android.graphics.RectF(42f, 42f, 1038f, 1000f)
+        val cardPath = android.graphics.Path().apply {
+            addRoundRect(cardBounds, 44f, 44f, android.graphics.Path.Direction.CW)
+        }
+        canvas.save()
+        canvas.clipPath(cardPath)
+        val cover = artworkBytes?.let {
+            BitmapFactory.decodeByteArray(it, 0, it.size)
+        }
+        if (cover != null) {
+            val targetWidth = cardBounds.width().toInt()
+            val targetHeight = cardBounds.height().toInt()
+            val scale = maxOf(targetWidth.toFloat() / cover.width, targetHeight.toFloat() / cover.height)
+            val cropWidth = targetWidth / scale
+            val cropHeight = targetHeight / scale
+            val source = android.graphics.Rect(
+                ((cover.width - cropWidth) / 2).toInt().coerceAtLeast(0),
+                ((cover.height - cropHeight) / 2).toInt().coerceAtLeast(0),
+                ((cover.width + cropWidth) / 2).toInt().coerceAtMost(cover.width),
+                ((cover.height + cropHeight) / 2).toInt().coerceAtMost(cover.height),
+            )
+            canvas.drawBitmap(
+                cover,
+                source,
+                android.graphics.Rect(
+                    cardBounds.left.toInt(), cardBounds.top.toInt(),
+                    cardBounds.right.toInt(), cardBounds.bottom.toInt(),
+                ),
+                Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG),
+            )
+            cover.recycle()
+        } else {
+            val notePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = android.graphics.Color.argb(105, 255, 255, 255)
+                textSize = 320f
+                typeface = Typeface.create("sans-serif", Typeface.BOLD)
+                textAlign = Paint.Align.CENTER
+            }
+            canvas.drawText("♫", width / 2f, 610f, notePaint)
+        }
+
+        val imageShade = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            shader = LinearGradient(
+                0f,
+                560f,
+                0f,
+                1000f,
+                intArrayOf(
+                    android.graphics.Color.TRANSPARENT,
+                    android.graphics.Color.argb(115, 0, 0, 0),
+                    android.graphics.Color.argb(220, 4, 12, 17),
+                ),
+                floatArrayOf(0f, 0.64f, 1f),
+                Shader.TileMode.CLAMP,
+            )
+        }
+        canvas.drawRect(cardBounds.left, 560f, cardBounds.right, cardBounds.bottom, imageShade)
+        imageShade.shader = null
+
+        val appIcon = applicationInfo.loadIcon(packageManager)
+        val logoPill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.argb(178, 6, 15, 21)
+        }
+        canvas.drawRoundRect(70f, 70f, 358f, 154f, 42f, 42f, logoPill)
+        appIcon.setBounds(91, 91, 134, 134)
+        appIcon.draw(canvas)
+        val brandPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.WHITE
+            textSize = 29f
+            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+        }
+        canvas.drawText("SoundNeed", 153f, 124f, brandPaint)
+
+        canvas.restore()
+
+        val contentLeft = 68f
+        val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.WHITE
+            textSize = 59f
+            typeface = Typeface.create("sans-serif", Typeface.BOLD)
+        }
+        val titleLines = wrapText(title, 940f, titlePaint, 2)
+        val titleBaseY = if (titleLines.size > 1) 1043f else 1080f
+        titleLines.forEachIndexed { index, line ->
+            canvas.drawText(line, contentLeft, titleBaseY + index * 64f, titlePaint)
+        }
+
+        val artistPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.rgb(196, 204, 213)
+            textSize = 37f
+            typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+        }
+        val artistY = if (titleLines.size > 1) 1170f else 1136f
+        canvas.drawText(ellipsizeText(artist, 920f, artistPaint), contentLeft, artistY, artistPaint)
+
+        val playerSurface = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.argb(220, 23, 34, 46)
+        }
+        canvas.drawRoundRect(46f, 1200f, 1034f, 1320f, 60f, 60f, playerSurface)
+        val playerOutline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.argb(60, 115, 231, 223)
+            style = Paint.Style.STROKE
+            strokeWidth = 2f
+        }
+        canvas.drawRoundRect(47f, 1201f, 1033f, 1319f, 59f, 59f, playerOutline)
+
+        appIcon.setBounds(75, 1222, 130, 1277)
+        appIcon.draw(canvas)
+        val eyebrowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = accent
+            textSize = 20f
+            letterSpacing = 0.08f
+            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+        }
+        canvas.drawText("COMPARTIDA DESDE", 158f, 1250f, eyebrowPaint)
+        val footerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.WHITE
+            textSize = 31f
+            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+        }
+        canvas.drawText("SoundNeed", 158f, 1290f, footerPaint)
+
+        val playPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = accent
+        }
+        canvas.drawCircle(958f, 1260f, 43f, playPaint)
+        playPaint.color = android.graphics.Color.rgb(7, 20, 27)
+        val playTriangle = android.graphics.Path().apply {
+            moveTo(950f, 1237f)
+            lineTo(950f, 1283f)
+            lineTo(982f, 1260f)
+            close()
+        }
+        canvas.drawPath(playTriangle, playPaint)
+
+        val directory = File(cacheDir, "shared").apply { mkdirs() }
+        val staleBefore = System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000
+        directory.listFiles()
+            ?.filter { it.name.startsWith("soundneed-song-") && it.lastModified() < staleBefore }
+            ?.forEach { it.delete() }
+        val output = File(directory, "soundneed-song-${System.currentTimeMillis()}.jpg")
+        output.outputStream().use { stream ->
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 92, stream)
+        }
+        bitmap.recycle()
+        return FileProvider.getUriForFile(this, "$packageName.fileprovider", output)
+    }
+
+    private fun wrapText(value: String, maxWidth: Float, paint: Paint, maxLines: Int): List<String> {
+        val words = value.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+        if (words.isEmpty()) return listOf("")
+
+        val lines = mutableListOf<String>()
+        var current = ""
+        words.forEach { word ->
+            val candidate = if (current.isEmpty()) word else "$current $word"
+            if (paint.measureText(candidate) <= maxWidth) {
+                current = candidate
+            } else {
+                if (current.isNotEmpty()) lines += current
+                current = word
+            }
+        }
+        if (current.isNotEmpty()) lines += current
+        if (lines.size <= maxLines) {
+            return lines.map { ellipsizeText(it, maxWidth, paint) }
+        }
+
+        val visible = lines.take(maxLines).toMutableList()
+        visible[maxLines - 1] = ellipsizeText(visible[maxLines - 1], maxWidth, paint)
+        return visible
+    }
+
+    private fun ellipsizeText(value: String, maxWidth: Float, paint: Paint): String {
+        if (paint.measureText(value) <= maxWidth) return value
+        var shortened = value
+        while (shortened.isNotEmpty() && paint.measureText("$shortened…") > maxWidth) {
+            shortened = shortened.dropLast(1)
+        }
+        return "$shortened…"
     }
 
     private fun startAudioVisualizer(sessionId: Int): Boolean {
