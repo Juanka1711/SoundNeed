@@ -48,7 +48,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 
-import com.ryanheise.audioservice.AudioServiceActivity
+import com.ryanheise.audioservice.AudioServiceFragmentActivity
 import aman.taglib.TagLib
 
 import io.flutter.embedding.engine.FlutterEngine
@@ -58,7 +58,7 @@ import io.flutter.plugin.common.EventChannel
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.stream.AudioStream
 
-class MainActivity : AudioServiceActivity() {
+class MainActivity : AudioServiceFragmentActivity() {
 
     private var newPipeInitialized = false
     private var networkEventSink: EventChannel.EventSink? = null

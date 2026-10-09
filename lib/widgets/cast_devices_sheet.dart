@@ -31,6 +31,7 @@ class _CastDevicesSheetState extends State<CastDevicesSheet> {
   bool _castConnected = false;
   bool _openingPicker = false;
   bool _transmitting = false;
+  bool _autoTransmitOnConnect = false;
 
   @override
   void initState() {
@@ -53,7 +54,12 @@ class _CastDevicesSheetState extends State<CastDevicesSheet> {
     );
     _castSubscription = CastSenderService.instance.connectionChanges.listen(
       (connected) {
-        if (mounted) setState(() => _castConnected = connected);
+        if (!mounted) return;
+        setState(() => _castConnected = connected);
+        if (connected && _autoTransmitOnConnect) {
+          _autoTransmitOnConnect = false;
+          unawaited(_transmit());
+        }
       },
     );
     unawaited(_startDiscovery());
@@ -84,10 +90,12 @@ class _CastDevicesSheetState extends State<CastDevicesSheet> {
   }
 
   Future<void> _openCastPicker() async {
+    _autoTransmitOnConnect = true;
     setState(() => _openingPicker = true);
     try {
       await CastSenderService.instance.showPicker();
     } catch (error) {
+      _autoTransmitOnConnect = false;
       _showMessage(error.toString());
     } finally {
       if (mounted) setState(() => _openingPicker = false);
@@ -217,13 +225,14 @@ class _CastDevicesSheetState extends State<CastDevicesSheet> {
                   ),
                   if (_castConnected) ...[
                     const SizedBox(height: 8),
-                    OutlinedButton.icon(
-                      onPressed: _transmitting ? null : _transmit,
-                      icon: _transmitting
-                          ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                          : const Icon(Icons.play_arrow_rounded),
-                      label: const Text('Transmitir canción actual'),
-                    ),
+                    if (_transmitting)
+                      const LinearProgressIndicator()
+                    else
+                      OutlinedButton.icon(
+                        onPressed: _transmit,
+                        icon: const Icon(Icons.play_arrow_rounded),
+                        label: const Text('Volver a transmitir canción actual'),
+                      ),
                   ],
                 ],
               ),
@@ -265,8 +274,8 @@ class _CastDevicesSheetState extends State<CastDevicesSheet> {
               padding: const EdgeInsets.fromLTRB(22, 8, 22, 20),
               child: Text(
                 _castConnected
-                    ? 'Google Cast usa el reproductor estándar del televisor. La app SoundNeed personalizada requiere un receptor propio.'
-                    : 'La búsqueda oficial de Google Cast aparece arriba. La lista inferior sólo informa de equipos detectados en la red.',
+                    ? 'La canción actual se envía automáticamente al conectar. Google Cast usa el reproductor estándar del televisor.'
+                    : 'Elige un dispositivo desde el selector de Google Cast; al conectar, SoundNeed inicia la reproducción automáticamente.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: Colors.white.withOpacity(0.45),
