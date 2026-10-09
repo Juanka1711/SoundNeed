@@ -63,6 +63,7 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
   List<Song> _surpriseMix = [];
   static const _recentMixKey = 'soundneed_home_mix_recent_ids_v1';
   bool _loadingChart = false;
+  bool _loadingWorldChart = false;
   Timer? _chartRefreshTimer;
   int? _observedSongId;
   bool _observedPlaying = false;
@@ -79,7 +80,7 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
     _loadPodcastRecommendations();
     _observePlayback();
     widget.player.addListener(_onPlayerChanged);
-    _chartRefreshTimer = Timer.periodic(const Duration(hours: 6), (_) {
+    _chartRefreshTimer = Timer.periodic(const Duration(hours: 1), (_) {
       _loadCurrentChart(refresh: true);
       _loadWorldChart(refresh: true);
     });
@@ -200,15 +201,20 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
   }
 
   Future<void> _loadWorldChart({bool refresh = false}) async {
+    if (mounted) setState(() => _loadingWorldChart = true);
     try {
       final tracks = await ArtistDiscoveryService.instance.loadWorldChart(
         forceRefresh: refresh,
       );
       if (!mounted) return;
-      setState(() => _worldChart = tracks);
+      setState(() {
+        _worldChart = tracks;
+        _loadingWorldChart = false;
+      });
       await _checkForNewMusic(tracks, 'soundneed_seen_world_chart_v1');
     } catch (_) {
       // Colombia sigue disponible si la consulta multi país falla.
+      if (mounted) setState(() => _loadingWorldChart = false);
     }
   }
 
@@ -1556,7 +1562,21 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _sectionHeading('Lo más escuchado en el mundo', 'Global'),
+        Row(
+          children: [
+            Expanded(child: _sectionHeading('Lo más escuchado en el mundo', 'Global')),
+            IconButton(
+              tooltip: 'Actualizar éxitos del mundo',
+              onPressed: _loadingWorldChart
+                  ? null
+                  : () => _loadWorldChart(refresh: true),
+              icon: Icon(
+                Icons.refresh_rounded,
+                color: widget.palette.secondary,
+              ),
+            ),
+          ],
+        ),
         const SizedBox(height: 5),
         const Text(
           'Éxitos de todo el mundo',

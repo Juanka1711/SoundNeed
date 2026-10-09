@@ -8,8 +8,8 @@
     <meta property="og:site_name" content="SoundNeed">
     <meta property="og:title" content="Una canción para ti · SoundNeed">
     <meta property="og:description" content="Toca la tarjeta para abrir la canción en SoundNeed.">
-    <meta property="og:image" content="https://juanka1711.github.io/SoundNeed/assets/soundneed-link-preview.png">
-    <meta property="og:image:secure_url" content="https://juanka1711.github.io/SoundNeed/assets/soundneed-link-preview.png">
+    <meta property="og:image" content="https://soundneed-shares.breinermuleth64.workers.dev/assets/soundneed-link-preview.png">
+    <meta property="og:image:secure_url" content="https://soundneed-shares.breinermuleth64.workers.dev/assets/soundneed-link-preview.png">
     <meta property="og:image:type" content="image/png">
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
@@ -17,19 +17,25 @@
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="Una canción para ti · SoundNeed">
     <meta name="twitter:description" content="Toca la tarjeta para abrir la canción en SoundNeed.">
-    <meta name="twitter:image" content="https://juanka1711.github.io/SoundNeed/assets/soundneed-link-preview.png">
+    <meta name="twitter:image" content="https://soundneed-shares.breinermuleth64.workers.dev/assets/soundneed-link-preview.png">
     <title>Escucha en SoundNeed</title>
     <style>
-      :root { color-scheme: dark; font-family: Inter, Roboto, Arial, sans-serif; }
+      :root {
+        color-scheme: dark; font-family: Inter, Roboto, Arial, sans-serif;
+        --tone-primary: #123a42; --tone-secondary: #30234d; --tone-dark: #071015;
+        --tone-accent: #58d9ca;
+      }
       * { box-sizing: border-box; }
       body {
         min-height: 100vh; margin: 0; padding: 28px; display: grid; place-items: center;
-        color: #f5f5fb; background: radial-gradient(ellipse at 18% 8%, #12404b 0, transparent 45%),
-          radial-gradient(ellipse at 85% 90%, #38205d 0, transparent 42%), #071015;
+        color: #f5f5fb; background: radial-gradient(ellipse at 18% 8%, var(--tone-primary) 0, transparent 48%),
+          radial-gradient(ellipse at 85% 90%, var(--tone-secondary) 0, transparent 44%), var(--tone-dark);
       }
       main {
         width: min(100%, 440px); padding: 26px; border: 1px solid #ffffff20;
-        border-radius: 28px; background: #11151fe8; box-shadow: 0 24px 80px #0008;
+        border-radius: 28px;
+        background: linear-gradient(145deg, var(--tone-primary), var(--tone-secondary) 68%, #11151f);
+        box-shadow: 0 24px 80px #0008;
       }
       .brand { display: flex; align-items: center; gap: 11px; color: #b7f5ed; font-weight: 800; letter-spacing: .04em; }
       .logo { display: grid; width: 42px; height: 42px; place-items: center; border-radius: 14px; background: linear-gradient(145deg,#26c6b7,#7654eb); font-size: 22px; }
@@ -40,7 +46,7 @@
       .cover { flex: 0 0 94px; width: 94px; height: 94px; overflow: hidden; border-radius: 18px; background: linear-gradient(145deg,#35cabb,#59449c); box-shadow: 0 12px 34px #0005; }
       .cover img { width: 100%; height: 100%; object-fit: cover; }
       .track-copy { min-width: 0; }
-      .eyebrow { margin: 0 0 5px; color: #58d9ca; font-size: 10px; font-weight: 800; letter-spacing: .13em; }
+      .eyebrow { margin: 0 0 5px; color: var(--tone-accent); font-size: 10px; font-weight: 800; letter-spacing: .13em; }
       .track h1 { margin: 0 0 4px; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; font-size: clamp(20px, 6vw, 27px); line-height: 1.14; }
       .track .artist { margin: 0; font-size: 14px; }
       a { display: flex; justify-content: center; align-items: center; min-height: 54px; margin-top: 14px; border-radius: 18px; font-weight: 750; text-decoration: none; }
@@ -65,33 +71,106 @@
       <p class="note" id="note">Si no se abre automáticamente, toca “Abrir en SoundNeed”.</p>
     </main>
     <script>
-      (() => {
+      (async () => {
         const params = new URLSearchParams(window.location.search);
-        const videoId = params.get('videoId') || '';
-        const title = params.get('title') || 'Canción compartida';
-        const artist = params.get('artist') || 'SoundNeed';
+        const playlistEncoded = params.get('p') || '';
+        const hasPlaylistPayload = playlistEncoded.length > 0;
+        let sharedPlaylist = null;
+        if (playlistEncoded && 'DecompressionStream' in window) {
+          try {
+            const base64 = playlistEncoded.replace(/-/g, '+').replace(/_/g, '/');
+            const binary = atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, '='));
+            const bytes = Uint8Array.from(binary, char => char.charCodeAt(0));
+            const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+            sharedPlaylist = JSON.parse(await new Response(stream).text());
+            if (sharedPlaylist.v !== 1 || !Array.isArray(sharedPlaylist.s)) sharedPlaylist = null;
+          } catch (_) {
+            sharedPlaylist = null;
+          }
+        }
+        const firstTrack = sharedPlaylist?.s?.find(track => Array.isArray(track) && track.length > 1);
+        const videoId = params.get('i') || params.get('videoId') || firstTrack?.[0] || '';
+        const title = sharedPlaylist?.n ||
+          (hasPlaylistPayload ? 'Playlist compartida' : (params.get('title') || 'Canción compartida'));
+        const artist = sharedPlaylist
+          ? `${sharedPlaylist.s.length} canciones para escuchar en SoundNeed`
+          : (hasPlaylistPayload ? 'Toca para guardarla en SoundNeed' : (params.get('artist') || 'SoundNeed'));
         const manual = params.get('manual') === '1';
         document.title = `${title} · SoundNeed`;
         document.getElementById('title').textContent = title;
         document.getElementById('artist').textContent = artist;
+        const cover = document.getElementById('cover');
+        const applyPalette = () => {
+          try {
+            const canvas = document.createElement('canvas');
+            canvas.width = canvas.height = 24;
+            const context = canvas.getContext('2d', { willReadFrequently: true });
+            context.drawImage(cover, 0, 0, 24, 24);
+            const pixels = context.getImageData(0, 0, 24, 24).data;
+            const buckets = new Map();
+            for (let offset = 0; offset < pixels.length; offset += 16) {
+              const r = pixels[offset], g = pixels[offset + 1], b = pixels[offset + 2];
+              const max = Math.max(r, g, b), min = Math.min(r, g, b);
+              const delta = max - min;
+              if (max < 28) continue;
+              let hue = 0;
+              if (delta) {
+                if (max === r) hue = 60 * (((g - b) / delta) % 6);
+                else if (max === g) hue = 60 * ((b - r) / delta + 2);
+                else hue = 60 * ((r - g) / delta + 4);
+              }
+              hue = (hue + 360) % 360;
+              const key = Math.floor(hue / 30);
+              const item = buckets.get(key) || { count: 0, r: 0, g: 0, b: 0 };
+              item.count++; item.r += r; item.g += g; item.b += b;
+              buckets.set(key, item);
+            }
+            const ranked = [...buckets.entries()].sort((a, b) => b[1].count - a[1].count);
+            if (!ranked.length) return;
+            const toDark = (item, factor) => {
+              const count = item.count;
+              return `rgb(${Math.round(item.r / count * factor)}, ${Math.round(item.g / count * factor)}, ${Math.round(item.b / count * factor)})`;
+            };
+            const primary = ranked[0][1];
+            const secondary = ranked.find(([key]) => Math.abs(key - ranked[0][0]) >= 2)?.[1] || ranked[1]?.[1] || primary;
+            document.documentElement.style.setProperty('--tone-primary', toDark(primary, .32));
+            document.documentElement.style.setProperty('--tone-secondary', toDark(secondary, .25));
+            document.documentElement.style.setProperty('--tone-dark', toDark(primary, .09));
+            const count = primary.count;
+            document.documentElement.style.setProperty('--tone-accent', `rgb(${Math.round(primary.r / count * .55 + 255 * .45)}, ${Math.round(primary.g / count * .55 + 255 * .45)}, ${Math.round(primary.b / count * .55 + 255 * .45)})`);
+          } catch (_) {
+            // Keep the SoundNeed palette if the remote cover disallows canvas sampling.
+          }
+        };
+        cover.crossOrigin = 'anonymous';
+        cover.addEventListener('load', applyPalette, { once: true });
         if (/^[A-Za-z0-9_-]{11}$/.test(videoId)) {
-          document.getElementById('cover').src = `https://i.ytimg.com/vi/${encodeURIComponent(videoId)}/hqdefault.jpg`;
+          cover.src = `https://i.ytimg.com/vi/${encodeURIComponent(videoId)}/hqdefault.jpg`;
+        } else {
+          cover.addEventListener('load', applyPalette, { once: true });
         }
 
-        const deepLink = new URL(videoId
-          ? `soundneed://track/${encodeURIComponent(videoId)}`
-          : 'soundneed://track');
-        if (title) deepLink.searchParams.set('title', title);
-        if (artist) deepLink.searchParams.set('artist', artist);
+        const deepLink = hasPlaylistPayload
+          ? `soundneed://playlist?p=${encodeURIComponent(playlistEncoded)}`
+          : new URL(videoId
+            ? `soundneed://track/${encodeURIComponent(videoId)}`
+            : 'soundneed://track');
+        if (!hasPlaylistPayload) {
+          if (title) deepLink.searchParams.set('title', title);
+          if (artist) deepLink.searchParams.set('artist', artist);
+        }
 
         const fallback = new URL(window.location.href);
         fallback.searchParams.set('manual', '1');
-        const intentUrl = `intent://track${deepLink.pathname.replace('/track', '')}${deepLink.search}` +
+        const intentTarget = hasPlaylistPayload
+          ? `playlist?p=${encodeURIComponent(playlistEncoded)}`
+          : `track${deepLink.pathname.replace('/track', '')}${deepLink.search}`;
+        const intentUrl = `intent://${intentTarget}` +
           `#Intent;scheme=soundneed;package=com.example.music_player;` +
           `S.browser_fallback_url=${encodeURIComponent(fallback.toString())};end`;
         document.getElementById('open').href = intentUrl;
 
-        if (/^[A-Za-z0-9_-]{11}$/.test(videoId)) {
+        if (!hasPlaylistPayload && /^[A-Za-z0-9_-]{11}$/.test(videoId)) {
           const listen = document.getElementById('listen');
           listen.href = `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
           listen.hidden = false;

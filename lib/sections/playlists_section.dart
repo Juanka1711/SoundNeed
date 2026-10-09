@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../music_player.dart';
 import '../player_navigation.dart';
@@ -9,6 +10,7 @@ import '../playlist_artwork.dart';
 import '../playlist_actions.dart';
 import '../widgets/local_music_badge.dart';
 import '../playlist_manager.dart';
+import '../playlist_sharing.dart';
 import '../services/youtube_audio_service.dart';
 import '../services/artwork_palette.dart';
 import '../widgets/soundneed_search_field.dart';
@@ -383,6 +385,7 @@ class _PlaylistContents extends StatefulWidget {
 }
 
 class _PlaylistContentsState extends State<_PlaylistContents> {
+  static const MethodChannel _mediaChannel = MethodChannel('music_player/media');
   final TextEditingController _searchController = TextEditingController();
   final Map<String, String> _lookedUpArtists = {};
   final Set<String> _artistLookupsStarted = {};
@@ -439,6 +442,36 @@ class _PlaylistContentsState extends State<_PlaylistContents> {
     if (confirmed == true) {
       await PlaylistManager.instance.deletePlaylist(playlist.id);
       widget.onDeleted();
+    }
+  }
+
+  Future<void> _shareCollection(String name, List<Song> songs) async {
+    if (songs.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Agrega canciones antes de compartir.')),
+      );
+      return;
+    }
+    try {
+      final payload = encodeSharedPlaylist(name, songs);
+      await _mediaChannel.invokeMethod<void>('sharePlaylist', {
+        'name': name,
+        'payload': payload,
+        'songCount': songs.length,
+      });
+    } on PlatformException catch (error) {
+      debugPrint('[SoundNeed] No se pudo compartir la playlist: $error');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No se pudo compartir la playlist.')),
+        );
+      }
+    } on MissingPluginException {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Compartir playlists no está disponible.')),
+        );
+      }
     }
   }
 
@@ -559,6 +592,12 @@ class _PlaylistContentsState extends State<_PlaylistContents> {
                   icon: const Icon(Icons.arrow_back_rounded, size: 27),
                 ),
                 const Spacer(),
+                if (songs.isNotEmpty)
+                  IconButton(
+                    tooltip: 'Compartir $title',
+                    onPressed: () => _shareCollection(title, songs),
+                    icon: const Icon(Icons.share_rounded),
+                  ),
                 if (playlist != null)
                   PopupMenuButton<String>(
                     onSelected: (action) {

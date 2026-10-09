@@ -12,6 +12,7 @@ import 'music_player.dart';
 import 'mini_player.dart';
 import 'playlist_actions.dart';
 import 'services/youtube_audio_service.dart';
+import 'services/song_share_service.dart';
 import 'services/equalizer_service.dart';
 import 'widgets/cast_devices_sheet.dart';
 import 'services/cast_discovery_service.dart';
@@ -1936,6 +1937,11 @@ class _FullPlayerState extends State<FullPlayer>
   Future<void> _shareSong(Song song) async {
     final title = song.title.isEmpty ? song.displayName : song.title;
     try {
+      final artwork = await player.loadArtwork(song);
+      if (artwork == null || artwork.isEmpty) {
+        _showActionMessage('Esta canción no tiene una portada disponible para compartir.');
+        return;
+      }
       final deepLink = song.isOnline && song.onlineVideoId.isNotEmpty
           ? 'soundneed://track/${song.onlineVideoId}'
           : Uri(
@@ -1944,16 +1950,35 @@ class _FullPlayerState extends State<FullPlayer>
               queryParameters: <String, String>{
                 'title': title,
                 'artist': song.artist,
+                'album': song.album,
               },
             ).toString();
+      final fallbackUrl = song.isOnline && song.onlineVideoId.isNotEmpty
+          ? 'https://www.youtube.com/watch?v=${song.onlineVideoId}'
+          : '';
+      final shareUrl = await SongShareService.createSongLink(
+        title: title,
+        artist: song.artist,
+        album: song.album,
+        deepLink: deepLink,
+        artwork: artwork,
+        fallbackUrl: fallbackUrl,
+      );
       await _mediaChannel.invokeMethod<void>('shareSong', <String, Object?>{
         'title': title,
         'artist': song.artist,
+        'album': song.album,
         'link': deepLink,
+        'shareUrl': shareUrl.toString(),
       });
     } on PlatformException catch (error) {
       debugPrint('[SoundNeed] No se pudo compartir la canción: $error');
       _showActionMessage('No se pudo abrir las opciones para compartir.');
+    } on Object catch (error) {
+      debugPrint('[SoundNeed] No se pudo preparar el enlace compartido: $error');
+      _showActionMessage(error is StateError
+          ? error.message.toString()
+          : 'No se pudo preparar el enlace. Revisa tu conexión e inténtalo de nuevo.');
     }
   }
 

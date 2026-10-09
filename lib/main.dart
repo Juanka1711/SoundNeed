@@ -7,6 +7,9 @@ import 'music_player.dart';
 import 'music_ui.dart';
 import 'services/audio_handler.dart';
 import 'services/youtube_audio_service.dart';
+import 'services/song_share_service.dart';
+import 'playlist_manager.dart';
+import 'playlist_sharing.dart';
 import 'full_player.dart';
 
 late final SoundNeedAudioHandler soundNeedAudioHandler;
@@ -215,10 +218,36 @@ class _SoundNeedHomeState extends State<SoundNeedHome> {
   Future<void> _openSharedSong(String link) async {
     await _playerInitialization;
     if (!mounted) return;
-    final uri = Uri.tryParse(link);
+    var uri = Uri.tryParse(link);
     if (uri == null) return;
-    final isCustomLink = uri.scheme == 'soundneed' && uri.host == 'track';
-    if (!isCustomLink) return;
+    if (uri.scheme == 'https' &&
+        uri.host == 'soundneed-shares.breinermuleth64.workers.dev' &&
+        uri.pathSegments.length == 2 &&
+        uri.pathSegments.first == 's') {
+      try {
+        uri = await SongShareService.resolveSongLink(uri);
+      } catch (error) {
+        debugPrint('[SoundNeed] No se pudo resolver la canción compartida: $error');
+        uri = null;
+      }
+      if (!mounted || uri == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              behavior: SnackBarBehavior.floating,
+              content: Text('No se pudo abrir esta canción compartida.'),
+            ),
+          );
+        }
+        return;
+      }
+    }
+    if (uri.scheme != 'soundneed') return;
+    if (uri.host == 'playlist') {
+      await _openSharedPlaylist(uri);
+      return;
+    }
+    if (uri.host != 'track') return;
 
     var title = uri.queryParameters['title']?.trim() ?? '';
     var artist = uri.queryParameters['artist']?.trim() ?? '';
@@ -279,6 +308,225 @@ class _SoundNeedHomeState extends State<SoundNeedHome> {
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(builder: (_) => FullPlayer(player: _player)),
     );
+  }
+
+  Future<void> _openSharedPlaylist(Uri uri) async {
+    unawaited(showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(
+        child: CircularProgressIndicator(color: Colors.white),
+      ),
+    ));
+    var loadingDialogOpen = true;
+    try {
+      await PlaylistManager.instance.initialize();
+      final shared = decodeSharedPlaylist(uri.queryParameters['p'] ?? '');
+      final name = shared['n']?.toString().trim().isNotEmpty == true
+          ? shared['n'].toString().trim()
+          : 'Playlist compartida';
+      final entries = (shared['s'] as List).toList(growable: false);
+      final resolved = List<Song?>.filled(entries.length, null);
+      var nextIndex = 0;
+
+      Future<void> resolveBatch() async {
+        while (true) {
+          final index = nextIndex++;
+          if (index >= entries.length) return;
+          final value = entries[index];
+          if (value is! List || value.length < 3) continue;
+          final videoId = value[0]?.toString() ?? '';
+          final title = value[1]?.toString().trim() ?? '';
+          final artist = value[2]?.toString().trim() ?? '';
+          final durationMs = value.length > 3 && value[3] is num
+              ? (value[3] as num).round()
+              : 0;
+          if (title.isEmpty) continue;
+
+          if (RegExp(r'^[A-Za-z0-9_-]{11}$').hasMatch(videoId)) {
+            resolved[index] = Song.fromYouTube(
+              YouTubeSearchResult(
+                videoId: videoId,
+                title: title,
+                artist: artist,
+                duration: (durationMs / 1000).round(),
+                thumbnail: 'https://i.ytimg.com/vi/$videoId/hqdefault.jpg',
+                url: 'https://www.youtube.com/watch?v=$videoId',
+              ),
+            );
+            continue;
+          }
+
+          final titleKey = _sharedTrackKey(title);
+          final artistKey = _sharedTrackKey(artist);
+          Song? localSong;
+          for (final candidate in _player.songs) {
+            final candidateTitle = _sharedTrackKey(
+              candidate.title.isEmpty ? candidate.displayName : candidate.title,
+            );
+            if (candidateTitle == titleKey &&
+                (artistKey.isEmpty ||
+                    _sharedTrackKey(candidate.artist) == artistKey)) {
+              localSong = candidate;
+              break;
+            }
+          }
+          if (localSong != null) {
+            resolved[index] = localSong;
+            continue;
+          }
+
+          try {
+            final results = await YouTubeAudioService.instance.search(
+              '$title $artist',
+            );
+            YouTubeSearchResult? best;
+            var bestScore = 0.0;
+            for (final candidate in results) {
+              final candidateTitle = _sharedTrackKey(candidate.title);
+              if (candidateTitle.isEmpty) continue;
+              final titleMatches = candidateTitle == titleKey ||
+                  candidateTitle.contains(titleKey) ||
+                  titleKey.contains(candidateTitle);
+              final artistMatches = artistKey.isEmpty ||
+                  _sharedTrackKey(candidate.artist).contains(artistKey) ||
+                  candidateTitle.contains(artistKey);
+              final score = (titleMatches ? 0.75 : 0.0) +
+                  (artistMatches ? 0.25 : 0.0);
+              if (score > bestScore) {
+                best = candidate;
+                bestScore = score;
+              }
+            }
+            if (best != null && bestScore >= 0.75) {
+              resolved[index] = Song.fromYouTube(best);
+            }
+          } catch (_) {
+            // Keep processing the remaining playlist if one lookup fails.
+          }
+        }
+      }
+
+      await Future.wait(
+        List.generate(
+          entries.length < 4 ? entries.length : 4,
+          (_) => resolveBatch(),
+        ),
+      );
+      if (mounted && loadingDialogOpen) {
+        Navigator.of(context).pop();
+        loadingDialogOpen = false;
+      }
+      if (!mounted) return;
+
+      final songs = <Song>[];
+      final seen = <String>{};
+      for (final song in resolved.whereType<Song>()) {
+        if (seen.add(songKey(song))) songs.add(song);
+      }
+      final missingCount = entries.length - songs.length;
+      if (songs.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            behavior: SnackBarBehavior.floating,
+            content: Text('No se encontraron canciones de esa playlist.'),
+          ),
+        );
+        return;
+      }
+
+      final manager = PlaylistManager.instance;
+      var destinationId = 'new';
+      final shouldSave = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (dialogContext, setDialogState) => AlertDialog(
+            title: Text(name),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${songs.length} canciones listas para guardar'
+                  '${missingCount > 0 ? '\n$missingCount no se pudieron encontrar' : ''}.',
+                ),
+                if (manager.playlists.isNotEmpty) ...[
+                  const SizedBox(height: 18),
+                  const Text('Guardar en'),
+                  const SizedBox(height: 6),
+                  DropdownButtonFormField<String>(
+                    value: destinationId,
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                    ),
+                    items: [
+                      const DropdownMenuItem(
+                        value: 'new',
+                        child: Text('Crear playlist nueva'),
+                      ),
+                      ...manager.playlists.map(
+                        (playlist) => DropdownMenuItem(
+                          value: playlist.id,
+                          child: Text(
+                            playlist.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) {
+                        setDialogState(() => destinationId = value);
+                      }
+                    },
+                  ),
+                ],
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Ahora no'),
+              ),
+              FilledButton.icon(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                icon: const Icon(Icons.playlist_add_rounded),
+                label: const Text('Guardar'),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (shouldSave != true || !mounted) return;
+
+      final saved = await manager.saveSharedPlaylist(
+        name,
+        songs,
+        targetPlaylistId: destinationId == 'new' ? null : destinationId,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('Canciones guardadas en “${saved.name}”.'),
+        ),
+      );
+    } catch (error) {
+      if (mounted && loadingDialogOpen) {
+        Navigator.of(context).pop();
+        loadingDialogOpen = false;
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            behavior: SnackBarBehavior.floating,
+            content: Text('El enlace de la playlist no es válido.'),
+          ),
+        );
+      }
+      debugPrint('[SoundNeed] No se pudo importar la playlist: $error');
+    }
   }
 
   String _sharedTrackKey(String value) => value

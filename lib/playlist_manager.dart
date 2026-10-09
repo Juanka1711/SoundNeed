@@ -179,6 +179,33 @@ class PlaylistManager extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<MusicPlaylist> saveSharedPlaylist(
+    String requestedName,
+    List<Song> songs, {
+    String? targetPlaylistId,
+  }) async {
+    await initialize();
+    final playlist = targetPlaylistId == null
+        ? MusicPlaylist(
+            id: DateTime.now().microsecondsSinceEpoch.toString(),
+            name: _uniqueName(requestedName.trim()),
+            songs: [],
+          )
+        : findPlaylist(targetPlaylistId);
+    if (playlist == null) {
+      throw StateError('No se encontró la playlist destino.');
+    }
+    final seen = <String>{};
+    seen.addAll(playlist.songs.map(songKey));
+    for (final song in songs) {
+      if (seen.add(songKey(song))) playlist.songs.add(song);
+    }
+    if (targetPlaylistId == null) _playlists.insert(0, playlist);
+    await _save();
+    notifyListeners();
+    return playlist;
+  }
+
   String _uniqueName(String requestedName, {String? excludingPlaylistId}) {
     final base = requestedName.isEmpty ? 'Mi playlist' : requestedName;
     final existing = _playlists

@@ -86,7 +86,9 @@ class ArtistDiscoveryService {
   static const _chartCacheKey = 'soundneed_colombia_music_chart_v1';
   static const _worldChartCacheKey = 'soundneed_world_music_chart_v1';
   static const _worldMonthlyCacheKey = 'soundneed_world_music_monthly_v1';
-  static const _chartCacheDuration = Duration(hours: 6);
+  // Recheck while the app is active so a provider update is not hidden behind
+  // an old local chart cache for most of the day.
+  static const _chartCacheDuration = Duration(minutes: 45);
   static const _monthlyWindow = Duration(days: 30);
   static const _worldMarkets = [
     'us',
@@ -459,7 +461,13 @@ class ArtistDiscoveryService {
               '/api/v2/$market/music/most-played/50/songs.json',
             );
             final response = await http
-                .get(uri)
+                .get(
+                  uri,
+                  headers: const {
+                    'Cache-Control': 'no-cache',
+                    'Pragma': 'no-cache',
+                  },
+                )
                 .timeout(const Duration(seconds: 15));
             if (response.statusCode != 200) return const <MusicChartTrack>[];
             final decoded = jsonDecode(response.body) as Map<String, dynamic>;
@@ -570,7 +578,15 @@ class ArtistDiscoveryService {
         'rss.applemarketingtools.com',
         '/api/v2/co/music/most-played/50/songs.json',
       );
-      final response = await http.get(uri).timeout(const Duration(seconds: 15));
+      final response = await http
+          .get(
+            uri,
+            headers: const {
+              'Cache-Control': 'no-cache',
+              'Pragma': 'no-cache',
+            },
+          )
+          .timeout(const Duration(seconds: 15));
       if (response.statusCode != 200) return chart;
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
       final feed = decoded['feed'] as Map<String, dynamic>?;

@@ -215,10 +215,16 @@ class MainActivity : AudioServiceFragmentActivity() {
                 "shareSong" -> {
                     try {
                         val title = call.argument<String>("title") ?: "Canción"
-                        val artist = call.argument<String>("artist") ?: "SoundNeed"
-                        val link = call.argument<String>("link") ?: "soundneed://track"
-                        val shareLink = buildSoundNeedShareLink(link, title, artist)
-                        val shareText = "🎵 $title\n$artist\n\n$shareLink"
+                        val artist = call.argument<String>("artist") ?: ""
+                        val album = call.argument<String>("album").orEmpty()
+                        val shareLink = call.argument<String>("shareUrl")
+                            ?: throw IllegalArgumentException("Falta el enlace público de SoundNeed")
+                        val details = listOf(artist, album).filter { it.isNotBlank() }.joinToString(" · ")
+                        val shareText = buildString {
+                            append("🎵 $title")
+                            if (details.isNotBlank()) append("\n$details")
+                            append("\nCompartido desde SoundNeed\n$shareLink")
+                        }
                         val intent = Intent(Intent.ACTION_SEND).apply {
                             type = "text/plain"
                             putExtra(Intent.EXTRA_SUBJECT, "$title · SoundNeed")
@@ -228,6 +234,26 @@ class MainActivity : AudioServiceFragmentActivity() {
                         result.success(true)
                     } catch (error: Exception) {
                         result.error("SONG_SHARE", error.message, null)
+                    }
+                }
+
+                "sharePlaylist" -> {
+                    try {
+                        val name = call.argument<String>("name") ?: "Playlist de SoundNeed"
+                        val payload = call.argument<String>("payload")
+                            ?: throw IllegalArgumentException("La playlist está vacía")
+                        val link = buildSoundNeedPlaylistShareLink(payload)
+                        val songCount = call.argument<Int>("songCount") ?: 0
+                        val shareText = "🎧 $name · $songCount canciones\nGuárdala en SoundNeed:\n$link"
+                        val intent = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_SUBJECT, "$name · SoundNeed")
+                            putExtra(Intent.EXTRA_TEXT, shareText)
+                        }
+                        startActivity(Intent.createChooser(intent, "Compartir playlist"))
+                        result.success(true)
+                    } catch (error: Exception) {
+                        result.error("PLAYLIST_SHARE", error.message, null)
                     }
                 }
 
@@ -702,7 +728,7 @@ class MainActivity : AudioServiceFragmentActivity() {
             override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
                 sharedSongEventSink = events
                 val link = pendingSharedSongLink ?: intent?.dataString
-                if (isSoundNeedTrackLink(link)) {
+                if (isSoundNeedShareLink(link)) {
                     pendingSharedSongLink = null
                     intent?.data = null
                     events?.success(link)
@@ -856,7 +882,7 @@ class MainActivity : AudioServiceFragmentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         val link = intent.dataString
-        if (isSoundNeedTrackLink(link)) {
+        if (isSoundNeedShareLink(link)) {
             if (sharedSongEventSink == null) {
                 pendingSharedSongLink = link
             } else {
@@ -866,12 +892,30 @@ class MainActivity : AudioServiceFragmentActivity() {
         }
     }
 
-    private fun isSoundNeedTrackLink(link: String?): Boolean =
+    private fun isSoundNeedShareLink(link: String?): Boolean =
         link?.let {
             val uri = Uri.parse(it)
-            uri.scheme.equals("soundneed", ignoreCase = true) &&
-                uri.host.equals("track", ignoreCase = true)
+            val host = uri.host ?: return@let false
+            val soundNeedLink = uri.scheme.equals("soundneed", ignoreCase = true) &&
+                (host.equals("track", ignoreCase = true) ||
+                    host.equals("playlist", ignoreCase = true))
+            val verifiedSongLink =
+                uri.scheme.equals("https", ignoreCase = true) &&
+                    host.equals("soundneed-shares.breinermuleth64.workers.dev", ignoreCase = true) &&
+                    uri.pathSegments.size == 2 &&
+                    uri.pathSegments[0] == "s" &&
+                    uri.pathSegments[1].matches(Regex("[A-Za-z0-9_-]{12,24}"))
+            soundNeedLink || verifiedSongLink
         } == true
+
+    private fun buildSoundNeedPlaylistShareLink(payload: String): String =
+        Uri.Builder()
+            .scheme("https")
+            .authority("soundneed-shares.breinermuleth64.workers.dev")
+            .appendPath("share.html")
+            .appendQueryParameter("p", payload)
+            .build()
+            .toString()
 
     private fun buildSoundNeedShareLink(
         deepLink: String,
@@ -881,13 +925,15 @@ class MainActivity : AudioServiceFragmentActivity() {
         val source = Uri.parse(deepLink)
         val result = Uri.Builder()
             .scheme("https")
-            .authority("juanka1711.github.io")
-            .appendPath("SoundNeed")
+            .authority("soundneed-shares.breinermuleth64.workers.dev")
             .appendPath("share.html")
-            .appendQueryParameter("preview", "v2")
 
-        source.pathSegments.firstOrNull()?.let {
-            result.appendQueryParameter("videoId", it)
+        val videoId = source.pathSegments.firstOrNull().orEmpty()
+        if (videoId.matches(Regex("[A-Za-z0-9_-]{11}"))) {
+            // The title and artist are already included in the message body.
+            // Keeping only the ID makes the WhatsApp URL much shorter.
+            result.appendQueryParameter("i", videoId)
+            return result.build().toString()
         }
         source.queryParameterNames.forEach { name ->
             source.getQueryParameters(name).forEach { value ->
@@ -910,21 +956,26 @@ class MainActivity : AudioServiceFragmentActivity() {
     ): Uri {
         val width = 1080
         val height = 1350
-        val coverHeight = 960
+        val cover = artworkBytes?.let(::decodeShareArtwork)
+        val (dominantColor, secondaryColor, accent) = cover?.let(::extractSharePalette)
+            ?: Triple(
+                android.graphics.Color.rgb(21, 67, 73),
+                android.graphics.Color.rgb(34, 27, 60),
+                android.graphics.Color.rgb(47, 205, 190),
+            )
         val background = android.graphics.Color.rgb(7, 15, 21)
-        val accent = android.graphics.Color.rgb(47, 205, 190)
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         val backgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             shader = LinearGradient(
                 0f,
                 0f,
-                0f,
+                width.toFloat(),
                 height.toFloat(),
                 intArrayOf(
-                    android.graphics.Color.rgb(13, 37, 43),
-                    android.graphics.Color.rgb(17, 24, 39),
-                    background,
+                    darkenShareColor(dominantColor, 0.46f),
+                    darkenShareColor(secondaryColor, 0.55f),
+                    darkenShareColor(accent, 0.78f),
                 ),
                 null,
                 Shader.TileMode.CLAMP,
@@ -939,9 +990,6 @@ class MainActivity : AudioServiceFragmentActivity() {
         }
         canvas.save()
         canvas.clipPath(cardPath)
-        val cover = artworkBytes?.let {
-            BitmapFactory.decodeByteArray(it, 0, it.size)
-        }
         if (cover != null) {
             val targetWidth = cardBounds.width().toInt()
             val targetHeight = cardBounds.height().toInt()
@@ -963,7 +1011,6 @@ class MainActivity : AudioServiceFragmentActivity() {
                 ),
                 Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG),
             )
-            cover.recycle()
         } else {
             val notePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = android.graphics.Color.argb(105, 255, 255, 255)
@@ -1033,7 +1080,7 @@ class MainActivity : AudioServiceFragmentActivity() {
         }
         canvas.drawRoundRect(46f, 1200f, 1034f, 1320f, 60f, 60f, playerSurface)
         val playerOutline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = android.graphics.Color.argb(60, 115, 231, 223)
+            color = (accent and 0x00ffffff) or (60 shl 24)
             style = Paint.Style.STROKE
             strokeWidth = 2f
         }
@@ -1077,9 +1124,75 @@ class MainActivity : AudioServiceFragmentActivity() {
         output.outputStream().use { stream ->
             bitmap.compress(Bitmap.CompressFormat.JPEG, 92, stream)
         }
+        cover?.recycle()
         bitmap.recycle()
         return FileProvider.getUriForFile(this, "$packageName.fileprovider", output)
     }
+
+    private fun extractSharePalette(bitmap: Bitmap): Triple<Int, Int, Int> {
+        val sample = Bitmap.createScaledBitmap(bitmap, 32, 32, true)
+        val histogram = mutableMapOf<Int, IntArray>()
+        val hsv = FloatArray(3)
+        for (y in 0 until sample.height) {
+            for (x in 0 until sample.width) {
+                val color = sample.getPixel(x, y)
+                android.graphics.Color.colorToHSV(color, hsv)
+                if (hsv[2] < 0.12f || hsv[1] < 0.16f) continue
+                val hueBin = (hsv[0] / 24f).toInt().coerceIn(0, 14)
+                val satBin = (hsv[1] * 3f).toInt().coerceIn(0, 2)
+                val key = hueBin * 3 + satBin
+                val bin = histogram.getOrPut(key) { IntArray(4) }
+                bin[0]++
+                bin[1] += android.graphics.Color.red(color)
+                bin[2] += android.graphics.Color.green(color)
+                bin[3] += android.graphics.Color.blue(color)
+            }
+        }
+        sample.recycle()
+        if (histogram.isEmpty()) {
+            return Triple(
+                android.graphics.Color.rgb(21, 67, 73),
+                android.graphics.Color.rgb(34, 27, 60),
+                android.graphics.Color.rgb(47, 205, 190),
+            )
+        }
+
+        fun colorFor(bin: IntArray): Int = android.graphics.Color.rgb(
+            bin[1] / bin[0], bin[2] / bin[0], bin[3] / bin[0],
+        )
+
+        val ranked = histogram.entries.sortedByDescending { it.value[0] }
+        val dominant = colorFor(ranked[0].value)
+        val secondaryKey = ranked.firstOrNull {
+            kotlin.math.abs((it.key / 3) - (ranked[0].key / 3)) >= 2
+        }?.key ?: ranked.getOrNull(1)?.key ?: ranked[0].key
+        val secondary = colorFor(histogram.getValue(secondaryKey))
+        val accent = lightenShareColor(dominant, 0.26f)
+        return Triple(dominant, secondary, accent)
+    }
+
+    private fun decodeShareArtwork(bytes: ByteArray): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        var sampleSize = 1
+        while (bounds.outWidth / sampleSize > 1200 || bounds.outHeight / sampleSize > 1200) {
+            sampleSize *= 2
+        }
+        val options = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+    }
+
+    private fun darkenShareColor(color: Int, amount: Float): Int = android.graphics.Color.rgb(
+        (android.graphics.Color.red(color) * (1f - amount)).toInt(),
+        (android.graphics.Color.green(color) * (1f - amount)).toInt(),
+        (android.graphics.Color.blue(color) * (1f - amount)).toInt(),
+    )
+
+    private fun lightenShareColor(color: Int, amount: Float): Int = android.graphics.Color.rgb(
+        (android.graphics.Color.red(color) + (255 - android.graphics.Color.red(color)) * amount).toInt(),
+        (android.graphics.Color.green(color) + (255 - android.graphics.Color.green(color)) * amount).toInt(),
+        (android.graphics.Color.blue(color) + (255 - android.graphics.Color.blue(color)) * amount).toInt(),
+    )
 
     private fun wrapText(value: String, maxWidth: Float, paint: Paint, maxLines: Int): List<String> {
         val words = value.trim().split(Regex("\\s+")).filter { it.isNotBlank() }

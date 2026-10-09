@@ -77,7 +77,7 @@ class _ArtistAlbumDiscoverySectionState
     }
     if (_isArtists) {
       _chartRefreshTimer = Timer.periodic(
-        const Duration(hours: 6),
+        const Duration(hours: 1),
         (_) => unawaited(_loadWorldArtists(refresh: true)),
       );
     }
