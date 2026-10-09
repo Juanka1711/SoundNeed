@@ -1,0 +1,624 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#100b0b">
+    <meta name="description" content="Conoce SoundNeed: escucha, organiza y comparte la música que te acompaña.">
+    <title>SoundNeed — Tu música, a tu manera</title>
+    <link rel="icon" href="../assets/icon/app_icon.png" type="image/png">
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #100b0b;
+        --surface: #1b1519;
+        --surface-raised: #241b20;
+        --text: #f5f8f6;
+        --muted: #b4a7a5;
+        --line: rgba(255, 225, 213, .13);
+        --mint: #ff6845;
+        --mint-bright: #ff9b70;
+        --violet: #a889ff;
+        --max: 1160px;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        scroll-behavior: smooth;
+      }
+      * { box-sizing: border-box; }
+      html, body { max-width: 100%; overflow-x: clip; }
+      body { margin: 0; background: radial-gradient(ellipse at 82% 6%, rgba(116,39,21,.23), transparent 34%), radial-gradient(ellipse at 0% 52%, rgba(83,24,15,.12), transparent 38%), var(--bg); color: var(--text); }
+      a { color: inherit; text-decoration: none; }
+      button { font: inherit; }
+      .shell { width: min(var(--max), calc(100% - 48px)); margin-inline: auto; }
+      .topbar { position: sticky; z-index: 5; top: 0; backdrop-filter: blur(18px); background: rgba(16, 11, 11, .88); border-bottom: 1px solid rgba(255, 225, 213, .08); }
+      .nav { position: relative; min-width: 0; min-height: 78px; display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+      .brand { display: inline-flex; align-items: center; gap: 11px; font-weight: 750; letter-spacing: -.03em; font-size: 18px; }
+      .brand img { width: 38px; height: 38px; border-radius: 12px; object-fit: cover; }
+      .nav-links { display: flex; align-items: center; gap: 30px; color: #c9bcb9; font-size: 13px; }
+      .nav-links a:hover, .footer a:hover { color: var(--mint-bright); }
+      .nav-cta, .button { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 48px; padding: 0 20px; border-radius: 999px; font-size: 14px; font-weight: 750; transition: transform .18s ease, background .18s ease, border-color .18s ease; }
+      .nav-cta, .button-primary { color: #25100d; background: var(--mint-bright); box-shadow: 0 10px 30px rgba(255, 104, 69, .16); }
+      .nav-cta:hover, .button-primary:hover { background: #ffb18e; transform: translateY(-2px); }
+      .button-secondary { border: 1px solid var(--line); background: rgba(255,255,255,.035); color: var(--text); }
+      .button-secondary:hover { border-color: rgba(255, 155, 112, .48); background: rgba(255,155,112,.07); }
+      .menu-toggle { display: none; border: 1px solid var(--line); background: var(--surface); color: var(--text); width: 44px; height: 44px; border-radius: 14px; }
+
+      .hero { position: relative; overflow: hidden; padding: 88px 0 78px; }
+      .hero::before { content: ""; position: absolute; width: 620px; height: 620px; top: -290px; right: -90px; background: radial-gradient(circle, rgba(210, 74, 40, .22), transparent 67%); pointer-events: none; }
+      .hero-grid { display: grid; grid-template-columns: 1.04fr .96fr; align-items: center; gap: 56px; position: relative; }
+      .eyebrow { display: inline-flex; align-items: center; gap: 9px; color: var(--mint); text-transform: uppercase; letter-spacing: .16em; font-size: 11px; font-weight: 800; }
+      .eyebrow::before { content: ""; width: 22px; height: 1px; background: currentColor; }
+      h1 { max-width: 670px; margin: 22px 0 19px; font-size: clamp(48px, 6.5vw, 78px); line-height: .99; letter-spacing: -.065em; font-weight: 780; }
+      h1 span { color: var(--mint-bright); }
+      .hero-copy { max-width: 550px; color: #c5b9b7; font-size: 17px; line-height: 1.75; }
+      .hero-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; }
+      .hero-wave { width: fit-content; height: 49px; display: flex; align-items: center; gap: 4px; margin-top: 23px; padding: 0 15px; border: 1px solid rgba(255,225,213,.12); border-radius: 999px; background: linear-gradient(110deg, rgba(255,104,69,.09), rgba(255,255,255,.025)); box-shadow: inset 0 1px rgba(255,255,255,.04); }
+      .hero-wave span { width: 3px; height: var(--bar-height); flex: none; transform: scaleY(.38); transform-origin: center; border-radius: 4px; background: linear-gradient(180deg, #ffc18f, #ff5c4e); box-shadow: 0 0 12px rgba(255,104,69,.42); animation: equalize .78s var(--bar-delay) ease-in-out infinite alternate; }
+      .download-note { margin: 14px 0 0; color: #a28e89; font-size: 12px; }
+      .hero-art { position: relative; min-height: 430px; display: grid; place-items: center; }
+      .orb { position: absolute; inset: 35px 30px 20px; border-radius: 50%; background: radial-gradient(circle at 45% 44%, rgba(222, 82, 49, .2), rgba(92, 37, 36, .18) 42%, transparent 70%); filter: blur(4px); animation: hero-glow 9s ease-in-out infinite alternate; }
+      .preview-card { position: relative; width: min(100%, 300px); aspect-ratio: 9 / 19.2; transform: rotate(2deg); animation: hero-drift 8s ease-in-out infinite; border: 1px solid rgba(255, 208, 185, .22); border-radius: 28px; overflow: hidden; background: #0c1718; box-shadow: 0 34px 90px rgba(0,0,0,.55), 0 0 80px rgba(210, 74, 40, .12); }
+      .preview-card img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top; }
+      .preview-caption { position: absolute; left: 17px; bottom: 16px; padding: 9px 13px; border: 1px solid rgba(255,255,255,.14); border-radius: 999px; background: rgba(5,12,12,.78); backdrop-filter: blur(12px); color: #e6f5ed; font-size: 11px; letter-spacing: .03em; }
+      .float-note { position: absolute; left: -8px; bottom: 30px; display: flex; align-items: center; gap: 11px; padding: 13px 16px; border: 1px solid rgba(255,225,213,.14); border-radius: 16px; background: rgba(28, 17, 19, .96); box-shadow: 0 20px 48px rgba(0,0,0,.3); color: #e8d8d4; font-size: 12px; }
+      .float-note b { display: block; color: var(--text); font-size: 13px; margin-bottom: 3px; }
+      .music-dot { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 11px; color: #25100d; background: var(--mint-bright); font-size: 18px; }
+
+      .section { padding: 92px 0; }
+      .section-heading { max-width: 650px; margin-bottom: 36px; }
+      .section-heading h2 { margin: 15px 0 12px; font-size: clamp(32px, 4.4vw, 48px); line-height: 1.08; letter-spacing: -.05em; }
+      .section-heading p { margin: 0; color: var(--muted); line-height: 1.75; font-size: 15px; }
+      .features { border-top: 1px solid var(--line); }
+      .feature-grid { display: grid; grid-template-columns: 1fr; }
+      .feature { --accent: #ff6845; position: relative; isolation: isolate; min-height: 510px; display: grid; grid-template-columns: 1.1fr .9fr; align-items: center; gap: clamp(35px, 8vw, 110px); padding: 70px clamp(20px, 7vw, 88px); border-top: 1px solid var(--line); background: radial-gradient(ellipse at 78% 50%, color-mix(in srgb, var(--accent) 17%, transparent), transparent 44%); }
+      .feature:nth-child(even) { grid-template-columns: .9fr 1.1fr; background: radial-gradient(ellipse at 20% 50%, color-mix(in srgb, var(--accent) 17%, transparent), transparent 44%); }
+      .feature:nth-child(even) .feature-preview { grid-column: 2; grid-row: 1; }
+      .feature:nth-child(even) .feature-copy { grid-column: 1; grid-row: 1; }
+      .feature-preview { position: relative; justify-self: center; width: min(100%, 278px); aspect-ratio: 9 / 19.2; display: grid; place-items: center; overflow: hidden; padding: 0; border: 1px solid color-mix(in srgb, var(--accent) 45%, rgba(255,255,255,.15)); border-radius: 30px; background: #0c090c; color: white; cursor: zoom-in; box-shadow: 0 24px 70px color-mix(in srgb, var(--accent) 18%, transparent), 0 18px 55px rgba(0,0,0,.45); transition: border-color .3s ease, box-shadow .3s ease; }
+      .feature-preview::after { content: "↗ Ampliar"; position: absolute; right: 10px; bottom: 10px; padding: 7px 10px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(12,9,12,.78); color: #fff; font-size: 10px; font-weight: 700; opacity: .82; backdrop-filter: blur(12px); }
+      .feature-preview img { display: block; width: 100%; height: 100%; object-fit: contain; }
+      .feature-preview:hover { border-color: var(--accent); box-shadow: 0 28px 76px color-mix(in srgb, var(--accent) 28%, transparent), 0 18px 55px rgba(0,0,0,.5); }
+      .feature.is-visible .feature-preview { animation: phone-in .7s cubic-bezier(.2,.75,.25,1) both, phone-float 7s .7s ease-in-out infinite, accent-breathe 5.5s ease-in-out infinite; }
+      .feature.is-visible .feature-copy { animation: copy-in .65s .12s ease-out both; }
+      @keyframes hero-drift { 0%,100% { translate: 0 0; } 50% { translate: 0 -8px; } }
+      @keyframes hero-glow { from { opacity: .55; transform: scale(.94); } to { opacity: 1; transform: scale(1.06); } }
+      @keyframes equalize { from { transform: scaleY(.28); opacity: .62; } to { transform: scaleY(1); opacity: 1; } }
+      @keyframes phone-in { from { opacity: .6; transform: translateY(20px) rotate(-1.5deg); } to { opacity: 1; transform: translateY(0) rotate(0); } }
+      @keyframes phone-float { 0%,100% { transform: translateY(0) rotate(0); } 50% { transform: translateY(-7px) rotate(.35deg); } }
+      @keyframes accent-breathe { 0%,100% { box-shadow: 0 24px 70px color-mix(in srgb, var(--accent) 16%, transparent), 0 18px 55px rgba(0,0,0,.45); } 50% { box-shadow: 0 30px 86px color-mix(in srgb, var(--accent) 29%, transparent), 0 18px 55px rgba(0,0,0,.45); } }
+      @keyframes copy-in { from { opacity: .55; translate: 0 12px; } to { opacity: 1; translate: 0 0; } }
+      .image-dialog { position: relative; width: min(92vw, 510px); max-width: none; max-height: 94dvh; padding: 16px; overflow: auto; border: 1px solid rgba(255,225,213,.2); border-radius: 25px; background: #120d10; color: var(--text); box-shadow: 0 30px 100px rgba(0,0,0,.6); }
+      .image-dialog::backdrop { background: rgba(4,3,5,.84); backdrop-filter: blur(9px); }
+      .image-dialog img { display: block; width: auto; height: min(78dvh, 900px); max-width: 100%; margin: auto; border-radius: 15px; object-fit: contain; }
+      .image-dialog p { margin: 13px 48px 2px 3px; color: #dfd3d2; font-size: 13px; }
+      .image-dialog-close { position: absolute; z-index: 1; top: 24px; right: 24px; display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid rgba(255,255,255,.2); border-radius: 50%; background: rgba(10,8,10,.8); color: #fff; cursor: pointer; font-size: 23px; }
+      @media (prefers-reduced-motion: no-preference) {
+        .hero-art:hover .preview-card { animation-play-state: paused; transform: rotate(0deg) scale(1.015); }
+      }
+      .feature-copy { max-width: 480px; padding: 8px 5px; }
+      .feature-kicker { display: inline-flex; align-items: center; gap: 7px; color: var(--accent); font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+      .feature-kicker::before { content: ""; width: 15px; height: 2px; border-radius: 3px; background: currentColor; }
+      .feature h3 { margin: 16px 0 13px; font-size: clamp(29px, 3.4vw, 43px); line-height: 1.08; letter-spacing: -.045em; }
+      .feature p { margin: 0; color: #c4b8b8; font-size: 15px; line-height: 1.8; }
+      .feature-detail { display: block; margin-top: 17px; color: #988c8d; font-size: 13px; line-height: 1.7; }
+      .feature-group + .feature-group { border-top: 1px solid var(--line); }
+      .feature-group .section-heading { margin-bottom: 18px; }
+      .feature-group .feature { border-top: 1px solid rgba(255,225,213,.08); }
+
+      .demo-audio { padding-top: 36px; }
+      .demo-player { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(220px, 330px); align-items: center; gap: 24px; padding: 25px; border: 1px solid rgba(255,205,181,.16); border-radius: 25px; background: radial-gradient(ellipse at 0% 50%, rgba(226,82,48,.16), transparent 58%), linear-gradient(115deg, rgba(37,23,25,.96), rgba(22,17,22,.96)); box-shadow: 0 24px 70px rgba(0,0,0,.26); }
+      .demo-cover { position: relative; width: 82px; aspect-ratio: 1; display: grid; place-items: center; overflow: hidden; border: 1px solid rgba(255,206,183,.2); border-radius: 19px; background: linear-gradient(145deg,#a33e26,#2b1923 72%); }
+      .demo-cover img { width: 56px; height: 56px; border-radius: 15px; object-fit: cover; box-shadow: 0 8px 24px rgba(0,0,0,.32); }
+      .demo-copy .eyebrow { font-size: 9px; }
+      .demo-copy h2 { margin: 8px 0 5px; font-size: clamp(20px, 2.3vw, 26px); letter-spacing: -.035em; }
+      .demo-copy p { margin: 0; color: var(--muted); font-size: 13px; }
+      .demo-controls { display: grid; grid-template-columns: 48px minmax(0,1fr); align-items: center; gap: 0 12px; }
+      .demo-play { grid-row: 1 / span 2; width: 48px; height: 48px; display: grid; place-items: center; border: 0; border-radius: 50%; background: var(--mint-bright); color: #25100d; cursor: pointer; box-shadow: 0 0 0 7px rgba(255,155,112,.1); transition: transform .2s ease, box-shadow .2s ease; }
+      .demo-play:hover { transform: scale(1.06); box-shadow: 0 0 0 10px rgba(255,155,112,.12); }
+      .demo-play:disabled { opacity: .55; cursor: wait; }
+      .demo-range { width: 100%; height: 5px; margin: 0; accent-color: var(--mint-bright); cursor: pointer; }
+      .demo-time { display: flex; justify-content: space-between; margin-top: 6px; color: #a99a98; font-size: 10px; font-variant-numeric: tabular-nums; }
+      .demo-note { grid-column: 2 / -1; margin-top: -7px; color: #8f8281; font-size: 10px; }
+
+      .showcase { padding-top: 50px; }
+      .showcase-grid { display: grid; grid-template-columns: .9fr 1.1fr; gap: 52px; align-items: center; }
+      .showcase-copy h2 { margin: 16px 0; font-size: clamp(34px, 4vw, 48px); line-height: 1.06; letter-spacing: -.055em; }
+      .showcase-copy p { color: var(--muted); line-height: 1.75; }
+      .check-list { display: grid; gap: 13px; margin: 26px 0 0; padding: 0; list-style: none; color: #ddd1ce; font-size: 14px; }
+      .check-list li { display: flex; align-items: flex-start; gap: 11px; }
+      .check-list span { color: var(--mint); font-weight: 900; }
+      .screen-gallery { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 17px; align-items: start; }
+      .screen-shot { margin: 0; }
+      .screen-shot img { display: block; width: 100%; aspect-ratio: 9 / 19.2; object-fit: cover; object-position: top; border: 1px solid rgba(255,220,204,.16); border-radius: 20px; background: #171114; box-shadow: 0 22px 55px rgba(0,0,0,.35); transition: transform .2s ease, box-shadow .2s ease; }
+      .screen-shot:hover img { transform: translateY(-5px); box-shadow: 0 30px 65px rgba(0,0,0,.48); }
+      .screen-shot figcaption { margin-top: 12px; color: #e7d9d7; font-size: 13px; font-weight: 700; }
+      .screen-shot small { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; font-weight: 400; }
+      .gallery-note { grid-column: 1 / -1; color: #948583; font-size: 11px; text-align: center; }
+
+      .download { position: relative; overflow: hidden; padding: 68px 0; background: linear-gradient(115deg, rgba(151,52,29,.34), rgba(35,20,24,.86) 52%, rgba(45,30,53,.32)); border-top: 1px solid rgba(255,213,192,.12); border-bottom: 1px solid rgba(255,213,192,.12); }
+      .download-inner { display: flex; align-items: center; justify-content: space-between; gap: 36px; }
+      .download h2 { margin: 12px 0 10px; font-size: clamp(32px, 4.2vw, 46px); letter-spacing: -.05em; }
+      .download p { max-width: 630px; margin: 0; color: #c9bebc; line-height: 1.7; }
+      .download-actions { flex: none; text-align: center; }
+      .download-actions small { display: block; margin-top: 12px; color: #a28e89; font-size: 11px; }
+
+      .install-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; counter-reset: step; }
+      .install-step { position: relative; padding: 8px 18px 8px 60px; counter-increment: step; }
+      .install-step::before { content: "0" counter(step); position: absolute; top: 0; left: 0; color: var(--mint); font-size: 22px; font-weight: 800; letter-spacing: -.05em; }
+      .install-step h3 { margin: 0 0 9px; font-size: 16px; }
+      .install-step p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.7; }
+
+      .faq { border-top: 1px solid var(--line); }
+      .faq-list { max-width: 820px; }
+      .faq-item { border-bottom: 1px solid var(--line); }
+      .faq-question { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 20px; padding: 21px 0; border: 0; background: none; color: var(--text); text-align: left; cursor: pointer; font-size: 15px; font-weight: 700; }
+      .faq-question span:last-child { color: var(--mint); font-size: 22px; transition: transform .2s; }
+      .faq-question[aria-expanded="true"] span:last-child { transform: rotate(45deg); }
+      .faq-answer { max-width: 710px; padding: 0 40px 20px 0; color: var(--muted); font-size: 14px; line-height: 1.75; }
+      .faq-answer[hidden] { display: none; }
+      .privacy { padding-top: 12px; }
+      .privacy-panel { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 30px; padding: 28px; border: 1px solid var(--line); border-radius: 20px; background: rgba(32,20,23,.78); }
+      .privacy-panel h3 { margin: 0 0 9px; font-size: 18px; }
+      .privacy-panel p { max-width: 760px; margin: 0; color: var(--muted); font-size: 13px; line-height: 1.75; }
+      .privacy-link { color: var(--mint-bright); font-size: 13px; font-weight: 750; white-space: nowrap; }
+      .contact { padding: 55px 0 75px; text-align: center; }
+      .contact h2 { margin: 14px 0 10px; font-size: clamp(32px, 4vw, 44px); letter-spacing: -.05em; }
+      .contact p { color: var(--muted); line-height: 1.7; }
+      .contact .button { margin-top: 12px; }
+      .footer { border-top: 1px solid var(--line); color: #a28e89; font-size: 12px; }
+      .footer-inner { min-height: 80px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+      .footer-links { display: flex; gap: 22px; }
+
+      @media (max-width: 850px) {
+        .menu-toggle { display: grid; place-items: center; }
+        .nav-cta { display: none; }
+        .nav-links { position: absolute; top: calc(100% - 3px); left: 0; right: 0; display: none; padding: 10px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); box-shadow: 0 18px 44px rgba(0,0,0,.4); }
+        .nav-links.open { display: grid; gap: 0; }
+        .nav-links a { padding: 13px 12px; border-radius: 11px; }
+        .nav-links a:hover { background: rgba(255,255,255,.05); }
+        .hero { padding: 66px 0 52px; }
+        .hero-grid { grid-template-columns: 1fr; gap: 16px; }
+        .hero-copy { max-width: 650px; }
+        .hero-art { min-height: 580px; }
+        .preview-card { width: min(100%, 260px); }
+        .showcase-grid { grid-template-columns: 1fr; gap: 34px; }
+        .showcase-copy { max-width: 650px; }
+        .feature { min-height: 430px; gap: 35px; padding-inline: 28px; }
+        .feature-preview { width: min(100%, 230px); }
+        .demo-player { grid-template-columns: auto minmax(0,1fr); }
+        .demo-controls, .demo-note { grid-column: 1 / -1; }
+        .demo-controls { width: min(100%, 420px); justify-self: end; }
+        .download-inner { align-items: flex-start; flex-direction: column; }
+        .download-actions { text-align: left; }
+      }
+      @media (max-width: 620px) {
+        .shell { width: min(var(--max), calc(100% - 34px)); }
+        .nav { min-height: 68px; }
+        .menu-toggle { display: grid; place-items: center; }
+        .nav-cta { display: none; }
+        .nav-links { position: absolute; display: none; left: 0; right: 0; top: calc(100% - 3px); padding: 10px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); box-shadow: 0 18px 44px rgba(0,0,0,.4); }
+        .nav-links.open { display: grid; gap: 0; }
+        .nav-links a { padding: 13px 12px; border-radius: 11px; }
+        .nav-links a:hover { background: rgba(255,255,255,.05); }
+        .hero { padding: 57px 0 35px; }
+        h1 { margin-top: 18px; font-size: clamp(46px, 14vw, 66px); }
+        .hero-copy { font-size: 15px; }
+        .hero-actions { display: grid; grid-template-columns: 1fr; }
+        .hero-actions .button { width: 100%; }
+        .hero-art { min-height: clamp(440px, 142vw, 540px); margin-top: 6px; }
+        .orb { inset: 10px -20px; }
+        .preview-card { width: min(72%, 245px); border-radius: 22px; }
+        .preview-caption { left: 10px; bottom: 10px; font-size: 9px; }
+        .float-note { left: -4px; bottom: 0; padding: 10px 12px; font-size: 10px; }
+        .float-note b { font-size: 11px; }
+        .music-dot { width: 29px; height: 29px; }
+        .section { padding: 66px 0; }
+        .feature { min-height: auto; grid-template-columns: 1fr; gap: 23px; padding: 44px 17px; background: radial-gradient(ellipse at 50% 22%, color-mix(in srgb, var(--accent) 15%, transparent), transparent 42%); }
+        .feature:nth-child(even) { grid-template-columns: 1fr; background: radial-gradient(ellipse at 50% 22%, color-mix(in srgb, var(--accent) 15%, transparent), transparent 42%); }
+        .feature:nth-child(even) .feature-preview, .feature:nth-child(even) .feature-copy { grid-column: 1; grid-row: auto; }
+        .feature-preview { width: min(62%, 220px); border-radius: 23px; }
+        .feature-copy { max-width: 100%; padding: 0 3px; }
+        .feature h3 { margin: 12px 0 9px; font-size: 29px; }
+        .feature p { font-size: 14px; line-height: 1.7; }
+        .feature-detail { margin-top: 12px; font-size: 12px; }
+        .showcase { padding-top: 8px; }
+        .screen-gallery { grid-template-columns: repeat(2, minmax(0,1fr)); gap: 20px 12px; }
+        .screen-shot img { border-radius: 14px; }
+        .download { padding: 53px 0; }
+        .download-actions, .download-actions .button { width: 100%; }
+        .demo-audio { padding-top: 20px; }
+        .demo-player { grid-template-columns: 58px minmax(0,1fr); gap: 15px; padding: 18px; border-radius: 21px; }
+        .demo-cover { width: 58px; border-radius: 15px; }
+        .demo-cover img { width: 42px; height: 42px; border-radius: 12px; }
+        .demo-copy h2 { font-size: 19px; }
+        .demo-copy p { font-size: 11px; }
+        .demo-controls { grid-template-columns: 46px minmax(0,1fr); gap: 0 11px; }
+        .demo-play { width: 46px; height: 46px; }
+        .install-grid { grid-template-columns: 1fr; gap: 26px; }
+        .privacy-panel { grid-template-columns: 1fr; gap: 16px; padding: 22px; }
+        .privacy-link { white-space: normal; }
+        .contact { padding: 35px 0 58px; }
+        .footer-inner { align-items: flex-start; flex-direction: column; justify-content: center; padding: 18px 0; }
+        .footer-links { gap: 17px; flex-wrap: wrap; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
+        .preview-card, .orb, .hero-wave span, .feature.is-visible .feature-preview, .feature.is-visible .feature-copy { animation: none !important; }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="shell nav">
+        <a class="brand" href="#inicio" aria-label="SoundNeed, inicio">
+          <img src="../assets/icon/app_icon.png" alt="">
+          <span>SoundNeed</span>
+        </a>
+        <nav class="nav-links" id="nav-links" aria-label="Navegación principal">
+          <a href="#funciones">Funciones</a>
+          <a href="#reproduccion">Reproductor</a>
+          <a href="#instalacion">Instalación</a>
+          <a href="#faq">Preguntas</a>
+        </nav>
+        <a class="nav-cta" href="#descarga">Descargar <span aria-hidden="true">↓</span></a>
+        <button class="menu-toggle" id="menu-toggle" type="button" aria-label="Abrir menú" aria-expanded="false" aria-controls="nav-links">☰</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero" id="inicio">
+        <div class="shell hero-grid">
+          <div>
+            <div class="eyebrow">Tu música, tu espacio</div>
+            <h1>La música que te mueve, <span>a tu manera.</span></h1>
+            <p class="hero-copy">Escucha, organiza y comparte tus canciones desde un solo lugar. SoundNeed reúne tu biblioteca, tus playlists y tus momentos favoritos.</p>
+            <div class="hero-wave" role="img" aria-label="Onda de sonido animada">
+              <span style="--bar-height:13px;--bar-delay:-.2s"></span><span style="--bar-height:22px;--bar-delay:-.65s"></span><span style="--bar-height:16px;--bar-delay:-.1s"></span><span style="--bar-height:29px;--bar-delay:-.5s"></span><span style="--bar-height:19px;--bar-delay:-.3s"></span><span style="--bar-height:34px;--bar-delay:-.75s"></span><span style="--bar-height:23px;--bar-delay:-.25s"></span><span style="--bar-height:15px;--bar-delay:-.55s"></span><span style="--bar-height:28px;--bar-delay:-.15s"></span><span style="--bar-height:19px;--bar-delay:-.8s"></span><span style="--bar-height:35px;--bar-delay:-.4s"></span><span style="--bar-height:23px;--bar-delay:-.7s"></span><span style="--bar-height:15px;--bar-delay:-.2s"></span><span style="--bar-height:30px;--bar-delay:-.55s"></span><span style="--bar-height:20px;--bar-delay:-.05s"></span><span style="--bar-height:34px;--bar-delay:-.45s"></span><span style="--bar-height:24px;--bar-delay:-.7s"></span><span style="--bar-height:14px;--bar-delay:-.3s"></span><span style="--bar-height:27px;--bar-delay:-.6s"></span><span style="--bar-height:18px;--bar-delay:-.1s"></span><span style="--bar-height:32px;--bar-delay:-.8s"></span><span style="--bar-height:22px;--bar-delay:-.35s"></span>
+            </div>
+            <div class="hero-actions">
+              <a class="button button-primary" href="#descarga">Conocer la descarga <span aria-hidden="true">↗</span></a>
+              <a class="button button-secondary" href="#funciones">Explorar funciones</a>
+            </div>
+            <p class="download-note">Para Android · Instalación mediante archivo APK</p>
+          </div>
+          <div class="hero-art" aria-label="Vista previa de la pantalla de inicio de SoundNeed">
+            <div class="orb" aria-hidden="true"></div>
+            <figure class="preview-card">
+              <img src="assets/screenshots/inicio.png" alt="Pantalla de inicio de SoundNeed con canción destacada, playlists y reproductor">
+              <figcaption class="preview-caption">Así se ve SoundNeed por dentro</figcaption>
+            </figure>
+            <div class="float-note">
+              <span class="music-dot" aria-hidden="true">♫</span>
+              <span><b>Tu música, contigo</b>Playlists fáciles de compartir</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section features" id="funciones">
+        <div class="shell">
+          <div class="section-heading">
+            <div class="eyebrow">Todo empieza con tu música</div>
+            <h2>Explora todo lo que puedes hacer.</h2>
+            <p>Cada espacio de SoundNeed tiene su propósito. Mira cómo puedes organizar tu música, descubrir contenido y controlar lo que estás escuchando.</p>
+          </div>
+          <div class="feature-grid">
+            <article class="feature">
+              <button class="feature-preview" type="button" aria-label="Ampliar captura: biblioteca y playlists" aria-haspopup="dialog"><img src="assets/screenshots/biblioteca-playlists.png" alt="Biblioteca con playlists y mezcla sorpresa" loading="lazy"></button>
+              <div class="feature-copy"><span class="feature-kicker">Organiza</span><h3>Tu biblioteca y playlists</h3><p>Reúne tus listas en un solo lugar, entra a una colección y reproduce sus canciones. La mezcla sorpresa prepara una selección para escuchar.</p><small class="feature-detail">Ideal para volver rápido a tus favoritos o elegir una lista según el momento.</small></div>
+            </article>
+            <article class="feature">
+              <button class="feature-preview" type="button" aria-label="Ampliar captura: tendencias musicales" aria-haspopup="dialog"><img src="assets/screenshots/tendencias.png" alt="Listas de canciones populares en Colombia y el mundo" loading="lazy"></button>
+              <div class="feature-copy"><span class="feature-kicker">Descubre</span><h3>Tendencias musicales</h3><p>Explora canciones populares de Colombia y del mundo, con portadas, artistas y posiciones en las listas.</p><small class="feature-detail">Usa estas listas para encontrar música que está sonando ahora.</small></div>
+            </article>
+            <article class="feature">
+              <button class="feature-preview" type="button" aria-label="Ampliar captura: podcasts" aria-haspopup="dialog"><img src="assets/screenshots/podcasts.png" alt="Búsqueda de podcasts y recomendaciones" loading="lazy"></button>
+              <div class="feature-copy"><span class="feature-kicker">Escucha más</span><h3>Podcasts y temas</h3><p>Busca podcasts por nombre o tema y revisa recomendaciones para encontrar algo nuevo.</p><small class="feature-detail">La sección también reúne estaciones recomendadas basadas en lo que escuchas.</small></div>
+            </article>
+            <article class="feature">
+              <button class="feature-preview" type="button" aria-label="Ampliar captura: artistas y tendencias" aria-haspopup="dialog"><img src="assets/screenshots/artistas.png" alt="Tendencias y artistas más escuchados" loading="lazy"></button>
+              <div class="feature-copy"><span class="feature-kicker">Explora</span><h3>Artistas y tendencias</h3><p>Consulta tendencias de los últimos 30 días y conoce los artistas más escuchados.</p><small class="feature-detail">Las tarjetas reúnen sus temas destacados para que puedas seguir descubriendo.</small></div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section features feature-group" id="reproduccion">
+        <div class="shell">
+          <div class="section-heading">
+            <div class="eyebrow">Tu sesión de escucha</div>
+            <h2>Controla cómo suena.</h2>
+            <p>Cuando ya elegiste qué escuchar, SoundNeed te deja manejar la reproducción y elegir cómo disfrutarla.</p>
+          </div>
+          <div class="feature-grid">
+            <article class="feature">
+              <button class="feature-preview" type="button" aria-label="Ampliar captura: controles para tu música" aria-haspopup="dialog"><img src="assets/screenshots/reproductor.png" alt="Controles de reproducción, canción y favorito" loading="lazy"></button>
+              <div class="feature-copy"><span class="feature-kicker">Reproduce</span><h3>Controles para tu música</h3><p>Avanza o retrocede entre canciones, pausa, cambia la posición y marca una canción con Me gusta desde el reproductor.</p><small class="feature-detail">La portada y el artista te ayudan a identificar lo que está sonando.</small></div>
+            </article>
+            <article class="feature">
+              <button class="feature-preview" type="button" aria-label="Ampliar captura: audio o video" aria-haspopup="dialog"><img src="assets/screenshots/reproductor-video.png" alt="Modo de video disponible en el reproductor" loading="lazy"></button>
+              <div class="feature-copy"><span class="feature-kicker">Elige el modo</span><h3>Audio o video</h3><p>Cambia entre la reproducción de audio y la vista de video cuando el contenido ofrece ambas opciones.</p><small class="feature-detail">El reproductor conserva los controles principales para que sigas manejando la canción.</small></div>
+            </article>
+            <article class="feature">
+              <button class="feature-preview" type="button" aria-label="Ampliar captura: salida de audio" aria-haspopup="dialog"><img src="assets/screenshots/salida-audio.png" alt="Selector de dispositivo de salida de audio" loading="lazy"></button>
+              <div class="feature-copy"><span class="feature-kicker">Conecta</span><h3>Selecciona la salida de audio</h3><p>Abre SoundNeed Connect para revisar las salidas disponibles y seleccionar dónde quieres escuchar.</p><small class="feature-detail">Puedes elegir este teléfono o un dispositivo compatible que aparezca en la lista.</small></div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section demo-audio" id="muestra">
+        <div class="shell">
+          <div class="demo-player">
+            <div class="demo-cover"><img src="../assets/icon/app_icon.png" alt="Logo de SoundNeed"></div>
+            <div class="demo-copy">
+              <div class="eyebrow">Pruébala aquí</div>
+              <h2>Escucha una muestra.</h2>
+              <p>Stay Gold · Fragmento de 45 segundos</p>
+            </div>
+            <div class="demo-controls">
+              <button class="demo-play" id="demo-play" type="button" aria-label="Reproducir muestra" aria-pressed="false"><span id="demo-play-icon" aria-hidden="true">▶</span></button>
+              <div>
+                <input class="demo-range" id="demo-progress" type="range" min="0" max="45" value="0" step="0.1" aria-label="Avance de la muestra" disabled>
+                <div class="demo-time"><span id="demo-current-time">0:00</span><span id="demo-total-time">0:45</span></div>
+              </div>
+            </div>
+            <p class="demo-note" id="demo-status" role="status">Toca reproducir para escuchar un fragmento.</p>
+            <audio id="demo-audio" preload="none" src="../assets/audio/stay_gold.mp3"></audio>
+          </div>
+        </div>
+      </section>
+
+      <section class="download" id="descarga">
+        <div class="shell download-inner">
+          <div>
+            <div class="eyebrow">Empieza a escuchar</div>
+            <h2>Prueba SoundNeed en Android.</h2>
+            <p>Descarga el APK de prueba e instala SoundNeed en tu teléfono. La página final mostrará aquí la versión vigente.</p>
+          </div>
+          <div class="download-actions">
+            <a class="button button-primary" href="../build/app/outputs/flutter-apk/app-release.apk" download>Descargar APK <span aria-hidden="true">↓</span></a>
+            <small>Archivo de prueba · 78,9 MB</small>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="instalacion">
+        <div class="shell">
+          <div class="section-heading">
+            <div class="eyebrow">Instalación sencilla</div>
+            <h2>En tres pasos, SoundNeed está listo.</h2>
+            <p>La página definitiva tendrá la guía completa junto al enlace de descarga.</p>
+          </div>
+          <div class="install-grid">
+            <article class="install-step"><h3>Descarga el APK</h3><p>Guarda el archivo de instalación en tu dispositivo Android.</p></article>
+            <article class="install-step"><h3>Permite la instalación</h3><p>Si Android lo solicita, autoriza a tu navegador o administrador de archivos a instalar esta aplicación.</p></article>
+            <article class="install-step"><h3>Abre SoundNeed</h3><p>Confirma la instalación y luego abre la app para empezar a organizar tu música.</p></article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section faq" id="faq">
+        <div class="shell">
+          <div class="section-heading">
+            <div class="eyebrow">Resolvemos tus dudas</div>
+            <h2>Preguntas frecuentes.</h2>
+          </div>
+          <div class="faq-list">
+            <div class="faq-item">
+              <button class="faq-question" type="button" aria-expanded="false" aria-controls="faq-one"><span>¿En qué dispositivos puedo usar SoundNeed?</span><span aria-hidden="true">＋</span></button>
+              <div class="faq-answer" id="faq-one" hidden>Esta versión de prueba está preparada para teléfonos Android. Aquí pondremos los requisitos de sistema confirmados para cada versión.</div>
+            </div>
+            <div class="faq-item">
+              <button class="faq-question" type="button" aria-expanded="false" aria-controls="faq-two"><span>¿Cómo instalo el APK?</span><span aria-hidden="true">＋</span></button>
+              <div class="faq-answer" id="faq-two" hidden>Descarga el archivo y ábrelo desde las notificaciones o desde tu carpeta de descargas. Si Android lo pide, permite la instalación para la app que abrió el archivo y confirma.</div>
+            </div>
+            <div class="faq-item">
+              <button class="faq-question" type="button" aria-expanded="false" aria-controls="faq-three"><span>¿Puedo compartir mis canciones y playlists?</span><span aria-hidden="true">＋</span></button>
+              <div class="faq-answer" id="faq-three" hidden>Sí. SoundNeed crea enlaces que muestran una tarjeta con la portada y permiten abrir o guardar el contenido compartido en la app.</div>
+            </div>
+            <div class="faq-item">
+              <button class="faq-question" type="button" aria-expanded="false" aria-controls="faq-four"><span>¿Dónde consulto la política de privacidad?</span><span aria-hidden="true">＋</span></button>
+              <div class="faq-answer" id="faq-four" hidden>La política completa se publicará aquí antes de presentar la página como sitio oficial.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section privacy" id="privacidad">
+        <div class="shell privacy-panel">
+          <div>
+            <h3>Privacidad, explicada con claridad.</h3>
+            <p>Al compartir una canción o playlist, SoundNeed guarda los datos y la imagen necesarios para crear el enlace y mostrar su vista previa. Esta maqueta deja el espacio listo para publicar la política completa sobre permisos, datos y enlaces compartidos.</p>
+          </div>
+          <a class="privacy-link" href="#faq">Ver preguntas frecuentes <span aria-hidden="true">↗</span></a>
+        </div>
+      </section>
+
+      <section class="contact" id="contacto">
+        <div class="shell">
+          <div class="eyebrow">Estamos construyendo SoundNeed</div>
+          <h2>¿Tienes una idea para mejorarla?</h2>
+          <p>Cuéntanos qué te gustaría ver en las próximas versiones.</p>
+          <a class="button button-secondary" href="https://github.com/Juanka1711/SoundNeed" target="_blank" rel="noreferrer">Visitar SoundNeed en GitHub <span aria-hidden="true">↗</span></a>
+        </div>
+      </section>
+    </main>
+
+    <dialog class="image-dialog" id="image-dialog" aria-label="Captura ampliada de SoundNeed">
+      <form method="dialog"><button class="image-dialog-close" aria-label="Cerrar captura ampliada">×</button></form>
+      <img id="image-dialog-preview" alt="">
+      <p id="image-dialog-caption"></p>
+    </dialog>
+
+    <footer class="footer">
+      <div class="shell footer-inner">
+        <a class="brand" href="#inicio"><img src="../assets/icon/app_icon.png" alt=""><span>SoundNeed</span></a>
+        <span>Una prueba de la página que puede acompañar a la app.</span>
+        <div class="footer-links"><a href="#funciones">Funciones</a><a href="#privacidad">Privacidad</a><a href="#contacto">Contacto</a></div>
+      </div>
+    </footer>
+
+    <script>
+      function applyImageAccent(image) {
+        if (!image.complete) {
+          image.addEventListener('load', () => applyImageAccent(image), { once: true });
+          return;
+        }
+        if (!image.naturalWidth) return;
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = 40;
+          canvas.height = 84;
+          const context = canvas.getContext('2d', { willReadFrequently: true });
+          context.drawImage(image, 0, 0, canvas.width, canvas.height);
+          const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+          const bins = Array.from({ length: 24 }, () => ({ weight: 0, hue: 0 }));
+          for (let i = 0; i < pixels.length; i += 4) {
+            const r = pixels[i] / 255;
+            const g = pixels[i + 1] / 255;
+            const b = pixels[i + 2] / 255;
+            const max = Math.max(r, g, b);
+            const min = Math.min(r, g, b);
+            const delta = max - min;
+            const light = (max + min) / 2;
+            const saturation = delta === 0 ? 0 : delta / (1 - Math.abs(2 * light - 1));
+            if (saturation < .28 || light < .14 || light > .86) continue;
+            let hue = 0;
+            if (delta !== 0) {
+              if (max === r) hue = 60 * (((g - b) / delta) % 6);
+              else if (max === g) hue = 60 * ((b - r) / delta + 2);
+              else hue = 60 * ((r - g) / delta + 4);
+            }
+            hue = (hue + 360) % 360;
+            const bin = bins[Math.floor(hue / 15) % bins.length];
+            const weight = saturation * (1 - Math.abs(light - .5) * .5);
+            bin.weight += weight;
+            bin.hue += hue * weight;
+          }
+          const strongest = bins.reduce((best, bin) => bin.weight > best.weight ? bin : best, bins[0]);
+          if (strongest.weight > 0) {
+            const dominantHue = Math.round(strongest.hue / strongest.weight);
+            image.closest('.feature').style.setProperty('--accent', `hsl(${dominantHue} 76% 62%)`);
+          }
+        } catch (_) {
+          // Keep the card's warm default accent when image sampling is unavailable.
+        }
+      }
+      document.querySelectorAll('.feature-preview img').forEach(applyImageAccent);
+
+      const featureObserver = 'IntersectionObserver' in window
+        ? new IntersectionObserver((entries, observer) => {
+            entries.forEach((entry) => {
+              if (entry.isIntersecting) {
+                entry.target.classList.add('is-visible');
+                observer.unobserve(entry.target);
+              }
+            });
+          }, { threshold: .18 })
+        : null;
+      document.querySelectorAll('.feature').forEach((feature) => {
+        if (featureObserver) featureObserver.observe(feature);
+        else feature.classList.add('is-visible');
+      });
+
+      const imageDialog = document.querySelector('#image-dialog');
+      const dialogImage = document.querySelector('#image-dialog-preview');
+      const dialogCaption = document.querySelector('#image-dialog-caption');
+      document.querySelectorAll('.feature-preview').forEach((button) => button.addEventListener('click', () => {
+        const image = button.querySelector('img');
+        dialogImage.src = image.src;
+        dialogImage.alt = image.alt;
+        dialogCaption.textContent = button.getAttribute('aria-label').replace('Ampliar captura: ', '');
+        imageDialog.showModal();
+      }));
+      imageDialog.addEventListener('click', (event) => {
+        if (event.target === imageDialog) imageDialog.close();
+      });
+
+      const demoAudio = document.querySelector('#demo-audio');
+      const demoPlay = document.querySelector('#demo-play');
+      const demoPlayIcon = document.querySelector('#demo-play-icon');
+      const demoProgress = document.querySelector('#demo-progress');
+      const demoCurrent = document.querySelector('#demo-current-time');
+      const demoTotal = document.querySelector('#demo-total-time');
+      const demoStatus = document.querySelector('#demo-status');
+      const demoLength = 45;
+      const formatTime = (seconds) => {
+        const safeSeconds = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0;
+        return `${Math.floor(safeSeconds / 60)}:${String(safeSeconds % 60).padStart(2, '0')}`;
+      };
+      const availableDemoLength = () => Number.isFinite(demoAudio.duration)
+        ? Math.min(demoAudio.duration, demoLength)
+        : demoLength;
+      const updateDemoProgress = () => {
+        const limit = availableDemoLength();
+        demoProgress.max = String(limit);
+        demoProgress.value = String(Math.min(demoAudio.currentTime, limit));
+        demoCurrent.textContent = formatTime(demoAudio.currentTime);
+        demoTotal.textContent = formatTime(limit);
+      };
+      const updateDemoButton = () => {
+        const playing = !demoAudio.paused;
+        demoPlayIcon.textContent = playing ? 'Ⅱ' : '▶';
+        demoPlay.setAttribute('aria-label', playing ? 'Pausar muestra' : 'Reproducir muestra');
+        demoPlay.setAttribute('aria-pressed', String(playing));
+      };
+      demoPlay.addEventListener('click', async () => {
+        if (demoAudio.paused) {
+          if (demoAudio.currentTime >= availableDemoLength()) demoAudio.currentTime = 0;
+          demoStatus.textContent = 'Cargando la muestra…';
+          try {
+            await demoAudio.play();
+          } catch (_) {
+            demoStatus.textContent = 'No se pudo reproducir la muestra. Inténtalo de nuevo.';
+          }
+        } else {
+          demoAudio.pause();
+        }
+      });
+      demoAudio.addEventListener('loadedmetadata', () => {
+        demoProgress.disabled = false;
+        updateDemoProgress();
+        demoStatus.textContent = 'La muestra dura hasta 45 segundos. Toca reproducir para escucharla.';
+      });
+      demoAudio.addEventListener('play', updateDemoButton);
+      demoAudio.addEventListener('pause', updateDemoButton);
+      demoAudio.addEventListener('timeupdate', () => {
+        updateDemoProgress();
+        if (demoAudio.currentTime >= availableDemoLength()) {
+          demoAudio.pause();
+          demoAudio.currentTime = availableDemoLength();
+          updateDemoProgress();
+          demoStatus.textContent = 'Terminó la muestra. Puedes volver a reproducirla.';
+        }
+      });
+      demoAudio.addEventListener('error', () => {
+        demoPlay.disabled = true;
+        demoStatus.textContent = 'No se encontró el audio de muestra.';
+      });
+      demoProgress.addEventListener('input', () => {
+        demoAudio.currentTime = Number(demoProgress.value);
+        updateDemoProgress();
+      });
+
+      const menuButton = document.querySelector('#menu-toggle');
+      const navLinks = document.querySelector('#nav-links');
+      menuButton.addEventListener('click', () => {
+        const open = menuButton.getAttribute('aria-expanded') !== 'true';
+        menuButton.setAttribute('aria-expanded', String(open));
+        menuButton.setAttribute('aria-label', open ? 'Cerrar menú' : 'Abrir menú');
+        navLinks.classList.toggle('open', open);
+      });
+      navLinks.querySelectorAll('a').forEach((link) => link.addEventListener('click', () => {
+        navLinks.classList.remove('open');
+        menuButton.setAttribute('aria-expanded', 'false');
+        menuButton.setAttribute('aria-label', 'Abrir menú');
+      }));
+      document.querySelectorAll('.faq-question').forEach((button) => button.addEventListener('click', () => {
+        const expanded = button.getAttribute('aria-expanded') === 'true';
+        button.setAttribute('aria-expanded', String(!expanded));
+        document.getElementById(button.getAttribute('aria-controls')).hidden = expanded;
+      }));
+    </script>
+  </body>
+</html>
