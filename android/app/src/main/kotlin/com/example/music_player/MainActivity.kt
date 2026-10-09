@@ -217,21 +217,12 @@ class MainActivity : AudioServiceFragmentActivity() {
                         val title = call.argument<String>("title") ?: "Canción"
                         val artist = call.argument<String>("artist") ?: "SoundNeed"
                         val link = call.argument<String>("link") ?: "soundneed://track"
-                        val artwork = call.argument<ByteArray>("artwork")
-                        val imageUri = createSongShareCard(title, artist, artwork)
                         val shareLink = buildSoundNeedShareLink(link, title, artist)
-                        val shareText = "Escúchala en SoundNeed:\n$shareLink"
+                        val shareText = "🎵 $title\n$artist\n\n$shareLink"
                         val intent = Intent(Intent.ACTION_SEND).apply {
-                            type = "image/jpeg"
+                            type = "text/plain"
                             putExtra(Intent.EXTRA_SUBJECT, "$title · SoundNeed")
                             putExtra(Intent.EXTRA_TEXT, shareText)
-                            putExtra(Intent.EXTRA_STREAM, imageUri)
-                            clipData = android.content.ClipData.newUri(
-                                contentResolver,
-                                "Canción de SoundNeed",
-                                imageUri
-                            )
-                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                         }
                         startActivity(Intent.createChooser(intent, "Compartir desde SoundNeed"))
                         result.success(true)
@@ -893,6 +884,7 @@ class MainActivity : AudioServiceFragmentActivity() {
             .authority("breinermuleth64-cyber.github.io")
             .appendPath("soundneed-links")
             .appendPath("share.html")
+            .appendQueryParameter("preview", "v2")
 
         source.pathSegments.firstOrNull()?.let {
             result.appendQueryParameter("videoId", it)

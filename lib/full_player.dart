@@ -1936,7 +1936,6 @@ class _FullPlayerState extends State<FullPlayer>
   Future<void> _shareSong(Song song) async {
     final title = song.title.isEmpty ? song.displayName : song.title;
     try {
-      final artwork = await player.loadArtwork(song);
       final deepLink = song.isOnline && song.onlineVideoId.isNotEmpty
           ? 'soundneed://track/${song.onlineVideoId}'
           : Uri(
@@ -1951,7 +1950,6 @@ class _FullPlayerState extends State<FullPlayer>
         'title': title,
         'artist': song.artist,
         'link': deepLink,
-        'artwork': artwork,
       });
     } on PlatformException catch (error) {
       debugPrint('[SoundNeed] No se pudo compartir la canción: $error');

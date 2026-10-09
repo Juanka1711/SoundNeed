@@ -4,8 +4,20 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#07151b">
-    <meta property="og:title" content="Escucha esta canción en SoundNeed">
-    <meta property="og:description" content="Toca para abrirla en SoundNeed.">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="SoundNeed">
+    <meta property="og:title" content="Una canción para ti · SoundNeed">
+    <meta property="og:description" content="Toca la tarjeta para abrir la canción en SoundNeed.">
+    <meta property="og:image" content="https://breinermuleth64-cyber.github.io/soundneed-links/assets/soundneed-link-preview.png">
+    <meta property="og:image:secure_url" content="https://breinermuleth64-cyber.github.io/soundneed-links/assets/soundneed-link-preview.png">
+    <meta property="og:image:type" content="image/png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="SoundNeed: abre una canción y escúchala en la app">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Una canción para ti · SoundNeed">
+    <meta name="twitter:description" content="Toca la tarjeta para abrir la canción en SoundNeed.">
+    <meta name="twitter:image" content="https://breinermuleth64-cyber.github.io/soundneed-links/assets/soundneed-link-preview.png">
     <title>Escucha en SoundNeed</title>
     <style>
       :root { color-scheme: dark; font-family: Inter, Roboto, Arial, sans-serif; }
@@ -24,6 +36,13 @@
       h1 { margin: 26px 0 8px; font-size: clamp(24px, 7vw, 34px); line-height: 1.15; }
       p { color: #b5b6c4; line-height: 1.5; }
       .artist { margin-top: 0; }
+      .track { display: flex; align-items: center; gap: 17px; margin-top: 25px; }
+      .cover { flex: 0 0 94px; width: 94px; height: 94px; overflow: hidden; border-radius: 18px; background: linear-gradient(145deg,#35cabb,#59449c); box-shadow: 0 12px 34px #0005; }
+      .cover img { width: 100%; height: 100%; object-fit: cover; }
+      .track-copy { min-width: 0; }
+      .eyebrow { margin: 0 0 5px; color: #58d9ca; font-size: 10px; font-weight: 800; letter-spacing: .13em; }
+      .track h1 { margin: 0 0 4px; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; font-size: clamp(20px, 6vw, 27px); line-height: 1.14; }
+      .track .artist { margin: 0; font-size: 14px; }
       a { display: flex; justify-content: center; align-items: center; min-height: 54px; margin-top: 14px; border-radius: 18px; font-weight: 750; text-decoration: none; }
       .primary { color: #071015; background: #f5f5fb; }
       .secondary { color: #f5f5fb; border: 1px solid #ffffff24; background: #ffffff0a; }
@@ -33,8 +52,14 @@
   <body>
     <main>
       <div class="brand"><span class="logo">♫</span><span>SOUNDNEED</span></div>
-      <h1 id="title">Canción compartida</h1>
-      <p class="artist" id="artist">Abriendo SoundNeed…</p>
+      <div class="track">
+        <div class="cover"><img id="cover" src="assets/soundneed-link-preview.png" alt="Portada de la canción"></div>
+        <div class="track-copy">
+          <p class="eyebrow">CANCIÓN COMPARTIDA</p>
+          <h1 id="title">Canción compartida</h1>
+          <p class="artist" id="artist">Abriendo SoundNeed…</p>
+        </div>
+      </div>
       <a class="primary" id="open" href="#">Abrir en SoundNeed</a>
       <a class="secondary" id="listen" href="#" hidden>Escuchar en YouTube</a>
       <p class="note" id="note">Si no se abre automáticamente, toca “Abrir en SoundNeed”.</p>
@@ -49,6 +74,9 @@
         document.title = `${title} · SoundNeed`;
         document.getElementById('title').textContent = title;
         document.getElementById('artist').textContent = artist;
+        if (/^[A-Za-z0-9_-]{11}$/.test(videoId)) {
+          document.getElementById('cover').src = `https://i.ytimg.com/vi/${encodeURIComponent(videoId)}/hqdefault.jpg`;
+        }
 
         const deepLink = new URL(videoId
           ? `soundneed://track/${encodeURIComponent(videoId)}`
