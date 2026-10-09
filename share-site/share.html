@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#07151b">
+    <meta property="og:title" content="Escucha esta canción en SoundNeed">
+    <meta property="og:description" content="Toca para abrirla en SoundNeed.">
+    <title>Escucha en SoundNeed</title>
+    <style>
+      :root { color-scheme: dark; font-family: Inter, Roboto, Arial, sans-serif; }
+      * { box-sizing: border-box; }
+      body {
+        min-height: 100vh; margin: 0; padding: 28px; display: grid; place-items: center;
+        color: #f5f5fb; background: radial-gradient(ellipse at 18% 8%, #12404b 0, transparent 45%),
+          radial-gradient(ellipse at 85% 90%, #38205d 0, transparent 42%), #071015;
+      }
+      main {
+        width: min(100%, 440px); padding: 26px; border: 1px solid #ffffff20;
+        border-radius: 28px; background: #11151fe8; box-shadow: 0 24px 80px #0008;
+      }
+      .brand { display: flex; align-items: center; gap: 11px; color: #b7f5ed; font-weight: 800; letter-spacing: .04em; }
+      .logo { display: grid; width: 42px; height: 42px; place-items: center; border-radius: 14px; background: linear-gradient(145deg,#26c6b7,#7654eb); font-size: 22px; }
+      h1 { margin: 26px 0 8px; font-size: clamp(24px, 7vw, 34px); line-height: 1.15; }
+      p { color: #b5b6c4; line-height: 1.5; }
+      .artist { margin-top: 0; }
+      a { display: flex; justify-content: center; align-items: center; min-height: 54px; margin-top: 14px; border-radius: 18px; font-weight: 750; text-decoration: none; }
+      .primary { color: #071015; background: #f5f5fb; }
+      .secondary { color: #f5f5fb; border: 1px solid #ffffff24; background: #ffffff0a; }
+      .note { margin: 20px 0 0; font-size: 13px; text-align: center; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="brand"><span class="logo">♫</span><span>SOUNDNEED</span></div>
+      <h1 id="title">Canción compartida</h1>
+      <p class="artist" id="artist">Abriendo SoundNeed…</p>
+      <a class="primary" id="open" href="#">Abrir en SoundNeed</a>
+      <a class="secondary" id="listen" href="#" hidden>Escuchar en YouTube</a>
+      <p class="note" id="note">Si no se abre automáticamente, toca “Abrir en SoundNeed”.</p>
+    </main>
+    <script>
+      (() => {
+        const params = new URLSearchParams(window.location.search);
+        const videoId = params.get('videoId') || '';
+        const title = params.get('title') || 'Canción compartida';
+        const artist = params.get('artist') || 'SoundNeed';
+        const manual = params.get('manual') === '1';
+        document.title = `${title} · SoundNeed`;
+        document.getElementById('title').textContent = title;
+        document.getElementById('artist').textContent = artist;
+
+        const deepLink = new URL(videoId
+          ? `soundneed://track/${encodeURIComponent(videoId)}`
+          : 'soundneed://track');
+        if (title) deepLink.searchParams.set('title', title);
+        if (artist) deepLink.searchParams.set('artist', artist);
+
+        const fallback = new URL(window.location.href);
+        fallback.searchParams.set('manual', '1');
+        const intentUrl = `intent://track${deepLink.pathname.replace('/track', '')}${deepLink.search}` +
+          `#Intent;scheme=soundneed;package=com.example.music_player;` +
+          `S.browser_fallback_url=${encodeURIComponent(fallback.toString())};end`;
+        document.getElementById('open').href = intentUrl;
+
+        if (/^[A-Za-z0-9_-]{11}$/.test(videoId)) {
+          const listen = document.getElementById('listen');
+          listen.href = `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
+          listen.hidden = false;
+        }
+
+        if (!manual) {
+          window.setTimeout(() => {
+            document.getElementById('artist').textContent = artist;
+          }, 1100);
+          window.location.replace(intentUrl);
+        }
+      })();
+    </script>
+  </body>
+</html>
