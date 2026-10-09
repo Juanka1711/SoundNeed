@@ -20,7 +20,6 @@ import 'sections/media_collection_section.dart';
 import 'sections/discovered_album_page.dart';
 import 'widgets/overflow_marquee_text.dart';
 
-
 class FullPlayer extends StatefulWidget {
   final MusicPlayerController player;
 
@@ -33,11 +32,14 @@ class FullPlayer extends StatefulWidget {
 class _FullPlayerState extends State<FullPlayer>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   MusicPlayerController get player => widget.player;
-  static const MethodChannel _mediaChannel = MethodChannel('music_player/media');
+  static const MethodChannel _mediaChannel = MethodChannel(
+    'music_player/media',
+  );
 
   Color _themeColor = Colors.white;
   Color _themeSecondary = Colors.white70;
   Color _themeDark = const Color(0xFF080808);
+  Uint8List? _currentArtworkBytes;
 
   int? _lastSongId;
   bool _onlineVideoMode = false;
@@ -46,6 +48,7 @@ class _FullPlayerState extends State<FullPlayer>
   bool _samplingVideoTheme = false;
   VideoPlayerController? _videoController;
   Timer? _videoThemeTimer;
+  Timer? _videoPlaybackStateTimer;
   final GlobalKey _videoFrameBoundaryKey = GlobalKey();
   double _dismissProgress = 0;
   bool _draggingToDismiss = false;
@@ -95,9 +98,10 @@ class _FullPlayerState extends State<FullPlayer>
     WidgetsBinding.instance.removeObserver(this);
     player.removeListener(_onPlayerChanged);
     _videoThemeTimer?.cancel();
+    _videoPlaybackStateTimer?.cancel();
     final videoController = _videoController;
     if (videoController != null) {
-      if (_onlineVideoMode) {
+      if (_onlineVideoMode && !player.castConnected) {
         unawaited(_handoffVideoToAudioAndDispose(videoController));
       } else {
         unawaited(videoController.dispose());
@@ -135,6 +139,9 @@ class _FullPlayerState extends State<FullPlayer>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    // El receptor Cast reproduce por su cuenta. No cambiarlo a audio ni
+    // detenerlo cuando el teléfono se bloquea o la app pasa al fondo.
+    if (player.castConnected) return;
     if (state != AppLifecycleState.paused || !_onlineVideoMode) return;
     final song = player.currentSong;
     if (song is Song) unawaited(_setOnlineVideoMode(false, song));
@@ -143,16 +150,27 @@ class _FullPlayerState extends State<FullPlayer>
   void _onPlayerChanged() {
     final song = player.currentSong;
 
-    if (song == null) return;
+    if (song == null) {
+      if (_currentArtworkBytes != null && mounted) {
+        setState(() => _currentArtworkBytes = null);
+      }
+      return;
+    }
 
     if (_lastSongId != song.id) {
+      if (_onlineVideoMode && !player.castConnected) {
+        player.clearLocalVideoPlayback();
+      }
+      final keepCastVideoMode =
+          player.castConnected && player.castVideoMode && song.isOnline;
       _lastSongId = song.id;
-      _onlineVideoMode = false;
-      _onlineVideoPlaying = false;
+      _onlineVideoMode = keepCastVideoMode;
+      _onlineVideoPlaying = keepCastVideoMode && player.castPlaying;
       final oldVideoController = _videoController;
       if (oldVideoController != null) unawaited(oldVideoController.dispose());
       _videoController = null;
       _onlineVideoLoading = false;
+      _currentArtworkBytes = null;
       _videoThemeTimer?.cancel();
       _videoThemeTimer = null;
       _songAnimationController.forward(from: 0);
@@ -187,7 +205,7 @@ class _FullPlayerState extends State<FullPlayer>
       album: song.album.toString(),
       duration: song.duration is int && song.duration > 0
           ? Duration(milliseconds: song.duration as int)
-          : player.audioPlayer.duration,
+          : player.playbackDuration,
       isOnline: song.isOnline == true,
     );
     _lyricsFutures[songId] = future;
@@ -221,6 +239,21 @@ class _FullPlayerState extends State<FullPlayer>
             YouTubeAudioService.instance.lastError ??
                 'No se pudo extraer el video.',
           );
+        }
+
+        if (player.castConnected) {
+          final castPosition = player.playbackPosition;
+          await player.transmitCurrentVideoToCast(
+            url: videoUrl,
+            position: castPosition,
+          );
+          if (!mounted || player.currentSong?.id != song.id) return;
+          setState(() {
+            _videoController = null;
+            _onlineVideoLoading = false;
+            _onlineVideoPlaying = true;
+          });
+          return;
         }
 
         if (!mounted ||
@@ -267,6 +300,16 @@ class _FullPlayerState extends State<FullPlayer>
           await controller.play();
           await player.audioPlayer.pause();
         }
+        final activeController = controller;
+        if (activeController == null) {
+          throw StateError('No se pudo inicializar el reproductor de video.');
+        }
+        _publishLocalVideoPlayback(activeController);
+        _videoPlaybackStateTimer?.cancel();
+        _videoPlaybackStateTimer = Timer.periodic(
+          const Duration(milliseconds: 500),
+          (_) => _publishLocalVideoPlayback(activeController),
+        );
         _startVideoThemeSampling();
       } catch (error) {
         debugPrint('[SoundNeed] No se pudo reproducir el video: $error');
@@ -298,6 +341,24 @@ class _FullPlayerState extends State<FullPlayer>
     if (!_onlineVideoMode) return;
     _videoThemeTimer?.cancel();
     _videoThemeTimer = null;
+    _videoPlaybackStateTimer?.cancel();
+    _videoPlaybackStateTimer = null;
+    if (player.castConnected) {
+      final castPosition = player.playbackPosition;
+      await player.transmitCurrentSongToCast(position: castPosition);
+      if (!mounted) return;
+      final castVideoController = _videoController;
+      setState(() {
+        _onlineVideoMode = false;
+        _onlineVideoPlaying = false;
+        _onlineVideoLoading = false;
+        _videoController = null;
+      });
+      if (castVideoController != null) {
+        await castVideoController.dispose();
+      }
+      return;
+    }
     final controller = _videoController;
     if (controller == null) {
       setState(() {
@@ -305,6 +366,7 @@ class _FullPlayerState extends State<FullPlayer>
         _onlineVideoPlaying = false;
         _onlineVideoLoading = false;
       });
+      player.clearLocalVideoPlayback();
       return;
     }
 
@@ -328,6 +390,18 @@ class _FullPlayerState extends State<FullPlayer>
       _videoController = null;
     });
     await controller.dispose();
+    player.clearLocalVideoPlayback();
+  }
+
+  void _publishLocalVideoPlayback(VideoPlayerController controller) {
+    if (!mounted || player.castConnected || !controller.value.isInitialized) {
+      return;
+    }
+    player.updateLocalVideoPlayback(
+      playing: controller.value.isPlaying,
+      position: controller.value.position,
+      duration: controller.value.duration,
+    );
   }
 
   Future<void> _syncVideoToAudio([Duration? requestedPosition]) async {
@@ -361,7 +435,7 @@ class _FullPlayerState extends State<FullPlayer>
     if (controller != null && controller.value.isInitialized) {
       return controller.value.position;
     }
-    return player.audioPlayer.position;
+    return player.playbackPosition;
   }
 
   void _startVideoThemeSampling() {
@@ -467,6 +541,7 @@ class _FullPlayerState extends State<FullPlayer>
       if (!mounted) return;
 
       setState(() {
+        _currentArtworkBytes = bytes;
         _themeColor = colors.$1;
         _themeSecondary = colors.$2;
         _themeDark = colors.$3;
@@ -1024,7 +1099,19 @@ class _FullPlayerState extends State<FullPlayer>
       return ColoredBox(
         color: Colors.black,
         child: Center(
-          child: _onlineVideoLoading
+          child: player.castConnected && _onlineVideoMode
+              ? const Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.cast_connected, color: Colors.white70, size: 40),
+                    SizedBox(height: 10),
+                    Text(
+                      'Video reproduciéndose en el TV',
+                      style: TextStyle(color: Colors.white70),
+                    ),
+                  ],
+                )
+              : _onlineVideoLoading
               ? CircularProgressIndicator(color: _themeColor)
               : const Icon(
                   Icons.video_library_outlined,
@@ -1081,8 +1168,9 @@ class _FullPlayerState extends State<FullPlayer>
       initialData: Duration.zero,
       builder: (context, snapshot) {
         final position = snapshot.data ?? Duration.zero;
-        final duration =
-            player.audioPlayer.duration ?? const Duration(seconds: 1);
+        final duration = (player.playbackDuration > Duration.zero
+            ? player.playbackDuration
+            : const Duration(seconds: 1));
         return _buildProgressContent(position, duration);
       },
     );
@@ -1190,6 +1278,8 @@ class _FullPlayerState extends State<FullPlayer>
       builder: (context, snapshot) {
         final playing = _onlineVideoMode
             ? _onlineVideoPlaying
+            : player.castConnected
+            ? player.castPlaying
             : snapshot.data ?? false;
 
         return AnimatedBuilder(
@@ -1271,9 +1361,15 @@ class _FullPlayerState extends State<FullPlayer>
     }
 
     final controller = _videoController;
+    if (player.castConnected && controller == null) {
+      await player.togglePlayPause();
+      if (mounted) setState(() => _onlineVideoPlaying = player.castPlaying);
+      return;
+    }
     if (_onlineVideoPlaying) {
       if (controller != null && controller.value.isInitialized) {
         await controller.pause();
+        _publishLocalVideoPlayback(controller);
       }
       if (mounted) setState(() => _onlineVideoPlaying = false);
       return;
@@ -1281,6 +1377,7 @@ class _FullPlayerState extends State<FullPlayer>
 
     if (controller != null && controller.value.isInitialized) {
       await controller.play();
+      _publishLocalVideoPlayback(controller);
     }
     if (mounted) setState(() => _onlineVideoPlaying = true);
   }
@@ -1555,41 +1652,49 @@ class _FullPlayerState extends State<FullPlayer>
         accentColor: _themeColor,
         backgroundColor: _themeDark,
         onTransmitCurrentSong: _transmitCurrentSong,
+        currentSongTitle: player.currentSong?.title,
+        currentArtist: player.currentSong?.artist,
+        currentArtworkUrl: player.currentSong?.artworkUri,
+        currentArtworkBytes: _currentArtworkBytes,
+        isPlaying: player.isPlaying,
       ),
     );
   }
 
   Future<void> _transmitCurrentSong() async {
     final song = player.currentSong;
-    if (song == null) throw StateError('No hay una canción seleccionada.');
-    if (!song.isOnline && !song.isPodcast) {
-      throw StateError('Por ahora Cast transmite canciones en línea y podcasts. Las descargas locales se agregarán después.');
+    if (_onlineVideoMode && song is Song && song.onlineVideoId.isNotEmpty) {
+      final videoUrl = await YouTubeAudioService.instance.getVideoUrl(
+        song.onlineVideoId,
+      );
+      if (videoUrl == null) {
+        throw StateError(
+          YouTubeAudioService.instance.lastError ??
+              'No se pudo preparar el video para Google Cast.',
+        );
+      }
+      final controller = _videoController;
+      final position = controller?.value.position ?? player.playbackPosition;
+      await player.transmitCurrentVideoToCast(
+        url: videoUrl,
+        position: position,
+      );
+      if (controller != null) {
+        await controller.pause();
+        await controller.dispose();
+      }
+      _videoPlaybackStateTimer?.cancel();
+      _videoPlaybackStateTimer = null;
+      if (mounted) {
+        setState(() {
+          _videoController = null;
+          _onlineVideoPlaying = true;
+          _onlineVideoLoading = false;
+        });
+      }
+      return;
     }
-
-    final url = song.isOnline
-        ? await YouTubeAudioService.instance.getAudioUrl(song.onlineVideoId)
-        : song.uri;
-    if (url == null || url.isEmpty) {
-      throw StateError(YouTubeAudioService.instance.lastError ?? 'No se pudo preparar el audio para Google Cast.');
-    }
-
-    await CastSenderService.instance.loadMedia(
-      url: url,
-      title: song.title,
-      artist: song.artist,
-      artwork: song.artworkUri,
-      contentType: song.isOnline ? 'audio/mp4' : _castContentType(song.uri),
-    );
-    await player.audioPlayer.pause();
-  }
-
-  String _castContentType(String url) {
-    final path = Uri.tryParse(url)?.path.toLowerCase() ?? '';
-    if (path.endsWith('.mp3')) return 'audio/mpeg';
-    if (path.endsWith('.m4a') || path.endsWith('.mp4')) return 'audio/mp4';
-    if (path.endsWith('.ogg') || path.endsWith('.opus')) return 'audio/ogg';
-    if (path.endsWith('.wav')) return 'audio/wav';
-    return 'audio/mpeg';
+    await player.transmitCurrentSongToCast();
   }
 
   void _openLyrics(BuildContext context, dynamic song) {
@@ -1634,87 +1739,118 @@ class _FullPlayerState extends State<FullPlayer>
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                Container(
-                  width: 42,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.22),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-
-                const SizedBox(height: 20),
-
-                Row(
-                  children: [
-                    Icon(Icons.queue_music_rounded, color: _themeColor),
-
-                    const SizedBox(width: 10),
-
-                    const Text(
-                      'Cola de reproducción',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
+                    Container(
+                      width: 42,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.22),
+                        borderRadius: BorderRadius.circular(10),
                       ),
                     ),
-                    const Spacer(),
-                    Text(
-                      '${queue.length} ${queue.length == 1 ? 'canción' : 'canciones'}',
-                      style: const TextStyle(color: Colors.white54, fontSize: 12),
+
+                    const SizedBox(height: 20),
+
+                    Row(
+                      children: [
+                        Icon(Icons.queue_music_rounded, color: _themeColor),
+
+                        const SizedBox(width: 10),
+
+                        const Text(
+                          'Cola de reproducción',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const Spacer(),
+                        Text(
+                          '${queue.length} ${queue.length == 1 ? 'canción' : 'canciones'}',
+                          style: const TextStyle(
+                            color: Colors.white54,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Expanded(
+                      child: queue.isEmpty
+                          ? Center(
+                              child: Text(
+                                player.currentSong == null
+                                    ? 'La cola está vacía.'
+                                    : 'No hay canciones siguientes.',
+                                style: const TextStyle(color: Colors.white60),
+                              ),
+                            )
+                          : ListView.builder(
+                              itemCount: queue.length,
+                              itemBuilder: (context, index) {
+                                final queuedSong = queue[index];
+                                final current =
+                                    player.currentSong?.id == queuedSong.id &&
+                                    player.currentSong?.uri == queuedSong.uri;
+                                return ListTile(
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 2,
+                                  ),
+                                  leading: SizedBox(
+                                    width: 48,
+                                    height: 48,
+                                    child: _buildArtworkThumb(queuedSong),
+                                  ),
+                                  title: Text(
+                                    queuedSong.title.isEmpty
+                                        ? queuedSong.displayName
+                                        : queuedSong.title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: current
+                                          ? _themeColor
+                                          : Colors.white,
+                                      fontWeight: current
+                                          ? FontWeight.w700
+                                          : FontWeight.w500,
+                                    ),
+                                  ),
+                                  subtitle: Text(
+                                    queuedSong.artist,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Colors.white54,
+                                    ),
+                                  ),
+                                  trailing: current
+                                      ? Icon(
+                                          Icons.equalizer_rounded,
+                                          color: _themeColor,
+                                        )
+                                      : Text(
+                                          player.formatDuration(
+                                            queuedSong.duration,
+                                          ),
+                                          style: const TextStyle(
+                                            color: Colors.white38,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                  onTap: () async {
+                                    Navigator.pop(context);
+                                    player.setQueueIndex(index);
+                                    await player.playSong(
+                                      queuedSong,
+                                      createQueue: false,
+                                    );
+                                  },
+                                );
+                              },
+                            ),
                     ),
                   ],
-                ),
-                const SizedBox(height: 12),
-                Expanded(
-                  child: queue.isEmpty
-                      ? Center(
-                          child: Text(
-                            player.currentSong == null
-                                ? 'La cola está vacía.'
-                                : 'No hay canciones siguientes.',
-                            style: const TextStyle(color: Colors.white60),
-                          ),
-                        )
-                      : ListView.builder(
-                          itemCount: queue.length,
-                          itemBuilder: (context, index) {
-                            final queuedSong = queue[index];
-                            final current = player.currentSong?.id == queuedSong.id &&
-                                player.currentSong?.uri == queuedSong.uri;
-                            return ListTile(
-                              contentPadding: const EdgeInsets.symmetric(horizontal: 2),
-                              leading: SizedBox(width: 48, height: 48, child: _buildArtworkThumb(queuedSong)),
-                              title: Text(
-                                queuedSong.title.isEmpty ? queuedSong.displayName : queuedSong.title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: current ? _themeColor : Colors.white,
-                                  fontWeight: current ? FontWeight.w700 : FontWeight.w500,
-                                ),
-                              ),
-                              subtitle: Text(
-                                queuedSong.artist,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(color: Colors.white54),
-                              ),
-                              trailing: current
-                                  ? Icon(Icons.equalizer_rounded, color: _themeColor)
-                                  : Text(player.formatDuration(queuedSong.duration),
-                                      style: const TextStyle(color: Colors.white38, fontSize: 12)),
-                              onTap: () async {
-                                Navigator.pop(context);
-                                player.setQueueIndex(index);
-                                await player.playSong(queuedSong, createQueue: false);
-                              },
-                            );
-                          },
-                        ),
-                ),
-              ],
                 );
               },
             ),
@@ -1735,181 +1871,208 @@ class _FullPlayerState extends State<FullPlayer>
             color: _themeDark,
             borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
           ),
-          constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * .88),
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * .88,
+          ),
           padding: const EdgeInsets.fromLTRB(18, 12, 18, 16),
           child: SafeArea(
             child: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                Container(
-                  width: 42,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.20),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-
-                const SizedBox(height: 14),
-
-                Row(
-                  children: [
-                    SizedBox(width: 48, height: 48, child: _buildArtworkThumb(song as Song)),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(song.title.toString(), maxLines: 1, overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
-                          const SizedBox(height: 3),
-                          Text(song.artist.toString(), maxLines: 1, overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(color: Colors.white60, fontSize: 12)),
-                        ],
-                      ),
+                  Container(
+                    width: 42,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.20),
+                      borderRadius: BorderRadius.circular(10),
                     ),
-                  ],
-                ),
+                  ),
 
-                const SizedBox(height: 10),
+                  const SizedBox(height: 14),
 
-                _optionTile(
-                  icon: Icons.lyrics_rounded,
-                  title: 'Letras',
-                  subtitle: _lyricsBySongId[song.id]?.hasLyrics == true
-                      ? 'Letras disponibles'
-                      : 'Buscar letras de esta canción',
-                  onTap: () {
-                    Navigator.pop(context);
-                    _openLyrics(context, song);
-                  },
-                ),
+                  Row(
+                    children: [
+                      SizedBox(
+                        width: 48,
+                        height: 48,
+                        child: _buildArtworkThumb(song as Song),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              song.title.toString(),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              song.artist.toString(),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white60,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
 
-                _optionTile(
-                  icon: isSongLiked(player, song) ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-                  title: isSongLiked(player, song) ? 'Quitar de Me gusta' : 'Agregar a Me gusta',
-                  onTap: () async {
-                    Navigator.pop(context);
-                    await toggleSongLiked(player, song);
-                    if (mounted) setState(() {});
-                  },
-                ),
+                  const SizedBox(height: 10),
 
-                _optionTile(
-                  icon: Icons.playlist_add_rounded,
-                  title: 'Agregar a playlist',
-                  onTap: () {
-                    Navigator.pop(context);
-                    addSongToPlaylist(context, player, song);
-                  },
-                ),
+                  _optionTile(
+                    icon: Icons.lyrics_rounded,
+                    title: 'Letras',
+                    subtitle: _lyricsBySongId[song.id]?.hasLyrics == true
+                        ? 'Letras disponibles'
+                        : 'Buscar letras de esta canción',
+                    onTap: () {
+                      Navigator.pop(context);
+                      _openLyrics(context, song);
+                    },
+                  ),
 
-                _optionTile(
-                  icon: Icons.queue_music_rounded,
-                  title: 'Agregar a la fila',
-                  onTap: () {
-                    Navigator.pop(context);
-                    player.addToQueue(song as Song);
-                    _showActionMessage('Agregada a la fila');
-                  },
-                ),
+                  _optionTile(
+                    icon: isSongLiked(player, song)
+                        ? Icons.favorite_rounded
+                        : Icons.favorite_border_rounded,
+                    title: isSongLiked(player, song)
+                        ? 'Quitar de Me gusta'
+                        : 'Agregar a Me gusta',
+                    onTap: () async {
+                      Navigator.pop(context);
+                      await toggleSongLiked(player, song);
+                      if (mounted) setState(() {});
+                    },
+                  ),
 
-                _optionTile(
-                  icon: Icons.queue_play_next_rounded,
-                  title: 'Ver fila',
-                  onTap: () {
-                    Navigator.pop(context);
-                    _showQueue(context);
-                  },
-                ),
+                  _optionTile(
+                    icon: Icons.playlist_add_rounded,
+                    title: 'Agregar a playlist',
+                    onTap: () {
+                      Navigator.pop(context);
+                      addSongToPlaylist(context, player, song);
+                    },
+                  ),
 
-                _optionTile(
-                  icon: Icons.album_rounded,
-                  title: 'Ir al álbum',
-                  subtitle: _hasAlbumInfo(song as Song)
-                      ? song.album.toString()
-                      : 'Buscar usando canción y artista',
-                  onTap: () {
-                    Navigator.pop(context);
-                    final track = song as Song;
-                    if (_hasAlbumInfo(track)) {
-                      _openCollection(track, MediaCollectionKind.albums);
-                    } else {
-                      _openDiscoveredAlbum(track);
-                    }
-                  },
-                ),
+                  _optionTile(
+                    icon: Icons.queue_music_rounded,
+                    title: 'Agregar a la fila',
+                    onTap: () {
+                      Navigator.pop(context);
+                      player.addToQueue(song as Song);
+                      _showActionMessage('Agregada a la fila');
+                    },
+                  ),
 
-                _optionTile(
-                  icon: Icons.person_rounded,
-                  title: 'Ir al artista',
-                  subtitle: song.artist.toString(),
-                  onTap: () {
-                    Navigator.pop(context);
-                    _openCollection(song as Song, MediaCollectionKind.artists);
-                  },
-                ),
+                  _optionTile(
+                    icon: Icons.queue_play_next_rounded,
+                    title: 'Ver fila',
+                    onTap: () {
+                      Navigator.pop(context);
+                      _showQueue(context);
+                    },
+                  ),
 
-                _optionTile(
-                  icon: Icons.radio_rounded,
-                  title: 'Radio de esta canción',
-                  subtitle: 'Seguir escuchando música parecida',
-                  onTap: () {
-                    Navigator.pop(context);
-                    _startSongRadio(song as Song);
-                  },
-                ),
+                  _optionTile(
+                    icon: Icons.album_rounded,
+                    title: 'Ir al álbum',
+                    subtitle: _hasAlbumInfo(song as Song)
+                        ? song.album.toString()
+                        : 'Buscar usando canción y artista',
+                    onTap: () {
+                      Navigator.pop(context);
+                      final track = song as Song;
+                      if (_hasAlbumInfo(track)) {
+                        _openCollection(track, MediaCollectionKind.albums);
+                      } else {
+                        _openDiscoveredAlbum(track);
+                      }
+                    },
+                  ),
 
-                _optionTile(
-                  icon: Icons.bedtime_rounded,
-                  title: 'Apagado automático',
-                  subtitle: player.sleepTimerRemaining == null
-                      ? 'Detener la música después de un tiempo'
-                      : 'Temporizador activo',
-                  onTap: () {
-                    Navigator.pop(context);
-                    _showSleepTimerOptions();
-                  },
-                ),
+                  _optionTile(
+                    icon: Icons.person_rounded,
+                    title: 'Ir al artista',
+                    subtitle: song.artist.toString(),
+                    onTap: () {
+                      Navigator.pop(context);
+                      _openCollection(
+                        song as Song,
+                        MediaCollectionKind.artists,
+                      );
+                    },
+                  ),
 
-                _optionTile(
-                  icon: Icons.share_rounded,
-                  title: 'Compartir canción',
-                  onTap: () {
-                    Navigator.pop(context);
-                    _shareSong(song as Song);
-                  },
-                ),
+                  _optionTile(
+                    icon: Icons.radio_rounded,
+                    title: 'Radio de esta canción',
+                    subtitle: 'Seguir escuchando música parecida',
+                    onTap: () {
+                      Navigator.pop(context);
+                      _startSongRadio(song as Song);
+                    },
+                  ),
 
-                _optionTile(
-                  icon: Icons.equalizer_rounded,
-                  title: 'Ecualizador y sonido',
-                  subtitle: 'Modos de sonido y ajustes personalizados',
-                  onTap: () {
-                    Navigator.pop(context);
-                    _showEqualizer();
-                  },
-                ),
+                  _optionTile(
+                    icon: Icons.bedtime_rounded,
+                    title: 'Apagado automático',
+                    subtitle: player.sleepTimerRemaining == null
+                        ? 'Detener la música después de un tiempo'
+                        : 'Temporizador activo',
+                    onTap: () {
+                      Navigator.pop(context);
+                      _showSleepTimerOptions();
+                    },
+                  ),
 
-                _optionTile(
-                  icon: Icons.download_rounded,
-                  title: 'Descargar',
-                  onTap: () {
-                    Navigator.pop(context);
-                    _downloadSong(song);
-                  },
-                ),
+                  _optionTile(
+                    icon: Icons.share_rounded,
+                    title: 'Compartir canción',
+                    onTap: () {
+                      Navigator.pop(context);
+                      _shareSong(song as Song);
+                    },
+                  ),
 
-                _optionTile(
-                  icon: Icons.info_outline_rounded,
-                  title: 'Información',
-                  onTap: () {
-                    Navigator.pop(context);
+                  _optionTile(
+                    icon: Icons.equalizer_rounded,
+                    title: 'Ecualizador y sonido',
+                    subtitle: 'Modos de sonido y ajustes personalizados',
+                    onTap: () {
+                      Navigator.pop(context);
+                      _showEqualizer();
+                    },
+                  ),
 
-                    _showSongInfo(context, song);
-                  },
-                ),
+                  _optionTile(
+                    icon: Icons.download_rounded,
+                    title: 'Descargar',
+                    onTap: () {
+                      Navigator.pop(context);
+                      _downloadSong(song);
+                    },
+                  ),
+
+                  _optionTile(
+                    icon: Icons.info_outline_rounded,
+                    title: 'Información',
+                    onTap: () {
+                      Navigator.pop(context);
+
+                      _showSongInfo(context, song);
+                    },
+                  ),
                 ],
               ),
             ),
@@ -1919,7 +2082,8 @@ class _FullPlayerState extends State<FullPlayer>
     );
   }
 
-  Widget _buildArtworkThumb(Song song, {double size = 48}) => FutureBuilder<Uint8List?>(
+  Widget _buildArtworkThumb(Song song, {double size = 48}) =>
+      FutureBuilder<Uint8List?>(
         future: player.loadArtwork(song),
         builder: (context, snapshot) => ClipRRect(
           borderRadius: BorderRadius.circular(12),
@@ -1928,9 +2092,17 @@ class _FullPlayerState extends State<FullPlayer>
                   width: size,
                   height: size,
                   color: Colors.white.withOpacity(.07),
-                  child: const Icon(Icons.music_note_rounded, color: Colors.white54),
+                  child: const Icon(
+                    Icons.music_note_rounded,
+                    color: Colors.white54,
+                  ),
                 )
-              : Image.memory(snapshot.data!, width: size, height: size, fit: BoxFit.cover),
+              : Image.memory(
+                  snapshot.data!,
+                  width: size,
+                  height: size,
+                  fit: BoxFit.cover,
+                ),
         ),
       );
 
@@ -1984,13 +2156,15 @@ class _FullPlayerState extends State<FullPlayer>
 
   void _openDiscoveredAlbum(Song song) {
     final title = song.title.isEmpty ? song.displayName : song.title;
-    Navigator.of(context).push<void>(MaterialPageRoute<void>(
-      builder: (_) => DiscoveredAlbumPage(
-        player: player,
-        songTitle: title,
-        artist: song.artist,
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => DiscoveredAlbumPage(
+          player: player,
+          songTitle: title,
+          artist: song.artist,
+        ),
       ),
-    ));
+    );
   }
 
   void _openCollection(Song song, MediaCollectionKind kind) {
@@ -1998,22 +2172,26 @@ class _FullPlayerState extends State<FullPlayer>
     if (!songs.any((item) => item.id == song.id && item.uri == song.uri)) {
       songs.add(song);
     }
-    Navigator.of(context).push<void>(MaterialPageRoute<void>(
-      builder: (_) => Scaffold(
-        backgroundColor: _themeDark,
-        appBar: AppBar(
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => Scaffold(
           backgroundColor: _themeDark,
-          foregroundColor: Colors.white,
-          title: Text(kind == MediaCollectionKind.albums ? 'Álbum' : 'Artista'),
-        ),
-        body: MediaCollectionSection(
-          player: player,
-          songs: songs,
-          kind: kind,
-          initiallySelectedSong: song,
+          appBar: AppBar(
+            backgroundColor: _themeDark,
+            foregroundColor: Colors.white,
+            title: Text(
+              kind == MediaCollectionKind.albums ? 'Álbum' : 'Artista',
+            ),
+          ),
+          body: MediaCollectionSection(
+            player: player,
+            songs: songs,
+            kind: kind,
+            initiallySelectedSong: song,
+          ),
         ),
       ),
-    ));
+    );
   }
 
   bool _hasAlbumInfo(Song song) {
@@ -2033,19 +2211,31 @@ class _FullPlayerState extends State<FullPlayer>
 
   Future<void> _startSongRadio(Song song) async {
     try {
-      final queuedIds = player.queue.map((queued) => queued.onlineVideoId).toSet();
+      final queuedIds = player.queue
+          .map((queued) => queued.onlineVideoId)
+          .toSet();
       queuedIds.add(song.onlineVideoId);
       final queuedTitles = player.queue
-          .map((queued) => _radioTitleKey(queued.title.isEmpty ? queued.displayName : queued.title))
+          .map(
+            (queued) => _radioTitleKey(
+              queued.title.isEmpty ? queued.displayName : queued.title,
+            ),
+          )
           .toSet();
-      queuedTitles.add(_radioTitleKey(song.title.isEmpty ? song.displayName : song.title));
+      queuedTitles.add(
+        _radioTitleKey(song.title.isEmpty ? song.displayName : song.title),
+      );
       bool isNewResult(YouTubeSearchResult result) =>
           !queuedIds.contains(result.videoId) &&
           !queuedTitles.contains(_radioTitleKey(result.title));
-      var results = await YouTubeAudioService.instance.search('${song.artist} mix');
+      var results = await YouTubeAudioService.instance.search(
+        '${song.artist} mix',
+      );
       results = results.where(isNewResult).toList();
       if (results.isEmpty) {
-        results = await YouTubeAudioService.instance.search('${song.title} ${song.artist} canciones');
+        results = await YouTubeAudioService.instance.search(
+          '${song.title} ${song.artist} canciones',
+        );
         results = results.where(isNewResult).toList();
       }
       if (results.isEmpty) {
@@ -2053,7 +2243,10 @@ class _FullPlayerState extends State<FullPlayer>
         return;
       }
       final ok = await player.playOnline(results.first, playlist: results);
-      if (!ok) _showActionMessage(player.playbackError ?? 'No se pudo iniciar la radio.');
+      if (!ok)
+        _showActionMessage(
+          player.playbackError ?? 'No se pudo iniciar la radio.',
+        );
     } catch (error) {
       debugPrint('[SoundNeed] Error al crear radio: $error');
       _showActionMessage('No se pudo cargar la radio de esta canción.');
@@ -2067,10 +2260,9 @@ class _FullPlayerState extends State<FullPlayer>
 
   void _showActionMessage(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      behavior: SnackBarBehavior.floating,
-      content: Text(message),
-    ));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(behavior: SnackBarBehavior.floating, content: Text(message)),
+    );
   }
 
   Future<void> _showSleepTimerOptions() async {
@@ -2090,24 +2282,42 @@ class _FullPlayerState extends State<FullPlayer>
       builder: (sheetContext) => SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 18),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(8, 8, 8, 12),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text('Temporizador para dormir', style: TextStyle(color: Colors.white, fontSize: 19, fontWeight: FontWeight.w800)),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Padding(
+                padding: EdgeInsets.fromLTRB(8, 8, 8, 12),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Temporizador para dormir',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 19,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
               ),
-            ),
-            for (final choice in choices)
-              ListTile(
-                leading: Icon(choice.$2 == null ? Icons.timer_off_rounded : Icons.bedtime_rounded, color: _themeColor),
-                title: Text(choice.$1, style: const TextStyle(color: Colors.white)),
-                onTap: () async {
-                  await player.setSleepTimer(choice.$2);
-                  if (sheetContext.mounted) Navigator.pop(sheetContext);
-                },
-              ),
-          ]),
+              for (final choice in choices)
+                ListTile(
+                  leading: Icon(
+                    choice.$2 == null
+                        ? Icons.timer_off_rounded
+                        : Icons.bedtime_rounded,
+                    color: _themeColor,
+                  ),
+                  title: Text(
+                    choice.$1,
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  onTap: () async {
+                    await player.setSleepTimer(choice.$2);
+                    if (sheetContext.mounted) Navigator.pop(sheetContext);
+                  },
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -2513,7 +2723,9 @@ class _FullPlayerState extends State<FullPlayer>
       : '$frequencyHz Hz';
 
   void _showSongInfo(BuildContext context, dynamic song) {
-    final duration = player.audioPlayer.duration;
+    final duration = player.playbackDuration > Duration.zero
+        ? player.playbackDuration
+        : null;
 
     showModalBottomSheet(
       context: context,

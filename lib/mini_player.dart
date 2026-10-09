@@ -566,12 +566,14 @@ class _MiniPlayerState extends State<MiniPlayer> {
 
   Widget _buildProgressPlayButton() {
     return StreamBuilder<Duration>(
-      stream: widget.player.audioPlayer.positionStream,
+      stream: widget.player.positionStream,
       builder: (context, snapshot) {
         final position = snapshot.data ?? Duration.zero;
 
         final duration =
-            widget.player.audioPlayer.duration ??
+            (widget.player.playbackDuration > Duration.zero
+                ? widget.player.playbackDuration
+                : null) ??
             Duration(milliseconds: widget.player.currentSong?.duration ?? 0);
 
         final total = duration.inMilliseconds;

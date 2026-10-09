@@ -21,6 +21,43 @@ class YouTubeAudioService {
   /// null = última operación exitosa.
   String? lastError;
 
+  /// Resolves a direct URL and the actual codec MIME type for a Cast receiver.
+  Future<({String url, String contentType})?> getCastAudioStream(
+    String videoId,
+  ) async {
+    lastError = null;
+    try {
+      final result = await _youtubeChannel
+          .invokeMapMethod<Object?, Object?>('getAudioStream', {
+            'videoId': videoId.trim(),
+          })
+          .timeout(const Duration(seconds: 20));
+      final url = result?['url']?.toString().trim() ?? '';
+      final contentType = result?['contentType']?.toString().trim() ?? '';
+      final uri = Uri.tryParse(url);
+      if (uri == null ||
+          !uri.hasAuthority ||
+          !{'http', 'https'}.contains(uri.scheme)) {
+        lastError = 'Android no devolvió una URL de audio válida para Cast.';
+        return null;
+      }
+      if (contentType.isEmpty) {
+        lastError = 'Android no identificó el formato del audio para Cast.';
+        return null;
+      }
+      return (url: url, contentType: contentType);
+    } on TimeoutException {
+      lastError = 'Se agotó el tiempo al preparar el audio para Cast.';
+      return null;
+    } on PlatformException catch (error) {
+      lastError = 'NewPipe: ${error.message ?? error.code}';
+      return null;
+    } catch (error) {
+      lastError = 'Error preparando el audio para Cast: $error';
+      return null;
+    }
+  }
+
   static const String _desktopUserAgent =
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
       'AppleWebKit/537.36 '
