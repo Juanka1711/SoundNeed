@@ -261,4 +261,17 @@ class AudioOutputService {
 
   Future<void> select(String routeId) =>
       _methods.invokeMethod<void>('select', {'routeId': routeId});
+
+  Future<void> openBluetoothSettings() =>
+      _methods.invokeMethod<void>('openBluetoothSettings');
+
+  Future<List<AudioOutputRoute>> getBondedBluetoothDevices() async {
+    final result = await _methods.invokeListMethod<Object?>(
+      'getBondedBluetoothDevices',
+    );
+    return (result ?? const [])
+        .whereType<Map<Object?, Object?>>()
+        .map(AudioOutputRoute.fromMap)
+        .toList(growable: false);
+  }
 }

@@ -1337,6 +1337,7 @@ class MainActivity : AudioServiceFragmentActivity() {
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (audioOutputManager?.onRequestPermissionsResult(requestCode, grantResults) == true) return
         if (requestCode != VISUALIZER_PERMISSION_REQUEST_CODE) return
         val result = pendingVisualizerResult ?: return
         val sessionId = pendingVisualizerSessionId
