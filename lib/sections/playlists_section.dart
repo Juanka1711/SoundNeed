@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
 import '../music_player.dart';
@@ -388,14 +389,125 @@ class _PlaylistContents extends StatefulWidget {
 class _PlaylistContentsState extends State<_PlaylistContents> {
   static const MethodChannel _mediaChannel = MethodChannel('music_player/media');
   final TextEditingController _searchController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
   final Map<String, String> _lookedUpArtists = {};
   final Set<String> _artistLookupsStarted = {};
   String _query = '';
+  String _songSort = 'original';
+  bool _showSearchOnScroll = false;
 
   @override
   void dispose() {
     _searchController.dispose();
+    _scrollController.dispose();
     super.dispose();
+  }
+
+  Future<void> _showPlaylistOptions(
+    String title,
+    List<Song> songs,
+    MusicPlaylist? playlist,
+  ) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF171720),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (sheetContext) => SizedBox(
+        height: MediaQuery.sizeOf(sheetContext).height * .4,
+        child: SafeArea(
+          top: false,
+          child: Column(
+            children: [
+              const SizedBox(height: 10),
+              Container(
+                width: 38,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.white38,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+              ListTile(
+                title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w800)),
+                subtitle: const Text('Opciones de playlist'),
+              ),
+              Expanded(
+                child: ListView(
+                  padding: EdgeInsets.zero,
+                  children: [
+                    ListTile(
+                      leading: const Icon(Icons.download_for_offline_outlined),
+                      title: const Text('Descargar'),
+                      enabled: songs.isNotEmpty &&
+                          !widget.player.isDownloadingPlaylist,
+                      onTap: () => Navigator.pop(sheetContext, 'download'),
+                    ),
+                    if (playlist != null) ListTile(leading: const Icon(Icons.playlist_add_rounded), title: const Text('Agregar a esta playlist'), onTap: () => Navigator.pop(sheetContext, 'add_current')),
+                    if (playlist != null) ListTile(leading: const Icon(Icons.library_add_outlined), title: const Text('Agregar a otra playlist'), onTap: () => Navigator.pop(sheetContext, 'add_other')),
+                    if (playlist != null) ListTile(leading: Icon(playlist.isPrivate ? Icons.lock_open_rounded : Icons.lock_outline_rounded), title: Text(playlist.isPrivate ? 'Hacer pública' : 'Hacer privada'), onTap: () => Navigator.pop(sheetContext, 'private')),
+                    if (playlist != null) ListTile(leading: const Icon(Icons.delete_outline_rounded), title: const Text('Eliminar playlist'), onTap: () => Navigator.pop(sheetContext, 'delete')),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (!mounted || action == null) return;
+    if (action == 'download' && songs.isNotEmpty) _downloadPlaylist(songs);
+    if (action == 'add_current') _addSongs(playlist);
+    if (action == 'add_other' && playlist != null) {
+      _addCollectionToAnother(playlist, songs);
+    }
+    if (action == 'private' && playlist != null) {
+      PlaylistManager.instance.setPlaylistPrivate(
+        playlist.id,
+        !playlist.isPrivate,
+      );
+    }
+    if (action == 'delete' && playlist != null) _delete(playlist);
+  }
+
+  Future<void> _chooseSort() async {
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: const Color(0xFF171720),
+      builder: (context) => SafeArea(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        const ListTile(title: Text('Ordenar canciones', style: TextStyle(fontWeight: FontWeight.bold))),
+        ListTile(leading: const Icon(Icons.reorder_rounded), title: const Text('Orden original'), onTap: () => Navigator.pop(context, 'original')),
+        ListTile(leading: const Icon(Icons.sort_by_alpha_rounded), title: const Text('Título'), onTap: () => Navigator.pop(context, 'title')),
+        ListTile(leading: const Icon(Icons.person_search_rounded), title: const Text('Artista'), onTap: () => Navigator.pop(context, 'artist')),
+      ])),
+    );
+    if (selected != null && mounted) setState(() => _songSort = selected);
+  }
+
+  Future<void> _addCollectionToAnother(MusicPlaylist source, List<Song> songs) async {
+    final manager = PlaylistManager.instance;
+    final targets = manager.playlists.where((item) => item.id != source.id).toList();
+    if (targets.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Crea otra playlist para copiar estas canciones.')));
+      return;
+    }
+    final targetId = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: const Color(0xFF171720),
+      builder: (context) => SafeArea(child: ListView(shrinkWrap: true, children: [
+        const ListTile(title: Text('Agregar a otra playlist', style: TextStyle(fontWeight: FontWeight.bold))),
+        ...targets.map((item) => ListTile(leading: const Icon(Icons.queue_music_rounded), title: Text(item.name), subtitle: Text('${item.songs.length} canciones'), onTap: () => Navigator.pop(context, item.id))),
+      ])),
+    );
+    if (targetId == null || !mounted) return;
+    final target = manager.findPlaylist(targetId);
+    if (target == null) return;
+    await manager.saveSharedPlaylist(target.name, songs, targetPlaylistId: targetId);
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Canciones agregadas a ${target.name}.')));
   }
 
   Future<void> _addSongs(MusicPlaylist? playlist) async {
@@ -589,9 +701,19 @@ class _PlaylistContentsState extends State<_PlaylistContents> {
         final title = widget.showLikedSongs
             ? 'Me gusta'
             : (playlist?.name ?? 'Playlist');
+        final visibleSongs = [...songs];
+        if (_songSort == 'title') {
+          visibleSongs.sort(
+            (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
+          );
+        } else if (_songSort == 'artist') {
+          visibleSongs.sort(
+            (a, b) => a.artist.toLowerCase().compareTo(b.artist.toLowerCase()),
+          );
+        }
         final filteredSongs = _query.trim().isEmpty
-            ? songs
-            : songs.where((song) {
+            ? visibleSongs
+            : visibleSongs.where((song) {
                 final query = _query.toLowerCase();
                 return song.title.toLowerCase().contains(query) ||
                     song.displayName.toLowerCase().contains(query) ||
@@ -604,69 +726,53 @@ class _PlaylistContentsState extends State<_PlaylistContents> {
         final accent = widget.showLikedSongs
             ? const Color(0xFFF43F5E)
             : const Color(0xFF8B5CF6);
-        return ListView(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 128),
-          children: [
-            Row(
-              children: [
-                IconButton(
-                  tooltip: 'Volver a playlists',
-                  onPressed: widget.onBack,
-                  icon: const Icon(Icons.arrow_back_rounded, size: 27),
-                ),
-                const Spacer(),
-                if (songs.isNotEmpty)
-                  IconButton(
-                    tooltip: 'Compartir $title',
-                    onPressed: () => _shareCollection(title, songs),
-                    icon: const Icon(Icons.share_rounded),
-                  ),
-                if (playlist != null)
-                  PopupMenuButton<String>(
-                    onSelected: (action) {
-                      if (action == 'rename') _rename(playlist);
-                      if (action == 'delete') _delete(playlist);
-                    },
-                    itemBuilder: (_) => const [
-                      PopupMenuItem(
-                        value: 'rename',
-                        child: Text('Cambiar nombre'),
+        return PopScope(
+          canPop: false,
+          onPopInvokedWithResult: (didPop, result) {
+            if (!didPop) widget.onBack();
+          },
+          child: NotificationListener<UserScrollNotification>(
+            onNotification: (notification) {
+              final movingTowardTop =
+                  notification.direction == ScrollDirection.forward;
+              if (movingTowardTop &&
+                  notification.metrics.pixels <= 180 &&
+                  !_showSearchOnScroll &&
+                  mounted) {
+                setState(() => _showSearchOnScroll = true);
+              }
+              return false;
+            },
+            child: ListView(
+                  controller: _scrollController,
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 128),
+                  children: [
+            AnimatedSize(
+              duration: const Duration(milliseconds: 320),
+              curve: Curves.easeInOutCubic,
+              alignment: Alignment.topCenter,
+              child: _showSearchOnScroll
+                  ? Padding(
+                      padding: const EdgeInsets.only(bottom: 16),
+                      child: SoundNeedSearchField(
+                        controller: _searchController,
+                        hintText: 'Buscar en la playlist',
+                        height: 56,
+                        prominent: true,
+                        onChanged: (value) => setState(() => _query = value),
+                        suffix: _query.isEmpty
+                            ? null
+                            : IconButton(
+                                onPressed: () {
+                                  _searchController.clear();
+                                  setState(() => _query = '');
+                                },
+                                icon: const Icon(Icons.close_rounded, size: 18),
+                              ),
                       ),
-                      PopupMenuItem(
-                        value: 'delete',
-                        child: Text('Eliminar playlist'),
-                      ),
-                    ],
-                  ),
-              ],
+                    )
+                  : const SizedBox(width: double.infinity, height: 0),
             ),
-            const SizedBox(height: 5),
-            SoundNeedSearchField(
-              controller: _searchController,
-              hintText: 'Buscar en la playlist',
-              height: 56,
-              onChanged: (value) => setState(() => _query = value),
-              suffix: _query.isEmpty
-                  ? null
-                  : IconButton(
-                      onPressed: () {
-                        _searchController.clear();
-                        setState(() => _query = '');
-                      },
-                      style: IconButton.styleFrom(
-                        foregroundColor: Colors.white70,
-                        fixedSize: const Size(34, 34),
-                      ),
-                      icon: const Icon(Icons.close_rounded, size: 18),
-                    ),
-            ),
-            if (_query.trim().isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text(
-                '${filteredSongs.length} ${filteredSongs.length == 1 ? 'resultado' : 'resultados'}',
-                style: const TextStyle(color: Colors.white60, fontSize: 12),
-              ),
-            ],
             const SizedBox(height: 19),
             Center(
               child: Container(
@@ -694,53 +800,26 @@ class _PlaylistContentsState extends State<_PlaylistContents> {
               ),
             ),
             const SizedBox(height: 19),
-            Text(
-              title,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 30,
-                height: 1.05,
-                fontWeight: FontWeight.w900,
-                letterSpacing: -.6,
-              ),
-            ),
-            const SizedBox(height: 9),
             Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                CircleAvatar(
-                  radius: 13,
-                  backgroundColor: accent.withValues(alpha: .22),
-                  child: Icon(
-                    widget.showLikedSongs
-                        ? Icons.favorite_rounded
-                        : Icons.person_rounded,
-                    size: 15,
-                    color: Colors.white,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  widget.showLikedSongs
-                      ? 'Tus canciones favoritas'
-                      : 'Tu playlist',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 13,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                const Text('·', style: TextStyle(color: Colors.white54)),
-                const SizedBox(width: 8),
                 Expanded(
-                  child: Text(
-                    '${songs.length} ${songs.length == 1 ? 'canción' : 'canciones'} · ${_formatDuration(totalDuration)}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white70, fontSize: 12),
-                  ),
+                  child: Text(title, maxLines: 2, overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 30, height: 1.05, fontWeight: FontWeight.w900, letterSpacing: -.6)),
+                ),
+                IconButton(
+                  tooltip: 'Opciones de playlist',
+                  onPressed: () => _showPlaylistOptions(title, songs, playlist),
+                  icon: const Icon(Icons.more_vert_rounded, size: 26),
                 ),
               ],
+            ),
+            const SizedBox(height: 9),
+            Text(
+              '${songs.length} ${songs.length == 1 ? 'canción' : 'canciones'} · ${_formatDuration(totalDuration)}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Colors.white70, fontSize: 13),
             ),
             const SizedBox(height: 20),
             Row(
@@ -748,7 +827,7 @@ class _PlaylistContentsState extends State<_PlaylistContents> {
                 Expanded(
                   child: OutlinedButton.icon(
                     onPressed: () => _addSongs(playlist),
-                    icon: const Icon(Icons.add_rounded),
+                    icon: const Icon(Icons.playlist_add_rounded),
                     label: const Text('Agregar'),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: Colors.white,
@@ -787,7 +866,9 @@ class _PlaylistContentsState extends State<_PlaylistContents> {
                           : () => _downloadPlaylist(songs),
                       style: IconButton.styleFrom(
                         fixedSize: const Size(50, 50),
-                        foregroundColor: accent,
+                        foregroundColor: Colors.white,
+                        backgroundColor: Colors.transparent,
+                        shape: const CircleBorder(),
                       ),
                       icon: SizedBox(
                         width: 27,
@@ -800,17 +881,15 @@ class _PlaylistContentsState extends State<_PlaylistContents> {
                                 child: CircularProgressIndicator(
                                   value: progress,
                                   strokeWidth: 2.5,
-                                  color: accent,
-                                  backgroundColor: accent.withValues(
-                                    alpha: .18,
-                                  ),
+                                  color: Colors.white,
+                                  backgroundColor: Colors.white24,
                                 ),
                               ),
                             Icon(
                               isDownloading
                                   ? Icons.downloading_rounded
-                                  : Icons.download_rounded,
-                              size: 20,
+                                  : Icons.download_for_offline_rounded,
+                              size: 23,
                             ),
                           ],
                         ),
@@ -829,7 +908,7 @@ class _PlaylistContentsState extends State<_PlaylistContents> {
                     backgroundColor: Colors.white,
                     foregroundColor: const Color(0xFF11111A),
                   ),
-                  icon: const Icon(Icons.play_arrow_rounded, size: 34),
+                  icon: const Icon(Icons.play_circle_fill_rounded, size: 34),
                 ),
               ],
             ),
@@ -839,28 +918,10 @@ class _PlaylistContentsState extends State<_PlaylistContents> {
               child: ListView(
                 scrollDirection: Axis.horizontal,
                 children: [
-                  _PlaylistBubble(
-                    label: 'Todas',
-                    icon: Icons.library_music_rounded,
-                    selected: false,
-                    onTap: widget.onBack,
-                  ),
-                  _PlaylistBubble(
-                    label: 'Me gusta',
-                    icon: Icons.favorite_rounded,
-                    selected: widget.showLikedSongs,
-                    onTap: widget.onSelectLikedSongs,
-                  ),
-                  ...manager.playlists.map(
-                    (item) => _PlaylistBubble(
-                      label: item.name,
-                      icon: Icons.playlist_play_rounded,
-                      selected:
-                          !widget.showLikedSongs &&
-                          item.id == widget.playlistId,
-                      onTap: () => widget.onSelectPlaylist(item.id),
-                    ),
-                  ),
+                  if (playlist != null)
+                    _PlaylistBubble(label: 'Editar nombre y datos', icon: Icons.edit_note_rounded, selected: false, onTap: () => _rename(playlist)),
+                  _PlaylistBubble(label: 'Compartir', icon: Icons.share_outlined, selected: false, onTap: () => _shareCollection(title, songs)),
+                  _PlaylistBubble(label: 'Ordenar', icon: Icons.sort_rounded, selected: false, onTap: _chooseSort),
                 ],
               ),
             ),
@@ -970,7 +1031,9 @@ class _PlaylistContentsState extends State<_PlaylistContents> {
                   ),
                 );
               }),
-          ],
+                  ],
+            ),
+          ),
         );
       },
     );

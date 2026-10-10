@@ -10,11 +10,13 @@ class MusicPlaylist {
     required this.id,
     required this.name,
     required this.songs,
+    this.isPrivate = false,
   });
 
   final String id;
   String name;
   final List<Song> songs;
+  bool isPrivate;
 
   factory MusicPlaylist.fromJson(Map<String, dynamic> json) {
     final songs = <Song>[];
@@ -35,6 +37,7 @@ class MusicPlaylist {
       id: json['id']?.toString() ?? '',
       name: json['name']?.toString() ?? 'Mi playlist',
       songs: songs,
+      isPrivate: json['isPrivate'] == true,
     );
   }
 
@@ -42,6 +45,7 @@ class MusicPlaylist {
         'id': id,
         'name': name,
         'songs': songs.map(_songToJson).toList(),
+        'isPrivate': isPrivate,
       };
 }
 
@@ -129,6 +133,15 @@ class PlaylistManager extends ChangeNotifier {
       requestedName.trim(),
       excludingPlaylistId: playlistId,
     );
+    await _save();
+    notifyListeners();
+  }
+
+  Future<void> setPlaylistPrivate(String playlistId, bool isPrivate) async {
+    await initialize();
+    final playlist = findPlaylist(playlistId);
+    if (playlist == null) return;
+    playlist.isPrivate = isPrivate;
     await _save();
     notifyListeners();
   }
