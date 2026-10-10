@@ -12,11 +12,13 @@ class AudioArtworkVisualizer extends StatefulWidget {
     required this.sessionIds,
     required this.initialSessionId,
     required this.isPlaying,
+    this.color = Colors.white,
   });
 
   final Stream<int?> sessionIds;
   final int? initialSessionId;
   final bool isPlaying;
+  final Color color;
 
   @override
   State<AudioArtworkVisualizer> createState() => _AudioArtworkVisualizerState();
@@ -185,7 +187,7 @@ class _AudioArtworkVisualizerState extends State<AudioArtworkVisualizer> {
         child: SizedBox(
           width: 30,
           height: 30,
-          child: CustomPaint(painter: _SpectrumPainter(_bands)),
+          child: CustomPaint(painter: _SpectrumPainter(_bands, widget.color)),
         ),
       ),
     );
@@ -193,9 +195,10 @@ class _AudioArtworkVisualizerState extends State<AudioArtworkVisualizer> {
 }
 
 class _SpectrumPainter extends CustomPainter {
-  const _SpectrumPainter(this.bands);
+  const _SpectrumPainter(this.bands, this.color);
 
   final List<double> bands;
+  final Color color;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -218,17 +221,17 @@ class _SpectrumPainter extends CustomPainter {
         Radius.circular(barWidth / 2),
       );
       final glow = Paint()
-        ..color = Colors.white.withValues(alpha: .35)
+        ..color = color.withValues(alpha: .35)
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2);
       canvas.drawRRect(rect, glow);
       canvas.drawRRect(
         rect,
-        Paint()..color = Colors.white.withValues(alpha: .96),
+        Paint()..color = color.withValues(alpha: .96),
       );
     }
   }
 
   @override
   bool shouldRepaint(covariant _SpectrumPainter oldDelegate) =>
-      !identical(oldDelegate.bands, bands);
+      !identical(oldDelegate.bands, bands) || oldDelegate.color != color;
 }

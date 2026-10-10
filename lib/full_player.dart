@@ -1656,6 +1656,8 @@ class _FullPlayerState extends State<FullPlayer>
         currentArtist: player.currentSong?.artist,
         currentArtworkUrl: player.currentSong?.artworkUri,
         currentArtworkBytes: _currentArtworkBytes,
+        audioSessionIds: player.audioPlayer.androidAudioSessionIdStream,
+        initialAudioSessionId: player.audioPlayer.androidAudioSessionId,
         isPlaying: player.isPlaying,
       ),
     );
