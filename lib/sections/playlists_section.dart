@@ -320,25 +320,6 @@ class _PlaylistTile extends StatelessWidget {
                           ),
                         ),
                 ),
-                if (songs.isNotEmpty)
-                  Positioned(
-                    right: 9,
-                    bottom: 9,
-                    child: DecoratedBox(
-                      decoration: const BoxDecoration(
-                        color: Colors.white,
-                        shape: BoxShape.circle,
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(5),
-                        child: Icon(
-                          Icons.play_arrow_rounded,
-                          color: accent,
-                          size: 22,
-                        ),
-                      ),
-                    ),
-                  ),
               ],
             ),
           ),
@@ -387,7 +368,9 @@ class _PlaylistContents extends StatefulWidget {
 }
 
 class _PlaylistContentsState extends State<_PlaylistContents> {
-  static const MethodChannel _mediaChannel = MethodChannel('music_player/media');
+  static const MethodChannel _mediaChannel = MethodChannel(
+    'music_player/media',
+  );
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final Map<String, String> _lookedUpArtists = {};
@@ -431,8 +414,12 @@ class _PlaylistContentsState extends State<_PlaylistContents> {
                 ),
               ),
               ListTile(
-                title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w800)),
+                title: Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
                 subtitle: const Text('Opciones de playlist'),
               ),
               Expanded(
@@ -442,14 +429,43 @@ class _PlaylistContentsState extends State<_PlaylistContents> {
                     ListTile(
                       leading: const Icon(Icons.download_for_offline_outlined),
                       title: const Text('Descargar'),
-                      enabled: songs.isNotEmpty &&
+                      enabled:
+                          songs.isNotEmpty &&
                           !widget.player.isDownloadingPlaylist,
                       onTap: () => Navigator.pop(sheetContext, 'download'),
                     ),
-                    if (playlist != null) ListTile(leading: const Icon(Icons.playlist_add_rounded), title: const Text('Agregar a esta playlist'), onTap: () => Navigator.pop(sheetContext, 'add_current')),
-                    if (playlist != null) ListTile(leading: const Icon(Icons.library_add_outlined), title: const Text('Agregar a otra playlist'), onTap: () => Navigator.pop(sheetContext, 'add_other')),
-                    if (playlist != null) ListTile(leading: Icon(playlist.isPrivate ? Icons.lock_open_rounded : Icons.lock_outline_rounded), title: Text(playlist.isPrivate ? 'Hacer pública' : 'Hacer privada'), onTap: () => Navigator.pop(sheetContext, 'private')),
-                    if (playlist != null) ListTile(leading: const Icon(Icons.delete_outline_rounded), title: const Text('Eliminar playlist'), onTap: () => Navigator.pop(sheetContext, 'delete')),
+                    if (playlist != null)
+                      ListTile(
+                        leading: const Icon(Icons.playlist_add_rounded),
+                        title: const Text('Agregar a esta playlist'),
+                        onTap: () => Navigator.pop(sheetContext, 'add_current'),
+                      ),
+                    if (playlist != null)
+                      ListTile(
+                        leading: const Icon(Icons.library_add_outlined),
+                        title: const Text('Agregar a otra playlist'),
+                        onTap: () => Navigator.pop(sheetContext, 'add_other'),
+                      ),
+                    if (playlist != null)
+                      ListTile(
+                        leading: Icon(
+                          playlist.isPrivate
+                              ? Icons.lock_open_rounded
+                              : Icons.lock_outline_rounded,
+                        ),
+                        title: Text(
+                          playlist.isPrivate
+                              ? 'Hacer pública'
+                              : 'Hacer privada',
+                        ),
+                        onTap: () => Navigator.pop(sheetContext, 'private'),
+                      ),
+                    if (playlist != null)
+                      ListTile(
+                        leading: const Icon(Icons.delete_outline_rounded),
+                        title: const Text('Eliminar playlist'),
+                        onTap: () => Navigator.pop(sheetContext, 'delete'),
+                      ),
                   ],
                 ),
               ),
@@ -478,36 +494,91 @@ class _PlaylistContentsState extends State<_PlaylistContents> {
     final selected = await showModalBottomSheet<String>(
       context: context,
       backgroundColor: const Color(0xFF171720),
-      builder: (context) => SafeArea(child: Column(mainAxisSize: MainAxisSize.min, children: [
-        const ListTile(title: Text('Ordenar canciones', style: TextStyle(fontWeight: FontWeight.bold))),
-        ListTile(leading: const Icon(Icons.reorder_rounded), title: const Text('Orden original'), onTap: () => Navigator.pop(context, 'original')),
-        ListTile(leading: const Icon(Icons.sort_by_alpha_rounded), title: const Text('Título'), onTap: () => Navigator.pop(context, 'title')),
-        ListTile(leading: const Icon(Icons.person_search_rounded), title: const Text('Artista'), onTap: () => Navigator.pop(context, 'artist')),
-      ])),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const ListTile(
+              title: Text(
+                'Ordenar canciones',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.reorder_rounded),
+              title: const Text('Orden original'),
+              onTap: () => Navigator.pop(context, 'original'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.sort_by_alpha_rounded),
+              title: const Text('Título'),
+              onTap: () => Navigator.pop(context, 'title'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.person_search_rounded),
+              title: const Text('Artista'),
+              onTap: () => Navigator.pop(context, 'artist'),
+            ),
+          ],
+        ),
+      ),
     );
     if (selected != null && mounted) setState(() => _songSort = selected);
   }
 
-  Future<void> _addCollectionToAnother(MusicPlaylist source, List<Song> songs) async {
+  Future<void> _addCollectionToAnother(
+    MusicPlaylist source,
+    List<Song> songs,
+  ) async {
     final manager = PlaylistManager.instance;
-    final targets = manager.playlists.where((item) => item.id != source.id).toList();
+    final targets = manager.playlists
+        .where((item) => item.id != source.id)
+        .toList();
     if (targets.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Crea otra playlist para copiar estas canciones.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Crea otra playlist para copiar estas canciones.'),
+        ),
+      );
       return;
     }
     final targetId = await showModalBottomSheet<String>(
       context: context,
       backgroundColor: const Color(0xFF171720),
-      builder: (context) => SafeArea(child: ListView(shrinkWrap: true, children: [
-        const ListTile(title: Text('Agregar a otra playlist', style: TextStyle(fontWeight: FontWeight.bold))),
-        ...targets.map((item) => ListTile(leading: const Icon(Icons.queue_music_rounded), title: Text(item.name), subtitle: Text('${item.songs.length} canciones'), onTap: () => Navigator.pop(context, item.id))),
-      ])),
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            const ListTile(
+              title: Text(
+                'Agregar a otra playlist',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+            ...targets.map(
+              (item) => ListTile(
+                leading: const Icon(Icons.queue_music_rounded),
+                title: Text(item.name),
+                subtitle: Text('${item.songs.length} canciones'),
+                onTap: () => Navigator.pop(context, item.id),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
     if (targetId == null || !mounted) return;
     final target = manager.findPlaylist(targetId);
     if (target == null) return;
-    await manager.saveSharedPlaylist(target.name, songs, targetPlaylistId: targetId);
-    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Canciones agregadas a ${target.name}.')));
+    await manager.saveSharedPlaylist(
+      target.name,
+      songs,
+      targetPlaylistId: targetId,
+    );
+    if (mounted)
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Canciones agregadas a ${target.name}.')),
+      );
   }
 
   Future<void> _addSongs(MusicPlaylist? playlist) async {
@@ -591,18 +662,20 @@ class _PlaylistContentsState extends State<_PlaylistContents> {
     } on MissingPluginException {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Compartir playlists no está disponible.')),
+          const SnackBar(
+            content: Text('Compartir playlists no está disponible.'),
+          ),
         );
       }
     } on Object catch (error) {
-      debugPrint('[SoundNeed] No se pudo preparar el enlace de la playlist: $error');
+      debugPrint(
+        '[SoundNeed] No se pudo preparar el enlace de la playlist: $error',
+      );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              error is StateError
-                  ? error.message.toString()
-                  : 'No se pudo preparar el enlace. Revisa tu conexión e inténtalo de nuevo.',
+              error is StateError ? error.message.toString() : 'No se pudo preparar el enlace. Revisa tu conexión e inténtalo de nuevo.',
             ),
           ),
         );
@@ -744,294 +817,334 @@ class _PlaylistContentsState extends State<_PlaylistContents> {
               return false;
             },
             child: ListView(
-                  controller: _scrollController,
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 128),
-                  children: [
-            AnimatedSize(
-              duration: const Duration(milliseconds: 320),
-              curve: Curves.easeInOutCubic,
-              alignment: Alignment.topCenter,
-              child: _showSearchOnScroll
-                  ? Padding(
-                      padding: const EdgeInsets.only(bottom: 16),
-                      child: SoundNeedSearchField(
-                        controller: _searchController,
-                        hintText: 'Buscar en la playlist',
-                        height: 56,
-                        prominent: true,
-                        onChanged: (value) => setState(() => _query = value),
-                        suffix: _query.isEmpty
-                            ? null
-                            : IconButton(
-                                onPressed: () {
-                                  _searchController.clear();
-                                  setState(() => _query = '');
-                                },
-                                icon: const Icon(Icons.close_rounded, size: 18),
-                              ),
-                      ),
-                    )
-                  : const SizedBox(width: double.infinity, height: 0),
-            ),
-            const SizedBox(height: 19),
-            Center(
-              child: Container(
-                width: (MediaQuery.sizeOf(context).width - 48)
-                    .clamp(260.0, 440.0)
-                    .toDouble(),
-                height: (MediaQuery.sizeOf(context).width - 48)
-                    .clamp(260.0, 440.0)
-                    .toDouble(),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(22),
-                  border: Border.all(color: accent.withValues(alpha: .25)),
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(22),
-                  child: PlaylistArtwork(
-                    player: widget.player,
-                    songs: songs,
-                    icon: widget.showLikedSongs
-                        ? Icons.favorite_rounded
-                        : Icons.queue_music_rounded,
-                    accent: accent,
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 19),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
+              controller: _scrollController,
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 128),
               children: [
-                Expanded(
-                  child: Text(title, maxLines: 2, overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 30, height: 1.05, fontWeight: FontWeight.w900, letterSpacing: -.6)),
+                AnimatedSize(
+                  duration: const Duration(milliseconds: 320),
+                  curve: Curves.easeInOutCubic,
+                  alignment: Alignment.topCenter,
+                  child: _showSearchOnScroll
+                      ? Padding(
+                          padding: const EdgeInsets.only(bottom: 16),
+                          child: SoundNeedSearchField(
+                            controller: _searchController,
+                            hintText: 'Buscar en la playlist',
+                            height: 56,
+                            prominent: true,
+                            onChanged: (value) =>
+                                setState(() => _query = value),
+                            suffix: _query.isEmpty
+                                ? null
+                                : IconButton(
+                                    onPressed: () {
+                                      _searchController.clear();
+                                      setState(() => _query = '');
+                                    },
+                                    icon: const Icon(
+                                      Icons.close_rounded,
+                                      size: 18,
+                                    ),
+                                  ),
+                          ),
+                        )
+                      : const SizedBox(width: double.infinity, height: 0),
                 ),
-                IconButton(
-                  tooltip: 'Opciones de playlist',
-                  onPressed: () => _showPlaylistOptions(title, songs, playlist),
-                  icon: const Icon(Icons.more_vert_rounded, size: 26),
-                ),
-              ],
-            ),
-            const SizedBox(height: 9),
-            Text(
-              '${songs.length} ${songs.length == 1 ? 'canción' : 'canciones'} · ${_formatDuration(totalDuration)}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Colors.white70, fontSize: 13),
-            ),
-            const SizedBox(height: 20),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () => _addSongs(playlist),
-                    icon: const Icon(Icons.playlist_add_rounded),
-                    label: const Text('Agregar'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.white,
-                      side: BorderSide(
-                        color: Colors.white.withValues(alpha: .16),
+                const SizedBox(height: 19),
+                Center(
+                  child: Container(
+                    width: (MediaQuery.sizeOf(context).width - 48)
+                        .clamp(260.0, 440.0)
+                        .toDouble(),
+                    height: (MediaQuery.sizeOf(context).width - 48)
+                        .clamp(260.0, 440.0)
+                        .toDouble(),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(22),
+                      border: Border.all(color: accent.withValues(alpha: .25)),
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(22),
+                      child: PlaylistArtwork(
+                        player: widget.player,
+                        songs: songs,
+                        icon: widget.showLikedSongs
+                            ? Icons.favorite_rounded
+                            : Icons.queue_music_rounded,
+                        accent: accent,
                       ),
-                      padding: const EdgeInsets.symmetric(vertical: 13),
-                      shape: const StadiumBorder(),
                     ),
                   ),
                 ),
-                const SizedBox(width: 10),
-                Builder(
-                  builder: (context) {
-                    final downloadableCount = songs
-                        .where(
-                          (song) =>
-                              song.isOnline ||
-                              song.isPodcast ||
-                              song.uri.startsWith('http://') ||
-                              song.uri.startsWith('https://'),
-                        )
-                        .length;
-                    final isDownloading = widget.player.isDownloadingPlaylist;
-                    final progress = widget.player.playlistDownloadProgress;
-                    return IconButton.filledTonal(
-                      tooltip: isDownloading
-                          ? 'Descargando ${widget.player.playlistDownloadFinished >= widget.player.playlistDownloadTotal ? widget.player.playlistDownloadTotal : widget.player.playlistDownloadFinished + 1}/${widget.player.playlistDownloadTotal}'
-                          : 'Descargar playlist',
-                      onPressed:
-                          songs.isEmpty ||
-                              downloadableCount == 0 ||
-                              isDownloading ||
-                              widget.player.isDownloading
-                          ? null
-                          : () => _downloadPlaylist(songs),
-                      style: IconButton.styleFrom(
-                        fixedSize: const Size(50, 50),
-                        foregroundColor: Colors.white,
-                        backgroundColor: Colors.transparent,
-                        shape: const CircleBorder(),
-                      ),
-                      icon: SizedBox(
-                        width: 27,
-                        height: 27,
-                        child: Stack(
-                          alignment: Alignment.center,
-                          children: [
-                            if (isDownloading)
-                              SizedBox.expand(
-                                child: CircularProgressIndicator(
-                                  value: progress,
-                                  strokeWidth: 2.5,
-                                  color: Colors.white,
-                                  backgroundColor: Colors.white24,
-                                ),
-                              ),
-                            Icon(
-                              isDownloading
-                                  ? Icons.downloading_rounded
-                                  : Icons.download_for_offline_rounded,
-                              size: 23,
-                            ),
-                          ],
+                const SizedBox(height: 19),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 30,
+                          height: 1.05,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: -.6,
                         ),
                       ),
-                    );
-                  },
+                    ),
+                    IconButton(
+                      tooltip: 'Opciones de playlist',
+                      onPressed: () =>
+                          _showPlaylistOptions(title, songs, playlist),
+                      icon: const Icon(Icons.more_vert_rounded, size: 26),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 10),
-                IconButton.filled(
-                  tooltip: 'Reproducir todo',
-                  onPressed: songs.isEmpty
-                      ? null
-                      : () => widget.player.playPlaylist(songs),
-                  style: IconButton.styleFrom(
-                    fixedSize: const Size(58, 58),
-                    backgroundColor: Colors.white,
-                    foregroundColor: const Color(0xFF11111A),
-                  ),
-                  icon: const Icon(Icons.play_circle_fill_rounded, size: 34),
+                const SizedBox(height: 9),
+                Text(
+                  '${songs.length} ${songs.length == 1 ? 'canción' : 'canciones'} · ${_formatDuration(totalDuration)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white70, fontSize: 13),
                 ),
-              ],
-            ),
-            const SizedBox(height: 19),
-            SizedBox(
-              height: 42,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                children: [
-                  if (playlist != null)
-                    _PlaylistBubble(label: 'Editar nombre y datos', icon: Icons.edit_note_rounded, selected: false, onTap: () => _rename(playlist)),
-                  _PlaylistBubble(label: 'Compartir', icon: Icons.share_outlined, selected: false, onTap: () => _shareCollection(title, songs)),
-                  _PlaylistBubble(label: 'Ordenar', icon: Icons.sort_rounded, selected: false, onTap: _chooseSort),
-                ],
-              ),
-            ),
-            const SizedBox(height: 17),
-            if (filteredSongs.isEmpty)
-              SoundNeedEmptyState(
-                icon: _query.isNotEmpty
-                    ? Icons.search_off_rounded
-                    : widget.showLikedSongs
-                    ? Icons.favorite_border_rounded
-                    : Icons.queue_music_rounded,
-                title: _query.isNotEmpty
-                    ? 'Sin coincidencias'
-                    : widget.showLikedSongs
-                    ? 'Tu colección empieza aquí'
-                    : 'Esta playlist está vacía',
-                message: _query.isNotEmpty
-                    ? 'Prueba buscar por otro título o artista.'
-                    : widget.showLikedSongs
-                    ? 'Las canciones que marques con Me gusta aparecerán aquí.'
-                    : 'Agrega canciones y crea una lista para cada momento.',
-                accent: accent,
-              )
-            else
-              ...filteredSongs.map((song) {
-                final index = songs.indexOf(song);
-                final current = widget.player.currentSong?.id == song.id;
-                return Padding(
-                  key: ValueKey(songKey(song)),
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: Material(
-                    color: const Color(0xFF171720),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(26),
-                      side: BorderSide(
-                        color: current
-                            ? accent.withValues(alpha: .55)
-                            : Colors.white.withValues(alpha: .06),
+                const SizedBox(height: 20),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => _addSongs(playlist),
+                        icon: const Icon(Icons.playlist_add_rounded),
+                        label: const Text('Agregar'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.white,
+                          side: BorderSide(
+                            color: Colors.white.withValues(alpha: .16),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 13),
+                          shape: const StadiumBorder(),
+                        ),
                       ),
                     ),
-                    clipBehavior: Clip.antiAlias,
-                    child: ListTile(
-                      minVerticalPadding: 10,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 2,
+                    const SizedBox(width: 10),
+                    Builder(
+                      builder: (context) {
+                        final downloadableCount = songs
+                            .where(
+                              (song) =>
+                                  song.isOnline ||
+                                  song.isPodcast ||
+                                  song.uri.startsWith('http://') ||
+                                  song.uri.startsWith('https://'),
+                            )
+                            .length;
+                        final isDownloading =
+                            widget.player.isDownloadingPlaylist;
+                        final progress = widget.player.playlistDownloadProgress;
+                        return IconButton.filledTonal(
+                          tooltip: isDownloading
+                              ? 'Descargando ${widget.player.playlistDownloadFinished >= widget.player.playlistDownloadTotal ? widget.player.playlistDownloadTotal : widget.player.playlistDownloadFinished + 1}/${widget.player.playlistDownloadTotal}'
+                              : 'Descargar playlist',
+                          onPressed:
+                              songs.isEmpty ||
+                                  downloadableCount == 0 ||
+                                  isDownloading ||
+                                  widget.player.isDownloading
+                              ? null
+                              : () => _downloadPlaylist(songs),
+                          style: IconButton.styleFrom(
+                            fixedSize: const Size(50, 50),
+                            foregroundColor: Colors.white,
+                            backgroundColor: Colors.transparent,
+                            shape: const CircleBorder(),
+                          ),
+                          icon: SizedBox(
+                            width: 27,
+                            height: 27,
+                            child: Stack(
+                              alignment: Alignment.center,
+                              children: [
+                                if (isDownloading)
+                                  SizedBox.expand(
+                                    child: CircularProgressIndicator(
+                                      value: progress,
+                                      strokeWidth: 2.5,
+                                      color: Colors.white,
+                                      backgroundColor: Colors.white24,
+                                    ),
+                                  ),
+                                Icon(
+                                  isDownloading
+                                      ? Icons.downloading_rounded
+                                      : Icons.download_for_offline_rounded,
+                                  size: 23,
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(width: 10),
+                    IconButton.filled(
+                      tooltip: 'Reproducir todo',
+                      onPressed: songs.isEmpty
+                          ? null
+                          : () => widget.player.playPlaylist(songs),
+                      style: IconButton.styleFrom(
+                        fixedSize: const Size(58, 58),
+                        backgroundColor: Colors.white,
+                        foregroundColor: const Color(0xFF11111A),
                       ),
-                      leading: _SongArtwork(
-                        player: widget.player,
-                        song: song,
-                        active: current,
+                      icon: const Icon(
+                        Icons.play_circle_fill_rounded,
+                        size: 34,
                       ),
-                      title: Text(
-                        song.title.isEmpty ? song.displayName : song.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 19),
+                SizedBox(
+                  height: 42,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    children: [
+                      if (playlist != null)
+                        _PlaylistBubble(
+                          label: 'Editar nombre y datos',
+                          icon: Icons.edit_note_rounded,
+                          selected: false,
+                          onTap: () => _rename(playlist),
+                        ),
+                      _PlaylistBubble(
+                        label: 'Compartir',
+                        icon: Icons.share_outlined,
+                        selected: false,
+                        onTap: () => _shareCollection(title, songs),
                       ),
-                      subtitle: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            _lookedUpArtists[songKey(song)] ??
-                                (song.artist == 'Artista desconocido' &&
-                                        _artistLookupsStarted.contains(
-                                          songKey(song),
-                                        )
-                                    ? 'Buscando artista…'
-                                    : song.artist),
+                      _PlaylistBubble(
+                        label: 'Ordenar',
+                        icon: Icons.sort_rounded,
+                        selected: false,
+                        onTap: _chooseSort,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 17),
+                if (filteredSongs.isEmpty)
+                  SoundNeedEmptyState(
+                    icon: _query.isNotEmpty
+                        ? Icons.search_off_rounded
+                        : widget.showLikedSongs
+                        ? Icons.favorite_border_rounded
+                        : Icons.queue_music_rounded,
+                    title: _query.isNotEmpty
+                        ? 'Sin coincidencias'
+                        : widget.showLikedSongs
+                        ? 'Tu colección empieza aquí'
+                        : 'Esta playlist está vacía',
+                    message: _query.isNotEmpty
+                        ? 'Prueba buscar por otro título o artista.'
+                        : widget.showLikedSongs
+                        ? 'Las canciones que marques con Me gusta aparecerán aquí.'
+                        : 'Agrega canciones y crea una lista para cada momento.',
+                    accent: accent,
+                  )
+                else
+                  ...filteredSongs.map((song) {
+                    final index = songs.indexOf(song);
+                    final current = widget.player.currentSong?.id == song.id;
+                    return Padding(
+                      key: ValueKey(songKey(song)),
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: Material(
+                        color: const Color(0xFF171720),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(26),
+                          side: BorderSide(
+                            color: current
+                                ? accent.withValues(alpha: .55)
+                                : Colors.white.withValues(alpha: .06),
+                          ),
+                        ),
+                        clipBehavior: Clip.antiAlias,
+                        child: ListTile(
+                          minVerticalPadding: 10,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 2,
+                          ),
+                          leading: _SongArtwork(
+                            player: widget.player,
+                            song: song,
+                            active: current,
+                          ),
+                          title: Text(
+                            song.title.isEmpty ? song.displayName : song.title,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
-                          if (isLocalMusic(song)) ...[
-                            const SizedBox(height: 3),
-                            const LocalMusicBadge(),
-                          ],
-                        ],
-                      ),
-                      onTap: () {
-                        if (current) {
-                          selectSongOrOpenPlayer(context, widget.player, song);
-                        } else {
-                          widget.player.playPlaylist(songs, startIndex: index);
-                        }
-                      },
-                      trailing: IconButton(
-                        tooltip: widget.showLikedSongs
-                            ? 'Quitar de Me gusta'
-                            : 'Quitar de playlist',
-                        icon: Icon(
-                          widget.showLikedSongs
-                              ? Icons.favorite
-                              : Icons.remove_circle_outline,
-                          color: widget.showLikedSongs
-                              ? const Color(0xFFF43F5E)
-                              : Colors.white70,
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                _lookedUpArtists[songKey(song)] ??
+                                    (song.artist == 'Artista desconocido' &&
+                                            _artistLookupsStarted.contains(
+                                              songKey(song),
+                                            )
+                                        ? 'Buscando artista…'
+                                        : song.artist),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              if (isLocalMusic(song)) ...[
+                                const SizedBox(height: 3),
+                                const LocalMusicBadge(),
+                              ],
+                            ],
+                          ),
+                          onTap: () {
+                            if (current) {
+                              selectSongOrOpenPlayer(
+                                context,
+                                widget.player,
+                                song,
+                              );
+                            } else {
+                              widget.player.playPlaylist(
+                                songs,
+                                startIndex: index,
+                              );
+                            }
+                          },
+                          trailing: IconButton(
+                            tooltip: widget.showLikedSongs
+                                ? 'Quitar de Me gusta'
+                                : 'Quitar de playlist',
+                            icon: Icon(
+                              widget.showLikedSongs
+                                  ? Icons.favorite
+                                  : Icons.remove_circle_outline,
+                              color: widget.showLikedSongs
+                                  ? const Color(0xFFF43F5E)
+                                  : Colors.white70,
+                            ),
+                            onPressed: () async {
+                              if (widget.showLikedSongs) {
+                                await setSongLiked(widget.player, song, false);
+                              } else if (playlist != null) {
+                                await manager.removeSong(playlist.id, song);
+                              }
+                            },
+                          ),
                         ),
-                        onPressed: () async {
-                          if (widget.showLikedSongs) {
-                            await setSongLiked(widget.player, song, false);
-                          } else if (playlist != null) {
-                            await manager.removeSong(playlist.id, song);
-                          }
-                        },
                       ),
-                    ),
-                  ),
-                );
-              }),
-                  ],
+                    );
+                  }),
+              ],
             ),
           ),
         );
@@ -1331,7 +1444,9 @@ class _PlaylistSongPickerState extends State<_PlaylistSongPicker> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        song.isOnline ? 'YouTube · ${song.artist}' : song.artist,
+                        song.isOnline
+                            ? 'YouTube · ${song.artist}'
+                            : song.artist,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),

@@ -57,6 +57,100 @@ class MusicPlayerApp extends StatelessWidget {
       title: 'SoundNeed',
       theme: ThemeData(
         brightness: Brightness.dark,
+        // Shared type scale: headings feel more intentional while song and
+        // supporting copy stay easy to scan across every section.
+        textTheme: const TextTheme(
+          displayLarge: TextStyle(
+            fontSize: 36,
+            fontWeight: FontWeight.w800,
+            letterSpacing: -1.15,
+            height: 1.08,
+          ),
+          displayMedium: TextStyle(
+            fontSize: 32,
+            fontWeight: FontWeight.w800,
+            letterSpacing: -.9,
+            height: 1.1,
+          ),
+          displaySmall: TextStyle(
+            fontSize: 28,
+            fontWeight: FontWeight.w800,
+            letterSpacing: -.7,
+            height: 1.12,
+          ),
+          headlineLarge: TextStyle(
+            fontSize: 26,
+            fontWeight: FontWeight.w800,
+            letterSpacing: -.65,
+            height: 1.14,
+          ),
+          headlineMedium: TextStyle(
+            fontSize: 23,
+            fontWeight: FontWeight.w700,
+            letterSpacing: -.45,
+            height: 1.18,
+          ),
+          headlineSmall: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.w700,
+            letterSpacing: -.3,
+            height: 1.2,
+          ),
+          titleLarge: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            letterSpacing: -.2,
+            height: 1.25,
+          ),
+          titleMedium: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+            letterSpacing: -.1,
+            height: 1.3,
+          ),
+          titleSmall: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            letterSpacing: .05,
+            height: 1.3,
+          ),
+          bodyLarge: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w400,
+            letterSpacing: .05,
+            height: 1.5,
+          ),
+          bodyMedium: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w400,
+            letterSpacing: .08,
+            height: 1.45,
+          ),
+          bodySmall: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w400,
+            letterSpacing: .12,
+            height: 1.4,
+          ),
+          labelLarge: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            letterSpacing: .12,
+            height: 1.2,
+          ),
+          labelMedium: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            letterSpacing: .18,
+            height: 1.2,
+          ),
+          labelSmall: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w500,
+            letterSpacing: .2,
+            height: 1.2,
+          ),
+        ).apply(displayColor: Colors.white, bodyColor: Colors.white),
         scaffoldBackgroundColor: background,
         colorScheme: ColorScheme.fromSeed(
           seedColor: primary,
@@ -72,6 +166,30 @@ class MusicPlayerApp extends StatelessWidget {
           backgroundColor: Colors.transparent,
           elevation: 0,
           foregroundColor: Colors.white,
+          titleTextStyle: TextStyle(
+            color: Colors.white,
+            fontSize: 20,
+            fontWeight: FontWeight.w700,
+            letterSpacing: -.35,
+            height: 1.2,
+          ),
+        ),
+
+        listTileTheme: const ListTileThemeData(
+          titleTextStyle: TextStyle(
+            color: Colors.white,
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+            letterSpacing: -.12,
+            height: 1.25,
+          ),
+          subtitleTextStyle: TextStyle(
+            color: textSecondary,
+            fontSize: 13,
+            fontWeight: FontWeight.w400,
+            letterSpacing: .08,
+            height: 1.35,
+          ),
         ),
 
         cardTheme: const CardThemeData(
@@ -91,12 +209,14 @@ class MusicPlayerApp extends StatelessWidget {
             color: Colors.white,
             fontSize: 21,
             fontWeight: FontWeight.w800,
-            letterSpacing: -.3,
+            letterSpacing: -.45,
+            height: 1.18,
           ),
           contentTextStyle: const TextStyle(
             color: textSecondary,
             fontSize: 14,
-            height: 1.4,
+            letterSpacing: .08,
+            height: 1.48,
           ),
         ),
 
@@ -121,7 +241,13 @@ class MusicPlayerApp extends StatelessWidget {
             borderRadius: BorderRadius.circular(18),
             side: const BorderSide(color: Colors.white12),
           ),
-          textStyle: const TextStyle(color: Colors.white, fontSize: 14),
+          textStyle: const TextStyle(
+            color: Colors.white,
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+            letterSpacing: .05,
+            height: 1.25,
+          ),
         ),
 
         dividerTheme: DividerThemeData(

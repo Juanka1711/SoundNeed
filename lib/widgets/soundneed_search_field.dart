@@ -13,7 +13,8 @@ class SoundNeedSearchField extends StatefulWidget {
     this.autofocus = false,
     this.textInputAction = TextInputAction.search,
     this.height = 54,
-    this.prominent = false,
+    this.prominent = true,
+    this.accent = const Color(0xFF8B5CF6),
   });
 
   final TextEditingController controller;
@@ -26,6 +27,7 @@ class SoundNeedSearchField extends StatefulWidget {
   final TextInputAction textInputAction;
   final double height;
   final bool prominent;
+  final Color accent;
 
   @override
   State<SoundNeedSearchField> createState() => _SoundNeedSearchFieldState();
@@ -35,7 +37,18 @@ class _SoundNeedSearchFieldState extends State<SoundNeedSearchField> {
   final FocusNode _focusNode = FocusNode();
 
   @override
+  void initState() {
+    super.initState();
+    _focusNode.addListener(_onFocusChanged);
+  }
+
+  void _onFocusChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
   void dispose() {
+    _focusNode.removeListener(_onFocusChanged);
     _focusNode.dispose();
     super.dispose();
   }
@@ -49,30 +62,33 @@ class _SoundNeedSearchFieldState extends State<SoundNeedSearchField> {
       padding: const EdgeInsets.symmetric(horizontal: 14),
       decoration: BoxDecoration(
         gradient: widget.prominent
-            ? const LinearGradient(
-                colors: [Color(0xFF292633), Color(0xFF1C1B24)],
+            ? LinearGradient(
+                colors: const [Color(0xFF24212E), Color(0xFF17151F)],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               )
             : null,
         color: widget.prominent ? null : const Color(0xFF1D1B27),
-        borderRadius: BorderRadius.circular(widget.prominent ? 22 : 20),
+        borderRadius: BorderRadius.circular(widget.prominent ? 30 : 20),
         border: Border.all(
-          color: Colors.white.withValues(alpha: widget.prominent ? .22 : .09),
-          width: widget.prominent ? 1.2 : 1,
+          color: _focusNode.hasFocus
+              ? widget.accent.withValues(alpha: .62)
+              : Colors.white.withValues(alpha: widget.prominent ? .16 : .09),
+          width: _focusNode.hasFocus ? 1.35 : 1,
         ),
         boxShadow: widget.prominent
             ? [
                 BoxShadow(
-                  color: Colors.black.withValues(alpha: .28),
-                  blurRadius: 20,
-                  offset: const Offset(0, 8),
+                  color: Colors.black.withValues(alpha: .24),
+                  blurRadius: 18,
+                  offset: const Offset(0, 6),
                 ),
-                BoxShadow(
-                  color: Colors.white.withValues(alpha: .035),
-                  blurRadius: 1,
-                  spreadRadius: 1,
-                ),
+                if (_focusNode.hasFocus)
+                  BoxShadow(
+                    color: widget.accent.withValues(alpha: .14),
+                    blurRadius: 18,
+                    spreadRadius: 1,
+                  ),
               ]
             : null,
       ),
@@ -80,7 +96,11 @@ class _SoundNeedSearchFieldState extends State<SoundNeedSearchField> {
         children: [
           Icon(
             widget.prefixIcon,
-            color: widget.prominent ? Colors.white : Colors.white70,
+            color: _focusNode.hasFocus
+                ? widget.accent
+                : widget.prominent
+                ? Colors.white
+                : Colors.white70,
             size: widget.prominent ? 23 : 21,
           ),
           SizedBox(width: widget.prominent ? 12 : 11),
@@ -100,15 +120,25 @@ class _SoundNeedSearchFieldState extends State<SoundNeedSearchField> {
               style: TextStyle(
                 color: Colors.white,
                 fontSize: widget.prominent ? 15 : 14,
-                fontWeight: widget.prominent ? FontWeight.w500 : FontWeight.normal,
+                fontWeight: widget.prominent
+                    ? FontWeight.w500
+                    : FontWeight.normal,
+                letterSpacing: .1,
                 decoration: TextDecoration.none,
               ),
               decoration: InputDecoration(
                 hintText: widget.hintText,
+                filled: false,
+                fillColor: Colors.transparent,
                 hintStyle: TextStyle(
-                  color: Colors.white.withValues(alpha: widget.prominent ? .64 : .54),
+                  color: Colors.white.withValues(
+                    alpha: widget.prominent ? .64 : .54,
+                  ),
                   fontSize: widget.prominent ? 14 : 14,
-                  fontWeight: widget.prominent ? FontWeight.w500 : FontWeight.normal,
+                  fontWeight: widget.prominent
+                      ? FontWeight.w500
+                      : FontWeight.normal,
+                  letterSpacing: .1,
                   decoration: TextDecoration.none,
                 ),
                 border: InputBorder.none,

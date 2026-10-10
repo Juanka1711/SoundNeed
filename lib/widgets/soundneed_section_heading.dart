@@ -7,11 +7,13 @@ class SoundNeedSectionHeading extends StatelessWidget {
     required this.title,
     this.detail,
     this.accent = const Color(0xFF8B5CF6),
+    this.titleFontSize = 19,
   });
 
   final String title;
   final String? detail;
   final Color accent;
+  final double titleFontSize;
 
   @override
   Widget build(BuildContext context) => Row(
@@ -34,10 +36,11 @@ class SoundNeedSectionHeading extends StatelessWidget {
           title,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            fontSize: 18,
+          style: TextStyle(
+            fontSize: titleFontSize,
             fontWeight: FontWeight.w800,
-            letterSpacing: -.35,
+            letterSpacing: -.45,
+            height: 1.18,
           ),
         ),
       ),
@@ -60,6 +63,8 @@ class SoundNeedSectionHeading extends StatelessWidget {
                 color: Color.lerp(accent, Colors.white, .35),
                 fontSize: 10,
                 fontWeight: FontWeight.w700,
+                letterSpacing: .18,
+                height: 1.15,
               ),
             ),
           ),

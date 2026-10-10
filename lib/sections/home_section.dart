@@ -527,100 +527,87 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
         children: [
           _sectionHeading('Tus playlists', ''),
           const SizedBox(height: 13),
-          GridView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: visible.length,
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2,
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 17,
-              childAspectRatio: .80,
+          SizedBox(
+            height: 212,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: visible.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 14),
+              itemBuilder: (context, index) {
+                final item = visible[index];
+                return SizedBox(
+                  width: 158,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(19),
+                    onTap: () {
+                      if (item.songs.isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('${item.name} todavía está vacía.'),
+                          ),
+                        );
+                        return;
+                      }
+                      widget.player.playPlaylist(item.songs);
+                    },
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        AspectRatio(
+                          aspectRatio: 1,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(19),
+                              border: Border.all(
+                                color: item.color.withValues(alpha: .35),
+                              ),
+                            ),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(19),
+                              child: Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  PlaylistArtwork(
+                                    player: widget.player,
+                                    songs: item.songs,
+                                    icon: item.icon,
+                                    accent: item.color,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          item.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            height: 1.15,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -.25,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Playlist · ${item.songs.length} ${item.songs.length == 1 ? 'canción' : 'canciones'}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white60,
+                            fontSize: 12,
+                            height: 1.25,
+                            letterSpacing: .05,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
             ),
-            itemBuilder: (context, index) {
-              final item = visible[index];
-              return InkWell(
-                borderRadius: BorderRadius.circular(19),
-                onTap: () {
-                  if (item.songs.isEmpty) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('${item.name} todavía está vacía.'),
-                      ),
-                    );
-                    return;
-                  }
-                  widget.player.playPlaylist(item.songs);
-                },
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: Container(
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(19),
-                          border: Border.all(
-                            color: item.color.withValues(alpha: .35),
-                          ),
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(19),
-                          child: Stack(
-                            fit: StackFit.expand,
-                            children: [
-                              PlaylistArtwork(
-                                player: widget.player,
-                                songs: item.songs,
-                                icon: item.icon,
-                                accent: item.color,
-                              ),
-                              Positioned(
-                                right: 10,
-                                bottom: 10,
-                                child: DecoratedBox(
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    shape: BoxShape.circle,
-                                  ),
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(7),
-                                    child: Icon(
-                                      Icons.play_arrow_rounded,
-                                      color: item.color,
-                                      size: 25,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      item.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Playlist · ${item.songs.length} ${item.songs.length == 1 ? 'canción' : 'canciones'}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white60,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            },
           ),
         ],
       );
@@ -926,12 +913,14 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
           'Busca y descubre podcasts.',
           style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
         ),
-        const SizedBox(height: 14),
+        const SizedBox(height: 12),
         SoundNeedSearchField(
           controller: _podcastSearchController,
           hintText: 'Buscar podcasts o temas',
           prefixIcon: Icons.podcasts_rounded,
-          height: 56,
+          height: 62,
+          prominent: true,
+          accent: widget.palette.secondary,
           onChanged: (query) {
             if (query.trim().isEmpty && _podcastSearchResults.isNotEmpty) {
               setState(() => _podcastSearchResults = []);
@@ -944,7 +933,7 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
             style: IconButton.styleFrom(
               backgroundColor: Colors.white,
               foregroundColor: Colors.black,
-              fixedSize: const Size(38, 38),
+              fixedSize: const Size(44, 44),
             ),
             icon: _searchingPodcasts
                 ? const SizedBox(
@@ -1256,6 +1245,7 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
         title: title,
         detail: trailing,
         accent: widget.palette.primaryTextColor,
+        titleFontSize: 19,
       );
 
   Widget _buildPodcastTile(PodcastEpisode episode) => Padding(
@@ -1381,7 +1371,7 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
         const SizedBox(height: 5),
         Text(
           _currentChart.isNotEmpty
-              ? 'Éxitos de Colombia'
+              ? 'Éxitos de Colombia · Top 30'
               : 'Nuevos descubrimientos',
           style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
         ),
@@ -1391,7 +1381,7 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
             itemCount: _currentChart.isNotEmpty
-                ? _currentChart.skip(1).take(14).length
+                ? _currentChart.skip(1).take(29).length
                 : _discoverySuggestions.length,
             separatorBuilder: (_, _) => const SizedBox(width: 14),
             itemBuilder: (context, index) {
@@ -1564,7 +1554,9 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
       children: [
         Row(
           children: [
-            Expanded(child: _sectionHeading('Lo más escuchado en el mundo', 'Global')),
+            Expanded(
+              child: _sectionHeading('Lo más escuchado en el mundo', 'Global'),
+            ),
             IconButton(
               tooltip: 'Actualizar éxitos del mundo',
               onPressed: _loadingWorldChart
@@ -1579,7 +1571,7 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
         ),
         const SizedBox(height: 5),
         const Text(
-          'Éxitos de todo el mundo',
+          'Éxitos globales · Top 30',
           style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
         ),
         const SizedBox(height: 14),
@@ -1587,7 +1579,7 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
           height: 218,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
-            itemCount: _worldChart.take(15).length,
+            itemCount: _worldChart.take(30).length,
             separatorBuilder: (_, _) => const SizedBox(width: 14),
             itemBuilder: (context, index) {
               final track = _worldChart[index];
@@ -1816,6 +1808,9 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
 
   Widget _buildHeader() {
     final songCount = widget.player.songs.length;
+    final greetingFontSize = MediaQuery.sizeOf(context).width < 360
+        ? 27.0
+        : 30.0;
     final hour = DateTime.now().hour;
     final greeting = hour < 12
         ? 'Buenos días'
@@ -1861,11 +1856,12 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
                 '$greeting 👋',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 29,
-                  fontWeight: FontWeight.bold,
+                style: TextStyle(
+                  fontSize: greetingFontSize,
+                  height: 1.08,
+                  fontWeight: FontWeight.w800,
                   color: Colors.white,
-                  letterSpacing: -0.8,
+                  letterSpacing: -1.0,
                 ),
               ),
               const SizedBox(height: 6),
@@ -1874,7 +1870,8 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
-                  fontSize: 13,
+                  fontSize: 14,
+                  height: 1.4,
                   color: AppColors.textSecondary,
                 ),
               ),

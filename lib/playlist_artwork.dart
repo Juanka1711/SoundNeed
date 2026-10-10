@@ -93,14 +93,44 @@ class _PlaylistArtworkState extends State<PlaylistArtwork> {
               ? Center(
                   child: Icon(widget.icon, color: Colors.white70, size: 42),
                 )
-              : GridView.builder(
-                  padding: EdgeInsets.zero,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: 4,
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
-                  ),
-                  itemBuilder: (context, index) => _coverTile(index),
+              : LayoutBuilder(
+                  builder: (context, constraints) {
+                    final halfWidth = constraints.maxWidth / 2;
+                    final halfHeight = constraints.maxHeight / 2;
+                    return Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        Positioned(
+                          left: 0,
+                          top: 0,
+                          width: halfWidth,
+                          height: halfHeight,
+                          child: _coverTile(0),
+                        ),
+                        Positioned(
+                          left: halfWidth,
+                          top: 0,
+                          width: halfWidth,
+                          height: halfHeight,
+                          child: _coverTile(1),
+                        ),
+                        Positioned(
+                          left: 0,
+                          top: halfHeight,
+                          width: halfWidth,
+                          height: halfHeight,
+                          child: _coverTile(2),
+                        ),
+                        Positioned(
+                          left: halfWidth,
+                          top: halfHeight,
+                          width: halfWidth,
+                          height: halfHeight,
+                          child: _coverTile(3),
+                        ),
+                      ],
+                    );
+                  },
                 ),
         ),
       ),
@@ -114,7 +144,13 @@ class _PlaylistArtworkState extends State<PlaylistArtwork> {
       builder: (context, snapshot) {
         final image = snapshot.data;
         return image != null
-            ? Image.memory(image, fit: BoxFit.cover)
+            ? Image.memory(
+                image,
+                width: double.infinity,
+                height: double.infinity,
+                fit: BoxFit.cover,
+                alignment: Alignment.center,
+              )
             : ColoredBox(
                 color: widget.accent.withValues(alpha: .22),
                 child: Icon(

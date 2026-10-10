@@ -296,11 +296,13 @@ class _SongsSectionState extends State<SongsSection> {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          fontSize: 15,
+                          fontSize: 15.5,
                           fontWeight: isCurrent
                               ? FontWeight.w800
                               : FontWeight.w700,
                           color: accent,
+                          letterSpacing: -.15,
+                          height: 1.22,
                         ),
                       ),
                       const SizedBox(height: 6),
@@ -314,8 +316,10 @@ class _SongsSectionState extends State<SongsSection> {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
-                                fontSize: 12,
+                                fontSize: 12.5,
                                 color: AppColors.textSecondary,
+                                letterSpacing: .08,
+                                height: 1.3,
                               ),
                             ),
                           ),
