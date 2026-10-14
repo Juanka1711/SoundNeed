@@ -194,6 +194,7 @@ class MusicPlayerController extends ChangeNotifier {
   // selección inicie dos llamadas NewPipe para el mismo video.
   final Map<String, Future<String?>> _youtubeUrlRequests = {};
   final Set<String> _refreshingOnlineAudioUrls = {};
+  final Map<String, (Song, Object)> _pendingOnlineAudioRefreshes = {};
   final Map<String, int> _onlineAudioUrlRefreshAttempts = {};
 
   bool _loadingOnline = false;
@@ -209,6 +210,7 @@ class MusicPlayerController extends ChangeNotifier {
   StreamSubscription<CastSessionSnapshot>? _castSessionSubscription;
   CastSessionSnapshot _castSession = const CastSessionSnapshot();
   bool _castVideoMode = false;
+  bool _preferredOnlineVideoMode = false;
   Duration? _localVideoPosition;
   Duration? _localVideoDuration;
   late final Stream<Duration> _castPositionStream = Stream<Duration>.periodic(
@@ -276,6 +278,11 @@ class MusicPlayerController extends ChangeNotifier {
   bool get castConnected => _castSession.connected;
   bool get castPlaying => _castSession.playing;
   bool get castVideoMode => _castVideoMode;
+  bool get preferredOnlineVideoMode => _preferredOnlineVideoMode;
+  void setPreferredOnlineVideoMode(bool enabled) {
+    _preferredOnlineVideoMode = enabled;
+  }
+
   Duration get playbackPosition => castConnected
       ? Duration(milliseconds: _castSession.positionMs)
       : (_localVideoPosition ?? _audioPlayer.position);
@@ -514,7 +521,19 @@ class MusicPlayerController extends ChangeNotifier {
 
     _retryOnReconnect = false;
     _reconnectedWhileLoading = false;
+    _prepareFreshOnlineRetry(song);
     unawaited(playSong(song, createQueue: false, retry: true));
+  }
+
+  void _prepareFreshOnlineRetry(Song song) {
+    if (!song.isOnline) return;
+    final videoId = song.onlineVideoId;
+    _onlineAudioUrlRefreshAttempts.remove(videoId);
+    _youtubeUrlCache.remove(videoId);
+    _onlineAudioSources.remove(videoId);
+    _youtubeUrlRequests.remove(videoId);
+    _pendingOnlineAudioRefreshes.remove(videoId);
+    _retryOnReconnect = false;
   }
 
   Future<void> _handleExternalPlay() async {
@@ -557,6 +576,9 @@ class MusicPlayerController extends ChangeNotifier {
     if (!loaded ||
         _retryOnReconnect ||
         _audioPlayer.processingState == ProcessingState.idle) {
+      if (song.isOnline && (playbackError != null || _retryOnReconnect)) {
+        _prepareFreshOnlineRetry(song);
+      }
       await playSong(song, createQueue: false, retry: true);
       return;
     }
@@ -1580,9 +1602,19 @@ class MusicPlayerController extends ChangeNotifier {
     // Tocar otra vez la canción seleccionada no debe cancelar una extracción
     // activa ni reiniciar el stream. La interfaz abre el reproductor completo.
     if (!retry &&
+        playbackError == null &&
         _currentSong?.id == song.id &&
         _currentSong?.uri == song.uri) {
       return;
+    }
+    final retryingFailedOnlineSong =
+        !retry &&
+        song.isOnline &&
+        playbackError != null &&
+        _currentSong?.id == song.id &&
+        _currentSong?.uri == song.uri;
+    if (retryingFailedOnlineSong) {
+      _prepareFreshOnlineRetry(song);
     }
     _pendingChartQueue = null;
 
@@ -1632,7 +1664,9 @@ class MusicPlayerController extends ChangeNotifier {
             }
             await _sendVideoToCast(song, videoUrl);
           } catch (error) {
-            debugPrint('[SoundNeed][Cast] Video no disponible; continúa con audio: $error');
+            debugPrint(
+              '[SoundNeed][Cast] Video no disponible; continúa con audio: $error',
+            );
             _castVideoMode = false;
             await _sendSongToCast(song);
           }
@@ -1865,11 +1899,22 @@ class MusicPlayerController extends ChangeNotifier {
 
   void _refreshExpiredOnlineAudioUrl(Song song, Object error) {
     final videoId = song.onlineVideoId;
-    if (videoId.isEmpty || !_refreshingOnlineAudioUrls.add(videoId)) return;
+    if (videoId.isEmpty) return;
+    if (!_refreshingOnlineAudioUrls.add(videoId)) {
+      // just_audio's proxy can report several failures from the old source
+      // after a replacement has already started. Defer them until the new
+      // source either begins playing or proves it is also broken.
+      _pendingOnlineAudioRefreshes[videoId] = (song, error);
+      return;
+    }
 
     final attempts = _onlineAudioUrlRefreshAttempts[videoId] ?? 0;
     if (attempts >= 2) {
       _refreshingOnlineAudioUrls.remove(videoId);
+      _onlineAudioSources.remove(videoId);
+      _youtubeUrlCache.remove(videoId);
+      _youtubeUrlRequests.remove(videoId);
+      _retryOnReconnect = true;
       playbackError =
           'YouTube rechazó el enlace de audio después de varios intentos.';
       _isPlaying = false;
@@ -1896,12 +1941,54 @@ class MusicPlayerController extends ChangeNotifier {
     );
 
     unawaited(() async {
+      var playbackStarted = false;
       try {
         if (_currentSong?.id == song.id && !_controllerDisposed) {
-          await playSong(song, createQueue: false, retry: true);
+          // Invalidate the pending play() future and tear down the failing
+          // proxy before resolving a replacement URL.
+          final resumePosition = _audioPlayer.position;
+          _playToken++;
+          try {
+            await _audioPlayer.stop();
+          } catch (_) {}
+          if (_currentSong?.id != song.id || _controllerDisposed) return;
+          await playSong(
+            song,
+            createQueue: false,
+            retry: true,
+            initialPosition: resumePosition > Duration.zero
+                ? resumePosition
+                : null,
+          );
+          if (_currentSong?.id != song.id || _controllerDisposed) return;
+          playbackStarted = _audioPlayer.playing;
+          if (!playbackStarted && playbackError == null) {
+            try {
+              await _audioPlayer.playingStream
+                  .firstWhere((playing) => playing)
+                  .timeout(const Duration(seconds: 8));
+              playbackStarted = _audioPlayer.playing;
+            } on TimeoutException {
+              playbackStarted = _audioPlayer.playing;
+            }
+          }
         }
       } finally {
         _refreshingOnlineAudioUrls.remove(videoId);
+        final pendingError = _pendingOnlineAudioRefreshes.remove(videoId);
+        if (!playbackStarted &&
+            pendingError != null &&
+            _currentSong?.id == song.id &&
+            !_controllerDisposed &&
+            _onlineAudioUrlRefreshAttempts[videoId] != null) {
+          Future<void>.delayed(const Duration(milliseconds: 250), () {
+            if (_currentSong?.id == song.id &&
+                !_controllerDisposed &&
+                !_audioPlayer.playing) {
+              _refreshExpiredOnlineAudioUrl(pendingError.$1, pendingError.$2);
+            }
+          });
+        }
       }
     }());
   }
@@ -2139,6 +2226,11 @@ class MusicPlayerController extends ChangeNotifier {
       await _savePlaybackSession();
     } else {
       final song = _currentSong!;
+      if (song.isOnline && (playbackError != null || _retryOnReconnect)) {
+        _prepareFreshOnlineRetry(song);
+        await playSong(song, createQueue: false, retry: true);
+        return;
+      }
       if (_loadedSong == null ||
           _loadedSong!.id != song.id ||
           _loadedSong!.uri != song.uri) {

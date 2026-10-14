@@ -282,7 +282,20 @@ class MainActivity : AudioServiceFragmentActivity() {
                 // ============================================================
 
                 "getSongs" -> {
-                    result.success(getSongs())
+                    extractorExecutor.execute {
+                        try {
+                            val songs = getSongs()
+                            runOnUiThread { result.success(songs) }
+                        } catch (error: Exception) {
+                            runOnUiThread {
+                                result.error(
+                                    "GET_SONGS_FAILED",
+                                    error.message ?: "No se pudieron cargar las canciones.",
+                                    null
+                                )
+                            }
+                        }
+                    }
                 }
 
                 "getMusicFolders" -> {
@@ -2131,6 +2144,10 @@ class MainActivity : AudioServiceFragmentActivity() {
             "Alarms"
         )
         val selectedFolders = getSelectedMusicFolders().map { it.getValue("path") }
+        val soundNeedDownloadsPath = File(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC),
+            "SoundNeed"
+        ).absolutePath.trimEnd('/') + "/"
 
         contentResolver.query(
             collection,
@@ -2267,13 +2284,27 @@ class MainActivity : AudioServiceFragmentActivity() {
                         id
                     )
 
-                val artworkUri =
-                    downloadedArtworkFor(contentUri.toString(), dataPath)
-                        ?: if (albumId != null && albumId > 0) {
-                        "content://media/external/audio/albumart/$albumId"
-                    } else {
-                        ""
+                val isSoundNeedDownload = dataPath.startsWith(
+                    soundNeedDownloadsPath,
+                    ignoreCase = true
+                )
+                val downloadedArtwork = downloadedArtworkFor(
+                    contentUri.toString(),
+                    dataPath
+                ) ?: if (isSoundNeedDownload) {
+                    getEmbeddedArtwork(contentUri.toString(), dataPath)?.let { bytes ->
+                        saveDownloadedArtwork(contentUri.toString(), bytes)
                     }
+                } else {
+                    null
+                }
+                val artworkUri = downloadedArtwork ?: if (
+                    albumId != null && albumId > 0
+                ) {
+                    "content://media/external/audio/albumart/$albumId"
+                } else {
+                    ""
+                }
 
                 songs.add(
                     mapOf(
@@ -2343,21 +2374,28 @@ class MainActivity : AudioServiceFragmentActivity() {
         }
     }
 
-    private fun getEmbeddedArtwork(songUri: String): ByteArray? {
-        val retriever = MediaMetadataRetriever()
-        return try {
-            retriever.setDataSource(this, Uri.parse(songUri))
-            retriever.embeddedPicture
-        } catch (error: Exception) {
-            Log.d("SoundNeedArtwork", "No se pudo leer portada incrustada de $songUri", error)
-            null
-        } finally {
-            try {
-                retriever.release()
-            } catch (_: RuntimeException) {
-                // El recurso puede no haberse inicializado correctamente.
+    private fun getEmbeddedArtwork(songUri: String, fallbackPath: String? = null): ByteArray? {
+        fun extract(readSource: (MediaMetadataRetriever) -> Unit): ByteArray? {
+            val retriever = MediaMetadataRetriever()
+            return try {
+                readSource(retriever)
+                retriever.embeddedPicture
+            } catch (error: Exception) {
+                Log.d("SoundNeedArtwork", "No se pudo leer portada incrustada de $songUri", error)
+                null
+            } finally {
+                try {
+                    retriever.release()
+                } catch (_: RuntimeException) {
+                    // El recurso puede no haberse inicializado correctamente.
+                }
             }
         }
+
+        return extract { it.setDataSource(this, Uri.parse(songUri)) }
+            ?: fallbackPath
+                ?.takeIf { it.isNotBlank() }
+                ?.let { path -> extract { it.setDataSource(path) } }
     }
 
     // ============================================================

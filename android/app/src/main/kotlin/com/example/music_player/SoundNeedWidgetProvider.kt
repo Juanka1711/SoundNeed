@@ -90,7 +90,8 @@ class SoundNeedWidgetProvider : AppWidgetProvider() {
             } else {
                 // MediaSession puede publicar metadata vacía durante una carga.
                 // Sólo conservamos valores previos en esos eventos intermedios.
-                val safeTitle = title.trim().ifBlank {
+                val incomingTitle = title.trim()
+                val safeTitle = incomingTitle.ifBlank {
                     preferences.getString(KEY_TITLE, "")?.trim().orEmpty()
                 }
                 val safeArtist = artist.trim().ifBlank {
@@ -100,7 +101,11 @@ class SoundNeedWidgetProvider : AppWidgetProvider() {
                         "Artista desconocido"
                     }
                 }
-                val safeArtUri = artUri.trim().ifBlank { previousArtUri }
+                // Keep the old artwork only during an intermediate metadata
+                // event with no title. A new track with no cover must clear it.
+                val safeArtUri = artUri.trim().ifBlank {
+                    if (incomingTitle.isBlank()) previousArtUri else ""
+                }
                 val artworkCacheMissing =
                     cachedArtworkFile(context, safeArtUri)?.exists() != true
                 refreshArtwork = previousArtUri != safeArtUri || artworkCacheMissing

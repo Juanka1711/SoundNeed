@@ -452,7 +452,10 @@ class _MiniPlayerState extends State<MiniPlayer> {
                                 );
                               }
                             : null,
-                        child: _buildArtwork(song, size: 58),
+                        child: _heroForFullPlayer(
+                          'full_player_artwork_${song.id}',
+                          _buildArtwork(song, size: 58),
+                        ),
                       ),
 
                       const SizedBox(width: 12),
@@ -477,24 +480,32 @@ class _MiniPlayerState extends State<MiniPlayer> {
                             mainAxisAlignment: MainAxisAlignment.center,
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              OverflowMarqueeText(
-                                song.title.isEmpty
-                                    ? song.displayName
-                                    : song.title,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w700,
+                              _heroForFullPlayer(
+                                'full_player_title_${song.id}',
+                                OverflowMarqueeText(
+                                  song.title.isEmpty
+                                      ? song.displayName
+                                      : song.title,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w700,
+                                  decoration: TextDecoration.none,
+                                  ),
                                 ),
                               ),
                               const SizedBox(height: 3),
-                              OverflowMarqueeText(
-                                song.artist.isEmpty
-                                    ? 'Artista desconocido'
-                                    : song.artist,
-                                style: TextStyle(
-                                  color: Colors.white.withOpacity(0.60),
-                                  fontSize: 12,
+                              _heroForFullPlayer(
+                                'full_player_artist_${song.id}',
+                                OverflowMarqueeText(
+                                  song.artist.isEmpty
+                                      ? 'Artista desconocido'
+                                      : song.artist,
+                                  style: TextStyle(
+                                    color: Colors.white.withOpacity(0.60),
+                                    fontSize: 12,
+                                    decoration: TextDecoration.none,
+                                  ),
                                 ),
                               ),
                             ],
@@ -524,6 +535,11 @@ class _MiniPlayerState extends State<MiniPlayer> {
         ),
       ),
     );
+  }
+
+  Widget _heroForFullPlayer(String tag, Widget child) {
+    if (!widget.openFullPlayerOnTap) return child;
+    return Hero(tag: tag, child: child);
   }
 
   // ==========================================================
@@ -586,70 +602,76 @@ class _MiniPlayerState extends State<MiniPlayer> {
           progress = progress.clamp(0.0, 1.0);
         }
 
-        return SizedBox(
-          width: 50,
-          height: 50,
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              // ================================================
-              // CÍRCULO BASE
-              // ================================================
+        return _heroForFullPlayer(
+          'full_player_play_${widget.player.currentSong?.id ?? -1}',
+          SizedBox(
+            width: 50,
+            height: 50,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                // ================================================
+                // CÍRCULO BASE
+                // ================================================
 
-              SizedBox(
-                width: 46,
-                height: 46,
-                child: CircularProgressIndicator(
-                  value: 1,
-                  strokeWidth: 3,
-                  color: Colors.white.withOpacity(0.10),
+                SizedBox(
+                  width: 46,
+                  height: 46,
+                  child: CircularProgressIndicator(
+                    value: 1,
+                    strokeWidth: 3,
+                    color: Colors.white.withOpacity(0.10),
+                  ),
                 ),
-              ),
 
-              // ================================================
-              // PROGRESO
-              // ================================================
-              SizedBox(
-                width: 46,
-                height: 46,
-                child: CircularProgressIndicator(
-                  value: progress,
-                  strokeWidth: 3.5,
-                  color: _themeColor,
-                  strokeCap: StrokeCap.round,
+                // ================================================
+                // PROGRESO
+                // ================================================
+                SizedBox(
+                  width: 46,
+                  height: 46,
+                  child: CircularProgressIndicator(
+                    value: progress,
+                    strokeWidth: 3.5,
+                    color: _themeColor,
+                    strokeCap: StrokeCap.round,
+                  ),
                 ),
-              ),
 
-              // ================================================
-              // BOTÓN
-              // ================================================
-              Material(
-                color: Colors.transparent,
-                shape: const CircleBorder(),
-                child: InkWell(
-                  customBorder: const CircleBorder(),
-                  onTap: widget.player.togglePlayPause,
-                  child: SizedBox(
-                    width: 38,
-                    height: 38,
-                    child: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 150),
-                      transitionBuilder: (child, animation) {
-                        return ScaleTransition(scale: animation, child: child);
-                      },
-                      child: Icon(
-                        widget.player.isPlaying
-                            ? Icons.pause_rounded
-                            : Icons.play_arrow_rounded,
-                        key: ValueKey(widget.player.isPlaying),
-                        size: 25,
-                        color: Colors.white,
+                // ================================================
+                // BOTÓN
+                // ================================================
+                Material(
+                  color: Colors.transparent,
+                  shape: const CircleBorder(),
+                  child: InkWell(
+                    customBorder: const CircleBorder(),
+                    onTap: widget.player.togglePlayPause,
+                    child: SizedBox(
+                      width: 38,
+                      height: 38,
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 150),
+                        transitionBuilder: (child, animation) {
+                          return ScaleTransition(
+                            scale: animation,
+                            child: child,
+                          );
+                        },
+                        child: Icon(
+                          widget.player.isPlaying
+                              ? Icons.pause_rounded
+                              : Icons.play_arrow_rounded,
+                          key: ValueKey(widget.player.isPlaying),
+                          size: 25,
+                          color: Colors.white,
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         );
       },
