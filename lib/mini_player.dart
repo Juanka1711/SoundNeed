@@ -374,32 +374,35 @@ class _MiniPlayerState extends State<MiniPlayer> {
             // FONDO DINÁMICO
             // ==================================================
             gradient: LinearGradient(
-              begin: Alignment.centerLeft,
-              end: Alignment.centerRight,
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
               colors: [
-                _themeDark,
-                Color.lerp(_themeDark, _themeColor, 0.20)!,
-                Color.lerp(_themeDark, _themeSecondary, 0.12)!,
+                _themeColor.withValues(alpha: 0.10),
+                _themeDark.withValues(alpha: 0.18),
+                _themeSecondary.withValues(alpha: 0.07),
               ],
             ),
 
-            border: Border.all(color: _themeColor.withOpacity(0.20), width: 1),
+            border: Border.all(
+              color: _themeColor.withValues(alpha: 0.16),
+              width: 0.8,
+            ),
 
             // ==================================================
             // SOMBRA
             // ==================================================
             boxShadow: [
               BoxShadow(
-                color: _themeColor.withOpacity(0.16),
-                blurRadius: 24,
+                color: _themeColor.withValues(alpha: 0.12),
+                blurRadius: 30,
                 spreadRadius: -5,
-                offset: const Offset(0, 8),
+                offset: const Offset(0, 10),
               ),
-              const BoxShadow(
-                color: Colors.black54,
-                blurRadius: 16,
-                spreadRadius: -5,
-                offset: Offset(0, 7),
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.30),
+                blurRadius: 22,
+                spreadRadius: -4,
+                offset: const Offset(0, 9),
               ),
             ],
           ),

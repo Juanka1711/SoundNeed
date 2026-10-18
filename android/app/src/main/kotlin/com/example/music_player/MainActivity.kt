@@ -309,6 +309,7 @@ class MainActivity : AudioServiceFragmentActivity() {
                             onComplete = { videoUri ->
                                 val intent = Intent(Intent.ACTION_SEND).apply {
                                     type = "video/mp4"
+                                    putExtra(Intent.EXTRA_TITLE, "$title · SoundNeed")
                                     putExtra(Intent.EXTRA_SUBJECT, "$title · SoundNeed")
                                     putExtra(Intent.EXTRA_TEXT, shareText)
                                     putExtra(Intent.EXTRA_STREAM, videoUri)
@@ -316,7 +317,7 @@ class MainActivity : AudioServiceFragmentActivity() {
                                     clipData = android.content.ClipData.newUri(
                                         contentResolver,
                                         "Historia de SoundNeed",
-                                        videoUri,
+                                        cardUri,
                                     )
                                 }
                                 startActivity(Intent.createChooser(intent, "Compartir historia"))

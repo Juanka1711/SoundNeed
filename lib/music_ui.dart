@@ -422,64 +422,110 @@ class _MusicHomePageState extends State<MusicHomePage> {
                   alignment: Alignment.topCenter,
                   child: _appBarVisible
                       ? AppBar(
-                          leading: Padding(
-                            padding: const EdgeInsets.all(12),
-                            child: Image.asset(
-                              'assets/icon/app_icon_source.png',
-                              width: 32,
-                              height: 32,
-                              fit: BoxFit.contain,
-                            ),
-                          ),
-                          title: _isSearching
-                              ? SoundNeedSearchField(
-                                  controller: _searchController,
-                                  autofocus: true,
-                                  hintText: 'Canción, artista o álbum',
-                                  height: 46,
-                                )
-                              : Image.asset(
-                                  'assets/icon/titulo.png',
-                                  height: 32,
-                                  fit: BoxFit.contain,
+                          leadingWidth: 48,
+                          titleSpacing: 16,
+                          leading: null,
+                          title: AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 280),
+                            switchInCurve: Curves.easeOutCubic,
+                            switchOutCurve: Curves.easeInCubic,
+                            transitionBuilder: (child, animation) {
+                              final slide = Tween<Offset>(
+                                begin: const Offset(0.12, 0),
+                                end: Offset.zero,
+                              ).animate(animation);
+                              return ClipRect(
+                                child: FadeTransition(
+                                  opacity: animation,
+                                  child: SlideTransition(
+                                    position: slide,
+                                    child: child,
+                                  ),
                                 ),
+                              );
+                            },
+                            child: _isSearching
+                                ? SoundNeedSearchField(
+                                    key: const ValueKey('appbar-search'),
+                                    controller: _searchController,
+                                    autofocus: true,
+                                    hintText: 'Canción, artista o álbum',
+                                    height: 46,
+                                    suffix: IconButton(
+                                      tooltip: 'Cerrar búsqueda',
+                                      onPressed: _toggleSearch,
+                                      visualDensity: VisualDensity.compact,
+                                      padding: EdgeInsets.zero,
+                                      constraints: const BoxConstraints.tightFor(
+                                        width: 32,
+                                        height: 32,
+                                      ),
+                                      icon: const Icon(
+                                        Icons.close,
+                                        color: Colors.white,
+                                        size: 20,
+                                      ),
+                                    ),
+                                  )
+                                : Row(
+                                    key: const ValueKey('appbar-brand'),
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Image.asset(
+                                        'assets/icon/app_icon_source.png',
+                                        width: 32,
+                                        height: 32,
+                                        fit: BoxFit.contain,
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Image.asset(
+                                        'assets/icon/titulo.png',
+                                        height: 32,
+                                        fit: BoxFit.contain,
+                                      ),
+                                    ],
+                                  ),
+                          ),
                           actions: [
                             // ==================================================
                             // BUSCAR
                             // ==================================================
 
-                            IconButton(
-                              tooltip: 'Buscar',
-                              onPressed: _toggleSearch,
-                              icon: Icon(
-                                _isSearching ? Icons.close : Icons.search,
-                                color: Colors.white,
+                            if (!_isSearching)
+                              IconButton(
+                                tooltip: 'Buscar',
+                                onPressed: _toggleSearch,
+                                icon: const Icon(
+                                  Icons.search,
+                                  color: Colors.white,
+                                ),
                               ),
-                            ),
 
                             // ==================================================
                             // COLA
                             // ==================================================
-                            IconButton(
-                              tooltip: 'Cola',
-                              onPressed: _showQueue,
-                              icon: const Icon(
-                                Icons.queue_music_outlined,
-                                color: Colors.white,
+                            if (!_isSearching)
+                              IconButton(
+                                tooltip: 'Cola',
+                                onPressed: _showQueue,
+                                icon: const Icon(
+                                  Icons.queue_music_outlined,
+                                  color: Colors.white,
+                                ),
                               ),
-                            ),
 
                             // ==================================================
                             // AJUSTES
                             // ==================================================
-                            IconButton(
-                              tooltip: 'Ajustes',
-                              onPressed: _showSettings,
-                              icon: const Icon(
-                                Icons.settings_outlined,
-                                color: Colors.white,
+                            if (!_isSearching)
+                              IconButton(
+                                tooltip: 'Ajustes',
+                                onPressed: _showSettings,
+                                icon: const Icon(
+                                  Icons.settings_outlined,
+                                  color: Colors.white,
+                                ),
                               ),
-                            ),
                           ],
                         )
                       : const SizedBox.shrink(),
