@@ -1,0 +1,21 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "soundneed-shares",
+  "main": "share-site/_worker.js",
+  "compatibility_date": "2026-10-09",
+  "observability": {
+    "enabled": true
+  },
+  "assets": {
+    "directory": "share-site",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "soundneed-shares",
+      "database_id": "841648c2-ea34-419c-bb6d-7239f9952630"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.example.music_player",
+      "sha256_cert_fingerprints": [
+        "5E:A4:47:EC:85:F0:AE:4B:79:A7:28:84:AF:77:A5:A1:4A:B1:4F:83:42:1A:73:7E:3F:08:7F:95:36:C0:EC:9E"
+      ]
+    }
+  }
+]

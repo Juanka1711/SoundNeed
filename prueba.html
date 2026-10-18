@@ -1,0 +1,893 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>LiriQo Explorer</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            background: #08080d;
+            color: #f5f5f7;
+            font-family: Inter, Arial, sans-serif;
+        }
+
+        .container {
+            width: min(1200px, 94%);
+            margin: 40px auto;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 32px;
+        }
+
+        .subtitle {
+            color: #858592;
+            margin-top: 8px;
+        }
+
+        .search {
+            display: flex;
+            gap: 10px;
+            margin-top: 25px;
+        }
+
+        input {
+            flex: 1;
+            background: #15151e;
+            color: white;
+            border: 1px solid #292936;
+            border-radius: 12px;
+            padding: 15px;
+            font-size: 16px;
+            outline: none;
+        }
+
+        input:focus {
+            border-color: #00d9ff;
+        }
+
+        button {
+            border: 0;
+            border-radius: 12px;
+            padding: 0 22px;
+            background: #00d9ff;
+            color: #001014;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        button:hover {
+            opacity: .85;
+        }
+
+        .secondary {
+            background: #20202b;
+            color: white;
+        }
+
+        .status {
+            margin-top: 18px;
+            padding: 13px 15px;
+            border-radius: 10px;
+            background: #12121a;
+            color: #a0a0ad;
+            display: none;
+        }
+
+        .error {
+            color: #ff6b6b;
+        }
+
+        .success {
+            color: #5dffad;
+        }
+
+        .section {
+            margin-top: 25px;
+        }
+
+        .section-title {
+            font-size: 19px;
+            font-weight: 700;
+            margin-bottom: 12px;
+        }
+
+        .metadata {
+            background: #111119;
+            border: 1px solid #242430;
+            border-radius: 15px;
+            padding: 18px;
+        }
+
+        .metadata-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+        }
+
+        .meta-item {
+            background: #171720;
+            padding: 13px;
+            border-radius: 10px;
+        }
+
+        .meta-label {
+            color: #777785;
+            font-size: 12px;
+            text-transform: uppercase;
+        }
+
+        .meta-value {
+            margin-top: 5px;
+            word-break: break-word;
+        }
+
+        .filters {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .filter {
+            background: #181821;
+            color: #aaa;
+            border: 1px solid #292936;
+            padding: 8px 13px;
+            border-radius: 20px;
+            cursor: pointer;
+        }
+
+        .filter.active {
+            background: #00d9ff;
+            color: #001014;
+            border-color: #00d9ff;
+        }
+
+        .tracks {
+            display: grid;
+            gap: 12px;
+        }
+
+        .track {
+            background: #111119;
+            border: 1px solid #292936;
+            border-radius: 15px;
+            padding: 17px;
+        }
+
+        .track:hover {
+            border-color: #454556;
+        }
+
+        .track-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .provider {
+            font-size: 17px;
+            font-weight: 700;
+        }
+
+        .badges {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .badge {
+            font-size: 11px;
+            padding: 5px 8px;
+            border-radius: 7px;
+            background: #252532;
+            color: #bbb;
+        }
+
+        .badge.good {
+            background: #103e31;
+            color: #5dffad;
+        }
+
+        .track-info {
+            margin-top: 10px;
+            color: #888896;
+            font-size: 13px;
+        }
+
+        .lyrics {
+            margin-top: 15px;
+            background: #09090e;
+            border-radius: 10px;
+            padding: 15px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .line {
+            padding: 8px 0;
+            border-bottom: 1px solid #171720;
+        }
+
+        .time {
+            color: #00d9ff;
+            font-family: monospace;
+            font-size: 12px;
+            margin-right: 10px;
+        }
+
+        .word {
+            display: inline-block;
+            margin: 3px;
+            padding: 4px 6px;
+            border-radius: 5px;
+            background: #171720;
+        }
+
+        .word:hover {
+            background: #00d9ff;
+            color: #001014;
+        }
+
+        details {
+            margin-top: 12px;
+        }
+
+        summary {
+            cursor: pointer;
+            color: #00d9ff;
+        }
+
+        pre {
+            background: #08080d;
+            border: 1px solid #20202a;
+            border-radius: 10px;
+            padding: 15px;
+            overflow: auto;
+            max-height: 500px;
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-size: 12px;
+        }
+
+        .empty {
+            padding: 25px;
+            text-align: center;
+            color: #777785;
+            background: #111119;
+            border-radius: 12px;
+        }
+
+        @media(max-width: 700px) {
+            .search {
+                flex-direction: column;
+            }
+
+            button {
+                padding: 14px;
+            }
+
+            .metadata-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .track-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="container">
+
+    <h1>LiriQo Explorer</h1>
+
+    <div class="subtitle">
+        Explorador de letras, proveedores y niveles de sincronización
+    </div>
+
+    <div class="search">
+
+        <input
+            id="youtubeInput"
+            value="3qFvCPmee8U"
+            placeholder="YouTube ID o URL"
+        >
+
+        <button onclick="buscar()">
+            BUSCAR
+        </button>
+
+        <button class="secondary" onclick="probarTTML()">
+            TTML
+        </button>
+
+    </div>
+
+    <div id="status" class="status"></div>
+
+    <div id="metadataSection" class="section" style="display:none;">
+
+        <div class="section-title">
+            Metadata
+        </div>
+
+        <div id="metadata" class="metadata"></div>
+
+    </div>
+
+    <div id="filtersSection" class="section" style="display:none;">
+
+        <div class="section-title">
+            Filtrar sincronización
+        </div>
+
+        <div class="filters">
+
+            <button
+                class="filter active"
+                data-filter="all"
+                onclick="setFilter('all', this)">
+                TODOS
+            </button>
+
+            <button
+                class="filter"
+                data-filter="syllable"
+                onclick="setFilter('syllable', this)">
+                SYLLABLE
+            </button>
+
+            <button
+                class="filter"
+                data-filter="word"
+                onclick="setFilter('word', this)">
+                WORD
+            </button>
+
+            <button
+                class="filter"
+                data-filter="line"
+                onclick="setFilter('line', this)">
+                LINE
+            </button>
+
+            <button
+                class="filter"
+                data-filter="plain"
+                onclick="setFilter('plain', this)">
+                PLAIN
+            </button>
+
+        </div>
+
+    </div>
+
+    <div id="tracksSection" class="section" style="display:none;">
+
+        <div class="section-title">
+            Fuentes encontradas
+        </div>
+
+        <div id="tracks" class="tracks"></div>
+
+    </div>
+
+    <div id="ttmlSection" class="section" style="display:none;">
+
+        <div class="section-title">
+            TTML
+        </div>
+
+        <details open>
+
+            <summary>
+                Ver TTML recibido
+            </summary>
+
+            <pre id="ttmlOutput"></pre>
+
+        </details>
+
+    </div>
+
+    <div id="jsonSection" class="section" style="display:none;">
+
+        <div class="section-title">
+            JSON original
+        </div>
+
+        <details>
+
+            <summary>
+                Ver respuesta completa
+            </summary>
+
+            <pre id="jsonOutput"></pre>
+
+        </details>
+
+    </div>
+
+</div>
+
+
+<script>
+
+const API = "https://api.liriqo-alfarrizi.my.id/v1";
+
+let currentData = null;
+let currentFilter = "all";
+
+
+function showStatus(text, type = "") {
+
+    const el = document.getElementById("status");
+
+    el.style.display = "block";
+
+    el.className = "status " + type;
+
+    el.textContent = text;
+}
+
+
+function getVideoId(value) {
+
+    value = value.trim();
+
+    /*
+     * Si ya es un ID
+     */
+    if (/^[a-zA-Z0-9_-]{11}$/.test(value)) {
+        return value;
+    }
+
+    /*
+     * YouTube normal
+     */
+    try {
+
+        const url = new URL(value);
+
+        if (url.hostname.includes("youtube.com")) {
+
+            const v = url.searchParams.get("v");
+
+            if (v) {
+                return v;
+            }
+        }
+
+        /*
+         * youtu.be
+         */
+        if (url.hostname.includes("youtu.be")) {
+
+            return url.pathname.replace("/", "").substring(0, 11);
+
+        }
+
+    } catch(e) {}
+
+    return value;
+}
+
+
+async function buscar() {
+
+    const input = document.getElementById("youtubeInput");
+
+    const videoId = getVideoId(input.value);
+
+    if (!videoId) {
+
+        showStatus(
+            "Introduce un YouTube ID o URL.",
+            "error"
+        );
+
+        return;
+    }
+
+    showStatus(
+        "Consultando LiriQo...",
+        ""
+    );
+
+    try {
+
+        const url =
+            `${API}/lyrics?v=${encodeURIComponent(videoId)}`;
+
+        const response = await fetch(url);
+
+        if (!response.ok) {
+
+            throw new Error(
+                `HTTP ${response.status}`
+            );
+
+        }
+
+        const data = await response.json();
+
+        currentData = data;
+
+        mostrarMetadata(data);
+
+        mostrarTracks(data.tracks || []);
+
+        document.getElementById("jsonOutput").textContent =
+            JSON.stringify(data, null, 2);
+
+        document.getElementById("jsonSection").style.display =
+            "block";
+
+        showStatus(
+            `OK — ${data.tracks?.length || 0} fuentes encontradas`,
+            "success"
+        );
+
+    } catch(error) {
+
+        console.error(error);
+
+        showStatus(
+            "Error: " + error.message,
+            "error"
+        );
+
+        /*
+         * Esto es especialmente útil si el servidor
+         * no permite CORS desde archivos HTML locales.
+         */
+        if (error instanceof TypeError) {
+
+            showStatus(
+                "El navegador probablemente está bloqueando CORS. " +
+                "Prueba el HTML desde un servidor local.",
+                "error"
+            );
+        }
+    }
+}
+
+
+function mostrarMetadata(data) {
+
+    const metadata = data.metadata || {};
+
+    document.getElementById("metadata").innerHTML = `
+
+        <div class="metadata-grid">
+
+            <div class="meta-item">
+                <div class="meta-label">Video ID</div>
+                <div class="meta-value">
+                    ${escapeHtml(data.videoId || "-")}
+                </div>
+            </div>
+
+            <div class="meta-item">
+                <div class="meta-label">Título</div>
+                <div class="meta-value">
+                    ${escapeHtml(metadata.title || "-")}
+                </div>
+            </div>
+
+            <div class="meta-item">
+                <div class="meta-label">Artista</div>
+                <div class="meta-value">
+                    ${escapeHtml(metadata.artist || "-")}
+                </div>
+            </div>
+
+        </div>
+    `;
+
+    document.getElementById("metadataSection").style.display =
+        "block";
+}
+
+
+function mostrarTracks(tracks) {
+
+    const container = document.getElementById("tracks");
+
+    document.getElementById("filtersSection").style.display =
+        "block";
+
+    document.getElementById("tracksSection").style.display =
+        "block";
+
+    const filtered =
+        currentFilter === "all"
+            ? tracks
+            : tracks.filter(
+                track =>
+                    (track.syncLevel || "plain").toLowerCase()
+                    === currentFilter
+            );
+
+    if (!filtered.length) {
+
+        container.innerHTML = `
+            <div class="empty">
+                No hay pistas con sincronización
+                "${currentFilter}".
+            </div>
+        `;
+
+        return;
+    }
+
+    container.innerHTML = "";
+
+    filtered.forEach((track, index) => {
+
+        const card = document.createElement("div");
+
+        card.className = "track";
+
+        const sync =
+            (track.syncLevel || "plain").toLowerCase();
+
+        const isGood =
+            sync === "word" ||
+            sync === "syllable";
+
+        card.innerHTML = `
+
+            <div class="track-header">
+
+                <div>
+
+                    <div class="provider">
+                        ${escapeHtml(track.provider || "unknown")}
+                    </div>
+
+                    <div class="track-info">
+
+                        ${escapeHtml(track.title || "-")}
+
+                        <br>
+
+                        ${escapeHtml(track.artist || "-")}
+
+                    </div>
+
+                </div>
+
+                <div class="badges">
+
+                    <span class="badge ${isGood ? "good" : ""}">
+                        ${escapeHtml(sync)}
+                    </span>
+
+                    ${
+                        track.isrc
+                        ? `<span class="badge">
+                            ISRC ${escapeHtml(track.isrc)}
+                           </span>`
+                        : ""
+                    }
+
+                </div>
+
+            </div>
+
+            <details>
+
+                <summary>
+                    Ver letra
+                </summary>
+
+                <div class="lyrics">
+                    ${renderTrack(track)}
+                </div>
+
+            </details>
+
+            <details>
+
+                <summary>
+                    Ver JSON de esta fuente
+                </summary>
+
+                <pre>${escapeHtml(
+                    JSON.stringify(track, null, 2)
+                )}</pre>
+
+            </details>
+        `;
+
+        container.appendChild(card);
+
+    });
+}
+
+
+function renderTrack(track) {
+
+    if (!track.timed || !Array.isArray(track.timed)) {
+
+        if (track.plain) {
+
+            return escapeHtml(track.plain)
+                .replace(/\n/g, "<br>");
+
+        }
+
+        return `
+            <div class="empty">
+                Esta fuente no tiene datos sincronizados.
+            </div>
+        `;
+    }
+
+    return track.timed.map(item => {
+
+        const start =
+            formatTime(item.start);
+
+        const end =
+            formatTime(item.end);
+
+        return `
+
+            <div class="line">
+
+                <span class="time">
+                    ${start} → ${end}
+                </span>
+
+                ${escapeHtml(item.text || "")}
+
+            </div>
+
+        `;
+
+    }).join("");
+}
+
+
+function formatTime(ms) {
+
+    if (typeof ms !== "number") {
+        return "--";
+    }
+
+    const seconds = ms / 1000;
+
+    return seconds.toFixed(3) + "s";
+}
+
+
+function setFilter(filter, button) {
+
+    currentFilter = filter;
+
+    document
+        .querySelectorAll(".filter")
+        .forEach(el =>
+            el.classList.remove("active")
+        );
+
+    button.classList.add("active");
+
+    if (currentData) {
+
+        mostrarTracks(
+            currentData.tracks || []
+        );
+
+    }
+}
+
+
+async function probarTTML() {
+
+    const input =
+        document.getElementById("youtubeInput");
+
+    const videoId =
+        getVideoId(input.value);
+
+    if (!videoId) {
+
+        showStatus(
+            "Introduce un YouTube ID.",
+            "error"
+        );
+
+        return;
+    }
+
+    showStatus(
+        "Consultando TTML...",
+        ""
+    );
+
+    try {
+
+        const url =
+            `${API}/ttml?v=${encodeURIComponent(videoId)}`;
+
+        const response =
+            await fetch(url);
+
+        if (!response.ok) {
+
+            throw new Error(
+                `HTTP ${response.status}`
+            );
+
+        }
+
+        const text =
+            await response.text();
+
+        document.getElementById("ttmlOutput").textContent =
+            text;
+
+        document.getElementById("ttmlSection").style.display =
+            "block";
+
+        showStatus(
+            `TTML recibido — ${text.length} caracteres`,
+            "success"
+        );
+
+    } catch(error) {
+
+        console.error(error);
+
+        showStatus(
+            "Error obteniendo TTML: " + error.message,
+            "error"
+        );
+    }
+}
+
+
+function escapeHtml(value) {
+
+    return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+}
+
+
+/*
+ * Enter para buscar
+ */
+document
+    .getElementById("youtubeInput")
+    .addEventListener("keydown", event => {
+
+        if (event.key === "Enter") {
+            buscar();
+        }
+
+    });
+
+</script>
+
+</body>
+</html>

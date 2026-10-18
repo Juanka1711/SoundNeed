@@ -1,0 +1,7 @@
+# These files are implementation and deployment materials, not public assets.
+/_worker.js
+/functions/
+/schema.sql
+/migrations/
+/DEPLOYMENT.md
+/.assetsignore
