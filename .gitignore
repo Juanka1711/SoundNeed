@@ -13,7 +13,10 @@ coverage/
 android/.gradle/
 android/.kotlin/
 android/local.properties
+<<<<<<< HEAD
 android/key.properties
+=======
+>>>>>>> 1f6e8dce69bd1be9392142d64d1fcaf6d7107d52
 android/build/
 android/app/build/
 android/**/captures/
@@ -34,10 +37,13 @@ Thumbs.db
 
 # Logs
 *.log
+<<<<<<< HEAD
 soundneed-logcat.txt
 
 # Local release artifacts
 *.apk
+=======
+>>>>>>> 1f6e8dce69bd1be9392142d64d1fcaf6d7107d52
 
 # wrangler files
 .wrangler

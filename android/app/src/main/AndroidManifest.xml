@@ -60,7 +60,11 @@
 
         <meta-data
             android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
+<<<<<<< HEAD
             android:value="sound_need.music_player.SoundNeedCastOptionsProvider" />
+=======
+            android:value="com.example.music_player.SoundNeedCastOptionsProvider" />
+>>>>>>> 1f6e8dce69bd1be9392142d64d1fcaf6d7107d52
 
 
         <!-- ===================================================== -->
