@@ -55,6 +55,7 @@ kotlin {
 
 dependencies {
     implementation("androidx.appcompat:appcompat:1.7.1")
+    implementation("androidx.media3:media3-transformer:1.11.1")
     implementation("com.google.android.gms:play-services-cast-framework:22.3.1")
     implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.5")
     implementation("io.github.amanrajaryan:TagLib:1.0.0")

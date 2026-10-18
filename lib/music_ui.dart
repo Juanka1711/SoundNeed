@@ -422,6 +422,15 @@ class _MusicHomePageState extends State<MusicHomePage> {
                   alignment: Alignment.topCenter,
                   child: _appBarVisible
                       ? AppBar(
+                          leading: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Image.asset(
+                              'assets/icon/app_icon_source.png',
+                              width: 32,
+                              height: 32,
+                              fit: BoxFit.contain,
+                            ),
+                          ),
                           title: _isSearching
                               ? SoundNeedSearchField(
                                   controller: _searchController,
@@ -429,9 +438,10 @@ class _MusicHomePageState extends State<MusicHomePage> {
                                   hintText: 'Canción, artista o álbum',
                                   height: 46,
                                 )
-                              : const Text(
-                                  'SoundNeed',
-                                  style: TextStyle(fontWeight: FontWeight.bold),
+                              : Image.asset(
+                                  'assets/icon/titulo.png',
+                                  height: 32,
+                                  fit: BoxFit.contain,
                                 ),
                           actions: [
                             // ==================================================

@@ -13,6 +13,7 @@ import 'mini_player.dart';
 import 'playlist_actions.dart';
 import 'services/youtube_audio_service.dart';
 import 'services/song_share_service.dart';
+import 'song_share_story.dart';
 import 'services/equalizer_service.dart';
 import 'widgets/cast_devices_sheet.dart';
 import 'services/cast_discovery_service.dart';
@@ -2302,13 +2303,63 @@ class _FullPlayerState extends State<FullPlayer>
         deepLink: deepLink,
         artwork: artwork,
       );
-      await _mediaChannel.invokeMethod<void>('shareSong', <String, Object?>{
-        'title': title,
-        'artist': safeArtist,
-        'album': safeAlbum,
-        'link': deepLink,
-        'shareUrl': shareUrl.toString(),
-      });
+      final audioSource = song.isOnline
+          ? await YouTubeAudioService.instance.getAudioUrl(song.onlineVideoId)
+          : song.uri;
+      if (audioSource == null || audioSource.isEmpty) {
+        throw StateError('No se pudo preparar el fragmento de audio.');
+      }
+      final clipDurationMs = song.duration > 0 && song.duration < 15000
+          ? song.duration
+          : 15000;
+      final maxClipStartMs = song.duration > clipDurationMs
+          ? song.duration - clipDurationMs
+          : 0;
+      final clipStartMs = player.playbackPosition.inMilliseconds
+          .clamp(0, maxClipStartMs)
+          .toInt();
+      if (!mounted) return;
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => SongShareStoryPage(
+            title: title,
+            artist: safeArtist,
+            artwork: artwork,
+            onShareLink: () => _mediaChannel.invokeMethod<void>(
+              'shareSongLink',
+              <String, Object?>{
+                'title': title,
+                'artist': safeArtist,
+                'album': safeAlbum,
+                'shareUrl': shareUrl.toString(),
+              },
+            ),
+            onShareStatusLink: () => _mediaChannel.invokeMethod<void>(
+              'shareSongStatusLink',
+              <String, Object?>{
+                'title': title,
+                'artist': safeArtist,
+                'album': safeAlbum,
+                'shareUrl': shareUrl.toString(),
+              },
+            ),
+            onShare: () => _mediaChannel.invokeMethod<void>(
+              'shareSong',
+              <String, Object?>{
+                'title': title,
+                'artist': safeArtist,
+                'album': safeAlbum,
+                'link': deepLink,
+                'shareUrl': shareUrl.toString(),
+                'artwork': artwork,
+                'audioSource': audioSource,
+                'startMs': clipStartMs,
+                'durationMs': clipDurationMs,
+              },
+            ),
+          ),
+        ),
+      );
     } on PlatformException catch (error) {
       debugPrint('[SoundNeed] No se pudo compartir la canción: $error');
       _showActionMessage('No se pudo abrir las opciones para compartir.');

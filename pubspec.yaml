@@ -73,6 +73,8 @@ flutter:
 
   assets:
    - assets/audio/
+   - assets/icon/titulo.png
+   - assets/icon/app_icon_source.png
 
 
 flutter_launcher_icons:
