@@ -12,6 +12,12 @@ export async function onRequestPost({ request, env }) {
   } catch (_) {
     return jsonResponse({ error: "Solicitud no válida." }, 400);
   }
+<<<<<<< HEAD
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return jsonResponse({ error: "El cuerpo de la solicitud no es válido." }, 400);
+  }
+=======
+>>>>>>> 1f6e8dce69bd1be9392142d64d1fcaf6d7107d52
 
   const id = String(payload.id || "");
   const title = String(payload.title || "").trim().slice(0, 180);
@@ -21,7 +27,14 @@ export async function onRequestPost({ request, env }) {
   const coverType = String(payload.coverType || "image/jpeg").toLowerCase();
   const coverBase64 = String(payload.coverBase64 || "");
 
+<<<<<<< HEAD
+  let deepUri;
+  try { deepUri = new URL(deepLink); } catch (_) { deepUri = null; }
+  if (!validId(id) || !title || !artist ||
+      !deepUri || deepUri.protocol !== "soundneed:" || deepUri.hostname !== "track") {
+=======
   if (!validId(id) || !title || !artist || !deepLink.startsWith("soundneed://track")) {
+>>>>>>> 1f6e8dce69bd1be9392142d64d1fcaf6d7107d52
     return jsonResponse({ error: "Faltan datos válidos de la canción." }, 400);
   }
   if (!ALLOWED_IMAGE_TYPES.has(coverType)) {

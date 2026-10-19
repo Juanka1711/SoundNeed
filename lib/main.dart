@@ -21,7 +21,11 @@ Future<void> main() async {
   soundNeedAudioHandler = await AudioService.init<SoundNeedAudioHandler>(
     builder: SoundNeedAudioHandler.new,
     config: const AudioServiceConfig(
+<<<<<<< HEAD
+      androidNotificationChannelId: 'sound_need.music_player.channel.audio',
+=======
       androidNotificationChannelId: 'com.example.music_player.channel.audio',
+>>>>>>> 1f6e8dce69bd1be9392142d64d1fcaf6d7107d52
       androidNotificationChannelName: 'SoundNeed',
       androidNotificationChannelDescription:
           'Controles de reproducción de SoundNeed',

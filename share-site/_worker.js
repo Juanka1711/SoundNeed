@@ -28,6 +28,12 @@ async function createShare(request, env) {
 
   let payload;
   try { payload = await request.json(); } catch (_) { return json({ error: "Solicitud no válida." }, 400); }
+<<<<<<< HEAD
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return json({ error: "El cuerpo de la solicitud no es válido." }, 400);
+  }
+=======
+>>>>>>> 1f6e8dce69bd1be9392142d64d1fcaf6d7107d52
   const id = String(payload.id || "");
   const title = String(payload.title || "").trim().slice(0, 180);
   const artist = String(payload.artist || "").trim().slice(0, 180);
@@ -71,6 +77,12 @@ async function createPlaylistShare(request, env) {
 
   let payload;
   try { payload = await request.json(); } catch (_) { return json({ error: "Solicitud no válida." }, 400); }
+<<<<<<< HEAD
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return json({ error: "El cuerpo de la solicitud no es válido." }, 400);
+  }
+=======
+>>>>>>> 1f6e8dce69bd1be9392142d64d1fcaf6d7107d52
   const id = String(payload.id || "");
   const name = String(payload.name || "").trim().slice(0, 120);
   const songCount = Number(payload.songCount);

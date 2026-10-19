@@ -8,6 +8,10 @@ import 'package:image/image.dart' as img;
 import 'package:http/http.dart' as http;
 
 import 'share_card_palette.dart';
+<<<<<<< HEAD
+import '../playlist_sharing.dart';
+=======
+>>>>>>> 1f6e8dce69bd1be9392142d64d1fcaf6d7107d52
 
 class PlaylistShareService {
   PlaylistShareService._();
@@ -28,7 +32,15 @@ class PlaylistShareService {
     if (base == null || base.scheme != 'https' || base.host.isEmpty) {
       throw StateError('El sitio público de SoundNeed no está configurado.');
     }
+<<<<<<< HEAD
+    if (name.trim().isEmpty ||
+        songCount <= 0 ||
+        songCount > maxSharedPlaylistSongs ||
+        payload.isEmpty ||
+        payload.length > maxSharedPlaylistPayloadLength) {
+=======
     if (name.trim().isEmpty || songCount <= 0 || payload.isEmpty) {
+>>>>>>> 1f6e8dce69bd1be9392142d64d1fcaf6d7107d52
       throw StateError('La playlist no tiene información para compartir.');
     }
 
@@ -65,7 +77,13 @@ class PlaylistShareService {
     }
 
     final body = jsonDecode(response.body);
+<<<<<<< HEAD
+    final link = body is Map
+        ? Uri.tryParse(body['url']?.toString() ?? '')
+        : null;
+=======
     final link = body is Map ? Uri.tryParse(body['url']?.toString() ?? '') : null;
+>>>>>>> 1f6e8dce69bd1be9392142d64d1fcaf6d7107d52
     if (link == null ||
         link.scheme != 'https' ||
         link.host != base.host ||
@@ -91,6 +109,12 @@ class PlaylistShareService {
   static Future<String?> resolvePlaylistId(String id) async {
     if (!RegExp(r'^[A-Za-z0-9_-]{12,24}$').hasMatch(id)) return null;
     final base = Uri.tryParse(_baseUrl.trim());
+<<<<<<< HEAD
+    if (base == null || base.scheme != 'https' || base.host.isEmpty)
+      return null;
+    final response = await http
+        .get(base.replace(path: '/api/playlist/$id'))
+=======
     if (base == null || base.scheme != 'https' || base.host.isEmpty) return null;
     final response = await http
         .get(
@@ -98,15 +122,22 @@ class PlaylistShareService {
             path: '/api/playlist/$id',
           ),
         )
+>>>>>>> 1f6e8dce69bd1be9392142d64d1fcaf6d7107d52
         .timeout(const Duration(seconds: 15));
     if (response.statusCode != 200) return null;
     final body = jsonDecode(response.body);
     return body is Map ? body['payload']?.toString() : null;
   }
 
+<<<<<<< HEAD
+  static String _newId() =>
+      base64UrlEncode(List<int>.generate(12, (_) => _secureRandom.nextInt(256)))
+          .replaceAll('=', '');
+=======
   static String _newId() => base64UrlEncode(
         List<int>.generate(12, (_) => _secureRandom.nextInt(256)),
       ).replaceAll('=', '');
+>>>>>>> 1f6e8dce69bd1be9392142d64d1fcaf6d7107d52
 
   static Future<Uint8List> _buildPreview({
     required String name,
@@ -119,9 +150,15 @@ class PlaylistShareService {
     final usableCovers = coverArtworks.take(4).toList(growable: false);
     final palette = ShareCardPalette.fromArtwork(
       usableCovers.cast<Uint8List?>().firstWhere(
+<<<<<<< HEAD
+        (cover) => cover != null && cover.isNotEmpty,
+        orElse: () => null,
+      ),
+=======
             (cover) => cover != null && cover.isNotEmpty,
             orElse: () => null,
           ),
+>>>>>>> 1f6e8dce69bd1be9392142d64d1fcaf6d7107d52
     );
     final images = <ui.Image?>[];
     for (final bytes in usableCovers) {
@@ -216,12 +253,16 @@ class PlaylistShareService {
       } else {
         canvas.drawImageRect(
           image,
+<<<<<<< HEAD
+          Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
+=======
           Rect.fromLTWH(
             0,
             0,
             image.width.toDouble(),
             image.height.toDouble(),
           ),
+>>>>>>> 1f6e8dce69bd1be9392142d64d1fcaf6d7107d52
           destination,
           Paint()..filterQuality = FilterQuality.high,
         );
