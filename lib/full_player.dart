@@ -2588,6 +2588,7 @@ class _FullPlayerState extends State<FullPlayer>
     );
     try {
       await player.downloadSong(selectedSong);
+      final downloadedSong = _findDownloadedSong(selectedSong);
       await notifications.publish(
         NotificationDraft(
           deduplicationKey: notificationKey,
@@ -2598,7 +2599,17 @@ class _FullPlayerState extends State<FullPlayer>
           destination: 'songs',
           status: NotificationStatus.completed,
           progress: 100,
-          metadata: <String, Object?>{'songId': selectedSong.id},
+          metadata: <String, Object?>{
+            if (downloadedSong != null) 'downloadedSongId': downloadedSong.id,
+            'songTitle': downloadedSong?.title.isNotEmpty == true
+                ? downloadedSong!.title
+                : selectedSong.title,
+            'songArtist': downloadedSong?.artist.isNotEmpty == true
+                ? downloadedSong!.artist
+                : selectedSong.artist,
+            if (downloadedSong?.folderPath.isNotEmpty == true)
+              'folderPath': downloadedSong!.folderPath,
+          },
         ),
       );
       if (!mounted) return;
@@ -2631,6 +2642,40 @@ class _FullPlayerState extends State<FullPlayer>
         ),
       );
     }
+  }
+
+  Song? _findDownloadedSong(Song source) {
+    if (!source.isOnline) {
+      for (final candidate in player.songs) {
+        if (candidate.id == source.id) return candidate;
+      }
+    }
+
+    String normalize(String value) => value
+        .toLowerCase()
+        .replaceAll(RegExp(r'\([^)]*\)|\[[^]]*\]'), '')
+        .replaceAll(RegExp(r'[^a-z0-9áéíóúüñ]'), '');
+
+    final sourceTitle = normalize(source.title.isEmpty
+        ? source.displayName
+        : source.title);
+    if (sourceTitle.isEmpty) return null;
+    final candidates = player.songs.where((candidate) {
+      final candidateTitle = normalize(
+        candidate.title.isEmpty ? candidate.displayName : candidate.title,
+      );
+      return candidateTitle == sourceTitle;
+    }).toList();
+    if (candidates.isEmpty) return null;
+
+    final sourceArtist = normalize(source.artist);
+    for (final candidate in candidates) {
+      if (sourceArtist.isNotEmpty &&
+          normalize(candidate.artist) == sourceArtist) {
+        return candidate;
+      }
+    }
+    return candidates.first;
   }
 
   Widget _optionTile({

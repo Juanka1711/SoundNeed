@@ -2227,12 +2227,14 @@ class MainActivity : AudioServiceFragmentActivity() {
         } else {
             "Encontramos $count canciones nuevas en tus tendencias."
         }
-        val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
-        val pendingIntent = launchIntent?.let {
-            val flags = PendingIntent.FLAG_UPDATE_CURRENT or
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
-            PendingIntent.getActivity(this, 3107, it, flags)
+        val launchIntent = Intent(this, MainActivity::class.java).apply {
+            action = "soundneed.action.OPEN_GENERAL_NOTIFICATION"
+            flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra("soundneed_notification_destination", "home")
         }
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
+        val pendingIntent = PendingIntent.getActivity(this, 3107, launchIntent, flags)
         val notification = NotificationCompat.Builder(
             this,
             NEW_MUSIC_NOTIFICATION_CHANNEL_ID

@@ -38,6 +38,17 @@ enum NotificationPriority { low, normal, high }
 
 enum NotificationStatus { ongoing, completed, failed }
 
+@immutable
+class NotificationNavigationRequest {
+  const NotificationNavigationRequest({
+    required this.destination,
+    this.notificationId,
+  });
+
+  final String destination;
+  final String? notificationId;
+}
+
 /// Generic notification event contract. Remote push adapters can publish the
 /// same draft later without coupling SoundNeed to a push provider.
 class NotificationDraft {
@@ -240,11 +251,11 @@ class NotificationService extends ChangeNotifier {
   final List<SoundNeedNotification> _records = [];
   final Map<NotificationCategory, bool> _categorySettings = {};
   final List<String> _diagnostics = [];
-  final StreamController<String> _navigationRequests =
-      StreamController<String>.broadcast();
+  final StreamController<NotificationNavigationRequest> _navigationRequests =
+      StreamController<NotificationNavigationRequest>.broadcast();
   StreamSubscription<Object?>? _nativeNavigationSubscription;
   StreamSubscription<NotificationDraft>? _eventSourceSubscription;
-  List<String> _pendingNavigation = [];
+  List<NotificationNavigationRequest> _pendingNavigation = [];
   bool _initialized = false;
   bool _isLoading = false;
   Future<void>? _initialization;
@@ -254,10 +265,29 @@ class NotificationService extends ChangeNotifier {
   List<SoundNeedNotification> get records =>
       List<SoundNeedNotification>.unmodifiable(_records);
   List<String> get diagnostics => List<String>.unmodifiable(_diagnostics);
-  Stream<String> get navigationRequests => _navigationRequests.stream;
+  Stream<NotificationNavigationRequest> get navigationRequests =>
+      _navigationRequests.stream;
   bool get isLoading => _isLoading;
   String? get error => _error;
   int get unreadCount => _records.where((item) => !item.isRead).length;
+
+  SoundNeedNotification? findById(String id) {
+    for (final record in _records) {
+      if (record.id == id) return record;
+    }
+    return null;
+  }
+
+  SoundNeedNotification? findByNotificationId(String id) {
+    final directMatch = findById(id);
+    if (directMatch != null) return directMatch;
+    final numericId = int.tryParse(id);
+    if (numericId == null) return null;
+    for (final record in _records) {
+      if (_stableInt(record.id) == numericId) return record;
+    }
+    return null;
+  }
 
   Future<void> initialize() {
     if (_initialized) return Future<void>.value();
@@ -481,7 +511,7 @@ class NotificationService extends ChangeNotifier {
     }
   }
 
-  String? takePendingNavigation() {
+  NotificationNavigationRequest? takePendingNavigation() {
     if (_pendingNavigation.isEmpty) return null;
     final destination = _pendingNavigation.first;
     _pendingNavigation = _pendingNavigation.skip(1).toList();
@@ -559,6 +589,7 @@ class NotificationService extends ChangeNotifier {
     try {
       final shown = await _channel.invokeMethod<bool>('show', <String, Object?>{
         'id': _stableInt(record.id),
+        'recordId': record.id,
         'category': record.category.name,
         'title': record.title,
         'description': record.description,
@@ -591,10 +622,15 @@ class NotificationService extends ChangeNotifier {
       _diagnose('Se ignoró una ruta de notificación inválida');
       return;
     }
+    final rawId = value['id']?.toString().trim();
+    final request = NotificationNavigationRequest(
+      destination: destination,
+      notificationId: rawId == null || rawId.isEmpty ? null : rawId,
+    );
     if (_navigationRequests.hasListener) {
-      _navigationRequests.add(destination);
+      _navigationRequests.add(request);
     } else {
-      _pendingNavigation.add(destination);
+      _pendingNavigation.add(request);
     }
   }
 

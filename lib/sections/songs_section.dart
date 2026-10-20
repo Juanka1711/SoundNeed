@@ -16,6 +16,7 @@ class SongsSection extends StatefulWidget {
   final List<Song> filteredSongs;
   final String searchText;
   final ArtworkPalette palette;
+  final int? focusedSongId;
 
   const SongsSection({
     super.key,
@@ -23,6 +24,7 @@ class SongsSection extends StatefulWidget {
     required this.filteredSongs,
     required this.searchText,
     required this.palette,
+    this.focusedSongId,
   });
 
   @override
@@ -30,6 +32,7 @@ class SongsSection extends StatefulWidget {
 }
 
 class _SongsSectionState extends State<SongsSection> {
+  final ScrollController _scrollController = ScrollController();
   int? _observedSongId;
   bool _observedPlaying = false;
 
@@ -38,11 +41,15 @@ class _SongsSectionState extends State<SongsSection> {
     super.initState();
     _observePlayback();
     widget.player.addListener(_onPlayerChanged);
+    _scrollToFocusedSong();
   }
 
   @override
   void didUpdateWidget(covariant SongsSection oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.focusedSongId != widget.focusedSongId) {
+      _scrollToFocusedSong();
+    }
     if (oldWidget.player != widget.player) {
       oldWidget.player.removeListener(_onPlayerChanged);
       _observePlayback();
@@ -53,7 +60,28 @@ class _SongsSectionState extends State<SongsSection> {
   @override
   void dispose() {
     widget.player.removeListener(_onPlayerChanged);
+    _scrollController.dispose();
     super.dispose();
+  }
+
+  void _scrollToFocusedSong() {
+    final id = widget.focusedSongId;
+    if (id == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      final index = widget.filteredSongs.indexWhere((song) => song.id == id);
+      if (index < 0) return;
+      final estimatedOffset = 160.0 + index * 96.0;
+      final offset = estimatedOffset.clamp(
+        0.0,
+        _scrollController.position.maxScrollExtent,
+      );
+      _scrollController.animateTo(
+        offset,
+        duration: const Duration(milliseconds: 420),
+        curve: Curves.easeOutCubic,
+      );
+    });
   }
 
   void _observePlayback() {
@@ -93,6 +121,7 @@ class _SongsSectionState extends State<SongsSection> {
       backgroundColor: AppColors.card,
       onRefresh: widget.player.loadSongs,
       child: ListView.builder(
+        controller: _scrollController,
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
         physics: const AlwaysScrollableScrollPhysics(),
         itemCount: songs.isEmpty ? 2 : songs.length + 1,
@@ -107,7 +136,13 @@ class _SongsSectionState extends State<SongsSection> {
           final song = songs[index - 1];
           final isCurrent = widget.player.currentSong?.id == song.id;
           final isPlaying = isCurrent && widget.player.isPlaying;
-          return _buildSongTile(context, song, isCurrent, isPlaying);
+          return _buildSongTile(
+            context,
+            song,
+            isCurrent,
+            isPlaying,
+            widget.focusedSongId == song.id,
+          );
         },
       ),
     );
@@ -265,14 +300,22 @@ class _SongsSectionState extends State<SongsSection> {
     Song song,
     bool isCurrent,
     bool isPlaying,
+    bool isNotificationFocus,
   ) {
     final accent = isCurrent && widget.palette.isArtworkDerived
         ? Color.lerp(widget.palette.primary, Colors.white, .28)!
         : Colors.white;
+    final location = song.folderPath.isNotEmpty
+        ? song.folderPath
+        : song.uri.isNotEmpty
+        ? song.uri
+        : 'Dispositivo';
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 5),
       child: Material(
-        color: isCurrent
+        color: isNotificationFocus
+            ? widget.palette.primary.withValues(alpha: .30)
+            : isCurrent
             ? widget.palette.primary.withValues(alpha: .16)
             : AppColors.card.withValues(alpha: .55),
         borderRadius: BorderRadius.circular(20),
@@ -305,6 +348,19 @@ class _SongsSectionState extends State<SongsSection> {
                           height: 1.22,
                         ),
                       ),
+                      if (isNotificationFocus) ...[
+                        const SizedBox(height: 3),
+                        Text(
+                          'Ubicación: $location',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: widget.palette.secondary,
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 6),
                       Row(
                         children: [

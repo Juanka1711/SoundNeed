@@ -15,6 +15,7 @@ import 'services/audio_handler.dart';
 import 'services/recommendation_service.dart';
 import 'services/equalizer_service.dart';
 import 'services/cast_discovery_service.dart';
+import 'services/notification_service.dart';
 
 class Song {
   final int id;
@@ -723,11 +724,22 @@ class MusicPlayerController extends ChangeNotifier {
   Future<bool> notifyNewMusicDetected(int count) async {
     if (!_newMusicNotificationsEnabled || count <= 0) return false;
     try {
-      return await _channel.invokeMethod<bool>(
-            'showNewMusicNotification',
-            <String, Object>{'count': count},
-          ) ??
-          false;
+      final record = await NotificationService.instance.publish(
+        NotificationDraft(
+          deduplicationKey: 'new-music',
+          category: NotificationCategory.news,
+          title: count == 1
+              ? 'Hay música nueva para descubrir'
+              : 'Las tendencias se actualizaron',
+          description: count == 1
+              ? 'Encontramos una canción nueva en tus tendencias.'
+              : 'Encontramos $count canciones nuevas en tus tendencias.',
+          eventType: 'new_music_detected',
+          destination: 'home',
+          metadata: <String, Object?>{'count': count},
+        ),
+      );
+      return record != null;
     } catch (error) {
       debugPrint(
         '[SoundNeed] No se pudo mostrar el aviso de música nueva: $error',

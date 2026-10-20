@@ -12,7 +12,7 @@ class NotificationCenterPage extends StatefulWidget {
   });
 
   final NotificationService service;
-  final ValueChanged<String> onOpenDestination;
+  final ValueChanged<SoundNeedNotification> onOpenDestination;
 
   @override
   State<NotificationCenterPage> createState() => _NotificationCenterPageState();
@@ -58,7 +58,7 @@ class _NotificationCenterPageState extends State<NotificationCenterPage> {
         !NotificationService.isValidDestination(destination)) {
       return;
     }
-    widget.onOpenDestination(destination);
+    widget.onOpenDestination(record);
   }
 
   @override

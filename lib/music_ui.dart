@@ -57,7 +57,8 @@ class MusicHomePage extends StatefulWidget {
 class _MusicHomePageState extends State<MusicHomePage> {
   final TextEditingController _searchController = TextEditingController();
   final NotificationService _notificationService = NotificationService.instance;
-  StreamSubscription<String>? _notificationNavigationSubscription;
+  StreamSubscription<NotificationNavigationRequest>?
+      _notificationNavigationSubscription;
 
   List<Song> _filteredSongs = [];
 
@@ -82,6 +83,7 @@ class _MusicHomePageState extends State<MusicHomePage> {
   int _onlineSearchRequestId = 0;
 
   MusicSection _section = MusicSection.home;
+  int? _notificationFocusSongId;
 
   @override
   void initState() {
@@ -96,12 +98,12 @@ class _MusicHomePageState extends State<MusicHomePage> {
     _notificationService.addListener(_onNotificationsChanged);
     _notificationNavigationSubscription = _notificationService
         .navigationRequests
-        .listen(_openNotificationDestination);
+        .listen((request) => unawaited(_openNotificationDestination(request)));
     unawaited(
       _notificationService.initialize().then((_) {
         if (!mounted) return;
         final pending = _notificationService.takePendingNavigation();
-        if (pending != null) _openNotificationDestination(pending);
+        if (pending != null) unawaited(_openNotificationDestination(pending));
       }),
     );
 
@@ -425,21 +427,63 @@ class _MusicHomePageState extends State<MusicHomePage> {
       MaterialPageRoute<void>(
         builder: (_) => NotificationCenterPage(
           service: _notificationService,
-          onOpenDestination: (destination) {
+          onOpenDestination: (record) {
             Navigator.of(context).pop();
-            _openNotificationDestination(destination);
+            unawaited(_openNotificationRecord(record));
           },
         ),
       ),
     );
   }
 
-  void _openNotificationDestination(String destination) {
-    if (!mounted || !NotificationService.isValidDestination(destination))
+  Future<void> _openNotificationDestination(
+    NotificationNavigationRequest request,
+  ) async {
+    final record = request.notificationId == null
+        ? null
+        : _notificationService.findByNotificationId(request.notificationId!);
+    if (record != null) await _notificationService.markRead(record.id);
+    await _openNotificationRecord(record, fallbackDestination: request.destination);
+  }
+
+  Future<void> _openNotificationRecord(
+    SoundNeedNotification? record, {
+    String? fallbackDestination,
+  }) async {
+    final destination = record?.destination ?? fallbackDestination;
+    if (!mounted ||
+        destination == null ||
+        !NotificationService.isValidDestination(destination)) {
       return;
+    }
+
+    if (record?.eventType == 'song_download_completed') {
+      await _openDownloadedSongNotification(record!);
+      return;
+    }
+
+    if (record?.eventType == 'new_music_detected') {
+      setState(() => _section = MusicSection.home);
+      final count = record?.metadata['count'];
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text(
+            count is num && count == 1
+                ? 'Hay música nueva para descubrir en Inicio.'
+                : 'Las novedades musicales están en Inicio.',
+          ),
+        ),
+      );
+      return;
+    }
+
     switch (destination) {
       case 'songs':
-        setState(() => _section = MusicSection.songs);
+        setState(() {
+          _section = MusicSection.songs;
+          _notificationFocusSongId = null;
+        });
         return;
       case 'playlists':
         setState(() => _section = MusicSection.playlists);
@@ -455,6 +499,107 @@ class _MusicHomePageState extends State<MusicHomePage> {
         return;
     }
   }
+
+  Future<void> _openDownloadedSongNotification(
+    SoundNeedNotification record,
+  ) async {
+    final metadata = record.metadata;
+    final targetId = int.tryParse(
+      '${metadata['downloadedSongId'] ?? metadata['songId'] ?? ''}',
+    );
+    final title =
+        '${metadata['songTitle'] ?? record.description.replaceFirst(RegExp(r'\s+se guardó en el dispositivo\.?$'), '')}'
+            .trim();
+    final artist = '${metadata['songArtist'] ?? ''}'.trim();
+
+    _clearOnlineSearch();
+    _searchController.clear();
+    await widget.player.loadSongs();
+    if (!mounted) return;
+
+    Song? song;
+    if (targetId != null) {
+      for (final candidate in widget.player.songs) {
+        if (candidate.id == targetId) {
+          song = candidate;
+          break;
+        }
+      }
+    }
+    if (song == null && title.isNotEmpty) {
+      final normalizedTitle = _normalizeNotificationText(title);
+      final normalizedArtist = _normalizeNotificationText(artist);
+      final candidates = widget.player.songs.where((candidate) {
+        final candidateTitle = _normalizeNotificationText(
+          candidate.title.isEmpty ? candidate.displayName : candidate.title,
+        );
+        return candidateTitle == normalizedTitle;
+      }).toList();
+      if (candidates.isNotEmpty) {
+        song = candidates.firstWhere(
+          (candidate) =>
+              normalizedArtist.isNotEmpty &&
+              _normalizeNotificationText(candidate.artist) ==
+                  normalizedArtist,
+          orElse: () => candidates.first,
+        );
+      }
+    }
+
+    setState(() {
+      _section = MusicSection.songs;
+      _notificationFocusSongId = song?.id;
+    });
+
+    if (song == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text(
+            title.isEmpty
+                ? 'La descarga terminó, pero no encontramos la canción en la biblioteca.'
+                : 'La descarga terminó, pero no encontramos “$title” en la biblioteca.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    try {
+      final alreadySelected =
+          widget.player.currentSong?.id == song.id &&
+          widget.player.currentSong?.uri == song.uri;
+      if (alreadySelected && !widget.player.isPlaying) {
+        await widget.player.togglePlayPause();
+      } else if (!alreadySelected) {
+        await widget.player.playSong(song, createQueue: false);
+      }
+      if (!mounted) return;
+      final location = song.folderPath.isEmpty
+          ? 'la biblioteca'
+          : song.folderPath;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('Reproduciendo “${song.title}” · $location'),
+        ),
+      );
+    } catch (error) {
+      debugPrint('[SoundNeed] No se pudo abrir una canción descargada: $error');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('No se pudo reproducir la canción descargada.'),
+        ),
+      );
+    }
+  }
+
+  String _normalizeNotificationText(String value) => value
+      .toLowerCase()
+      .replaceAll(RegExp(r'\([^)]*\)|\[[^]]*\]'), '')
+      .replaceAll(RegExp(r'[^a-z0-9áéíóúüñ]'), '');
 
   // ==========================================================
   // BUILD
@@ -845,10 +990,14 @@ class _MusicHomePageState extends State<MusicHomePage> {
 
       case MusicSection.songs:
         return SongsSection(
+          key: ValueKey<Object?>(
+            'songs-${_notificationFocusSongId ?? 'all'}',
+          ),
           player: widget.player,
           filteredSongs: _filteredSongs,
           searchText: _searchText,
           palette: _appPalette,
+          focusedSongId: _notificationFocusSongId,
         );
 
       case MusicSection.playlists:

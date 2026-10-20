@@ -123,7 +123,10 @@ void main() {
       'destination': 'https://invalid.example',
     });
 
-    expect(notificationService.takePendingNavigation(), 'songs');
+    expect(
+      notificationService.takePendingNavigation()?.destination,
+      'songs',
+    );
     expect(notificationService.takePendingNavigation(), isNull);
     expect(notificationService.diagnostics, isNotEmpty);
   });

@@ -124,10 +124,11 @@ internal class SoundNeedNotificationBridge(private val activity: Activity) {
             else -> NotificationCompat.PRIORITY_DEFAULT
         }
 
+        val recordId = call.argument<String>("recordId").orEmpty()
         val launchIntent = Intent(activity, MainActivity::class.java).apply {
             action = ACTION_OPEN_NOTIFICATION
             flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            putExtra("soundneed_notification_id", id.toString())
+            putExtra("soundneed_notification_id", recordId)
             putExtra("soundneed_notification_destination", destination ?: "notifications")
         }
         if (launchIntent.resolveActivity(activity.packageManager) == null) return false
