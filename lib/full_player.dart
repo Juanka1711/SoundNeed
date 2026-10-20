@@ -16,6 +16,7 @@ import 'services/song_share_service.dart';
 import 'services/share_session_controller.dart';
 import 'song_share_story.dart';
 import 'services/equalizer_service.dart';
+import 'services/notification_service.dart';
 import 'widgets/cast_devices_sheet.dart';
 import 'services/cast_discovery_service.dart';
 import 'sections/media_collection_section.dart';
@@ -2571,8 +2572,35 @@ class _FullPlayerState extends State<FullPlayer>
   }
 
   Future<void> _downloadSong(dynamic song) async {
+    final selectedSong = song as Song;
+    final notificationKey = 'song-download:${selectedSong.id}';
+    final notifications = NotificationService.instance;
+    await notifications.publish(
+      NotificationDraft(
+        deduplicationKey: notificationKey,
+        category: NotificationCategory.downloads,
+        title: 'Descargando canción',
+        description: selectedSong.title,
+        eventType: 'song_download_started',
+        destination: 'songs',
+        status: NotificationStatus.ongoing,
+      ),
+    );
     try {
-      await player.downloadSong(song as Song);
+      await player.downloadSong(selectedSong);
+      await notifications.publish(
+        NotificationDraft(
+          deduplicationKey: notificationKey,
+          category: NotificationCategory.downloads,
+          title: 'Descarga completada',
+          description: '${selectedSong.title} se guardó en el dispositivo.',
+          eventType: 'song_download_completed',
+          destination: 'songs',
+          status: NotificationStatus.completed,
+          progress: 100,
+          metadata: <String, Object?>{'songId': selectedSong.id},
+        ),
+      );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -2581,6 +2609,19 @@ class _FullPlayerState extends State<FullPlayer>
         ),
       );
     } catch (error) {
+      await notifications.publish(
+        NotificationDraft(
+          deduplicationKey: notificationKey,
+          category: NotificationCategory.downloads,
+          title: 'No se pudo descargar la canción',
+          description: 'Revisa tu conexión o inténtalo de nuevo.',
+          eventType: 'song_download_failed',
+          destination: 'songs',
+          priority: NotificationPriority.high,
+          status: NotificationStatus.failed,
+          metadata: <String, Object?>{'songId': selectedSong.id},
+        ),
+      );
       debugPrint('[SoundNeed] No se pudo descargar la canción: $error');
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

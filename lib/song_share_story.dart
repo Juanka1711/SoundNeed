@@ -234,7 +234,7 @@ class _SongShareStoryPageState extends State<SongShareStoryPage> {
   Widget _formatButton(SongShareFormat format) {
     final selected = _format == format;
     final (icon, label) = switch (format) {
-      SongShareFormat.story => (Icons.photo_outlined, 'Historia'),
+      SongShareFormat.story => (Icons.photo_outlined, 'Estado'),
       SongShareFormat.chat => (Icons.link_rounded, 'Chat'),
       SongShareFormat.video => (Icons.movie_outlined, 'Vídeo'),
     };

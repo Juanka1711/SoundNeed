@@ -55,4 +55,41 @@ void main() {
     expect(sentFormat, 'video');
     expect(sentPackage, 'com.example.chat');
   });
+
+  testWidgets('el formato Estado envía la tarjeta de estado al destino', (
+    tester,
+  ) async {
+    String? sentFormat;
+    final preview = Uint8List.fromList(base64Decode(pixelPng));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SongShareStoryPage(
+            title: 'Tema',
+            artist: 'Artista',
+            preview: preview,
+            onPreviewForTheme: (_) async => preview,
+            onLoadTargets: (_) async => [
+              <String, Object?>{
+                'packageName': 'com.example.social',
+                'className': 'com.example.social.ShareActivity',
+                'label': 'Red social',
+              },
+            ],
+            onShareToTarget: (format, theme, target) async {
+              sentFormat = format;
+            },
+            onShareStory: (_) async {},
+            onShareChat: (_) async {},
+            onShareVideo: (_) async {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Red social'));
+    await tester.pumpAndSettle();
+
+    expect(sentFormat, 'story');
+  });
 }

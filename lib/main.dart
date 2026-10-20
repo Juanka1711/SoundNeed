@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:audio_service/audio_service.dart';
+
 import 'music_player.dart';
 import 'music_ui.dart';
 import 'services/audio_handler.dart';
@@ -12,6 +13,7 @@ import 'services/playlist_share_service.dart';
 import 'playlist_manager.dart';
 import 'playlist_sharing.dart';
 import 'full_player.dart';
+import 'services/notification_service.dart';
 
 late final SoundNeedAudioHandler soundNeedAudioHandler;
 
@@ -155,11 +157,7 @@ class MusicPlayerApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(
           seedColor: primary,
           brightness: Brightness.dark,
-        ).copyWith(
-          primary: primary,
-          secondary: secondary,
-          surface: surface,
-        ),
+        ).copyWith(primary: primary, secondary: secondary, surface: surface),
         useMaterial3: true,
 
         appBarTheme: const AppBarTheme(
@@ -192,10 +190,7 @@ class MusicPlayerApp extends StatelessWidget {
           ),
         ),
 
-        cardTheme: const CardThemeData(
-          color: card,
-          elevation: 0,
-        ),
+        cardTheme: const CardThemeData(color: card, elevation: 0),
 
         dialogTheme: DialogThemeData(
           backgroundColor: surface,
@@ -269,9 +264,7 @@ class MusicPlayerApp extends StatelessWidget {
 
         snackBarTheme: SnackBarThemeData(
           backgroundColor: card,
-          contentTextStyle: const TextStyle(
-            color: Colors.white,
-          ),
+          contentTextStyle: const TextStyle(color: Colors.white),
           actionTextColor: secondary,
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(
@@ -282,19 +275,14 @@ class MusicPlayerApp extends StatelessWidget {
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
           fillColor: surface,
-          hintStyle: const TextStyle(
-            color: textSecondary,
-          ),
+          hintStyle: const TextStyle(color: textSecondary),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(14),
             borderSide: BorderSide.none,
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(14),
-            borderSide: const BorderSide(
-              color: primary,
-              width: 1.5,
-            ),
+            borderSide: const BorderSide(color: primary, width: 1.5),
           ),
         ),
 
@@ -323,8 +311,9 @@ class SoundNeedHome extends StatefulWidget {
 }
 
 class _SoundNeedHomeState extends State<SoundNeedHome> {
-  static const EventChannel _sharedSongEvents =
-      EventChannel('soundneed/shared_song');
+  static const EventChannel _sharedSongEvents = EventChannel(
+    'soundneed/shared_song',
+  );
   late final MusicPlayerController _player;
   late final Future<void> _playerInitialization;
   StreamSubscription<dynamic>? _sharedSongSubscription;
@@ -337,7 +326,9 @@ class _SoundNeedHomeState extends State<SoundNeedHome> {
     _sharedSongSubscription = _sharedSongEvents.receiveBroadcastStream().listen(
       (dynamic link) => unawaited(_openSharedSong(link.toString())),
       onError: (Object error) {
-        debugPrint('[SoundNeed] No se pudo recibir el enlace compartido: $error');
+        debugPrint(
+          '[SoundNeed] No se pudo recibir el enlace compartido: $error',
+        );
       },
     );
   }
@@ -354,7 +345,9 @@ class _SoundNeedHomeState extends State<SoundNeedHome> {
         try {
           uri = await SongShareService.resolveSongLink(uri);
         } catch (error) {
-          debugPrint('[SoundNeed] No se pudo resolver la canción compartida: $error');
+          debugPrint(
+            '[SoundNeed] No se pudo resolver la canción compartida: $error',
+          );
           uri = null;
         }
         if (!mounted || uri == null) {
@@ -385,13 +378,17 @@ class _SoundNeedHomeState extends State<SoundNeedHome> {
 
     var title = uri.queryParameters['title']?.trim() ?? '';
     var artist = uri.queryParameters['artist']?.trim() ?? '';
-    final pathVideoId = uri.pathSegments.isNotEmpty ? uri.pathSegments.first : '';
+    final pathVideoId = uri.pathSegments.isNotEmpty
+        ? uri.pathSegments.first
+        : '';
     final videoId = (uri.queryParameters['videoId'] ?? pathVideoId).trim();
     var opened = false;
 
     if (RegExp(r'^[A-Za-z0-9_-]{11}$').hasMatch(videoId)) {
       if (title.isEmpty || artist.isEmpty) {
-        final metadata = await YouTubeAudioService.instance.getVideoMetadata(videoId);
+        final metadata = await YouTubeAudioService.instance.getVideoMetadata(
+          videoId,
+        );
         title = metadata['title']?.trim().isNotEmpty == true
             ? metadata['title']!.trim()
             : 'Canción compartida';
@@ -416,7 +413,8 @@ class _SoundNeedHomeState extends State<SoundNeedHome> {
             ? candidate.displayName
             : candidate.title;
         final sameTitle = _sharedTrackKey(candidateTitle) == normalizedTitle;
-        final sameArtist = artist.isEmpty ||
+        final sameArtist =
+            artist.isEmpty ||
             _sharedTrackKey(candidate.artist) == _sharedTrackKey(artist);
         if (sameTitle && sameArtist) {
           localSong = candidate;
@@ -434,7 +432,9 @@ class _SoundNeedHomeState extends State<SoundNeedHome> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           behavior: SnackBarBehavior.floating,
-          content: Text('SoundNeed no encontró esa canción en este dispositivo.'),
+          content: Text(
+            'SoundNeed no encontró esa canción en este dispositivo.',
+          ),
         ),
       );
       return;
@@ -445,13 +445,30 @@ class _SoundNeedHomeState extends State<SoundNeedHome> {
   }
 
   Future<void> _openSharedPlaylist(Uri uri) async {
-    unawaited(showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const Center(
-        child: CircularProgressIndicator(color: Colors.white),
+    final notificationKey = NotificationService.stableDeduplicationKey(
+      'playlist-import',
+      uri.toString(),
+    );
+    final notifications = NotificationService.instance;
+    await notifications.publish(
+      NotificationDraft(
+        deduplicationKey: notificationKey,
+        category: NotificationCategory.imports,
+        title: 'Importando playlist',
+        description: 'Buscando y preparando las canciones compartidas.',
+        eventType: 'shared_playlist_import_started',
+        destination: 'playlists',
+        status: NotificationStatus.ongoing,
       ),
-    ));
+    );
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) =>
+            const Center(child: CircularProgressIndicator(color: Colors.white)),
+      ),
+    );
     var loadingDialogOpen = true;
     try {
       await PlaylistManager.instance.initialize();
@@ -528,14 +545,16 @@ class _SoundNeedHomeState extends State<SoundNeedHome> {
             for (final candidate in results) {
               final candidateTitle = _sharedTrackKey(candidate.title);
               if (candidateTitle.isEmpty) continue;
-              final titleMatches = candidateTitle == titleKey ||
+              final titleMatches =
+                  candidateTitle == titleKey ||
                   candidateTitle.contains(titleKey) ||
                   titleKey.contains(candidateTitle);
-              final artistMatches = artistKey.isEmpty ||
+              final artistMatches =
+                  artistKey.isEmpty ||
                   _sharedTrackKey(candidate.artist).contains(artistKey) ||
                   candidateTitle.contains(artistKey);
-              final score = (titleMatches ? 0.75 : 0.0) +
-                  (artistMatches ? 0.25 : 0.0);
+              final score =
+                  (titleMatches ? 0.75 : 0.0) + (artistMatches ? 0.25 : 0.0);
               if (score > bestScore) {
                 best = candidate;
                 bestScore = score;
@@ -560,7 +579,10 @@ class _SoundNeedHomeState extends State<SoundNeedHome> {
         Navigator.of(context).pop();
         loadingDialogOpen = false;
       }
-      if (!mounted) return;
+      if (!mounted) {
+        await notifications.cancelByDeduplicationKey(notificationKey);
+        return;
+      }
 
       final songs = <Song>[];
       final seen = <String>{};
@@ -569,6 +591,22 @@ class _SoundNeedHomeState extends State<SoundNeedHome> {
       }
       final missingCount = entries.length - songs.length;
       if (songs.isEmpty) {
+        await notifications.publish(
+          NotificationDraft(
+            deduplicationKey: notificationKey,
+            category: NotificationCategory.errors,
+            title: 'No se pudo importar la playlist',
+            description: 'No se encontraron canciones para guardar.',
+            eventType: 'shared_playlist_import_failed',
+            destination: 'playlists',
+            priority: NotificationPriority.high,
+            status: NotificationStatus.failed,
+            metadata: <String, Object?>{
+              'requestedCount': entries.length,
+              'importedCount': 0,
+            },
+          ),
+        );
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             behavior: SnackBarBehavior.floating,
@@ -641,12 +679,38 @@ class _SoundNeedHomeState extends State<SoundNeedHome> {
           ),
         ),
       );
-      if (shouldSave != true || !mounted) return;
+      if (shouldSave != true) {
+        await notifications.cancelByDeduplicationKey(notificationKey);
+        return;
+      }
+      if (!mounted) {
+        await notifications.cancelByDeduplicationKey(notificationKey);
+        return;
+      }
 
       final saved = await manager.saveSharedPlaylist(
         name,
         songs,
         targetPlaylistId: destinationId == 'new' ? null : destinationId,
+      );
+      await notifications.publish(
+        NotificationDraft(
+          deduplicationKey: notificationKey,
+          category: NotificationCategory.imports,
+          title: 'Playlist importada',
+          description:
+              '${songs.length} canciones guardadas en “${saved.name}”.'
+              '${missingCount > 0 ? ' No se encontraron $missingCount.' : ''}',
+          eventType: 'shared_playlist_import_completed',
+          destination: 'playlists',
+          status: NotificationStatus.completed,
+          progress: 100,
+          metadata: <String, Object?>{
+            'playlistId': saved.id,
+            'importedCount': songs.length,
+            'missingCount': missingCount,
+          },
+        ),
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -656,6 +720,18 @@ class _SoundNeedHomeState extends State<SoundNeedHome> {
         ),
       );
     } catch (error) {
+      await notifications.publish(
+        NotificationDraft(
+          deduplicationKey: notificationKey,
+          category: NotificationCategory.errors,
+          title: 'Falló la importación de una playlist',
+          description: 'Revisa el enlace o inténtalo de nuevo.',
+          eventType: 'shared_playlist_import_failed',
+          destination: 'playlists',
+          priority: NotificationPriority.high,
+          status: NotificationStatus.failed,
+        ),
+      );
       if (mounted && loadingDialogOpen) {
         Navigator.of(context).pop();
         loadingDialogOpen = false;

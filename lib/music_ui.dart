@@ -17,6 +17,8 @@ import 'services/youtube_audio_service.dart';
 import 'services/artwork_palette.dart';
 import 'widgets/soundneed_search_field.dart';
 import 'widgets/local_music_badge.dart';
+import 'notifications/notification_center_page.dart';
+import 'services/notification_service.dart';
 
 // ============================================================
 // COLORES BASE DE SOUNDNEED
@@ -54,6 +56,8 @@ class MusicHomePage extends StatefulWidget {
 
 class _MusicHomePageState extends State<MusicHomePage> {
   final TextEditingController _searchController = TextEditingController();
+  final NotificationService _notificationService = NotificationService.instance;
+  StreamSubscription<String>? _notificationNavigationSubscription;
 
   List<Song> _filteredSongs = [];
 
@@ -89,6 +93,17 @@ class _MusicHomePageState extends State<MusicHomePage> {
     });
 
     widget.player.addListener(_onPlayerChanged);
+    _notificationService.addListener(_onNotificationsChanged);
+    _notificationNavigationSubscription = _notificationService
+        .navigationRequests
+        .listen(_openNotificationDestination);
+    unawaited(
+      _notificationService.initialize().then((_) {
+        if (!mounted) return;
+        final pending = _notificationService.takePendingNavigation();
+        if (pending != null) _openNotificationDestination(pending);
+      }),
+    );
 
     _filteredSongs = widget.player.songs;
     _paletteSongId = widget.player.currentSong?.id;
@@ -100,6 +115,8 @@ class _MusicHomePageState extends State<MusicHomePage> {
     _searchController.dispose();
     _onlineSearchDebounce?.cancel();
     widget.player.removeListener(_onPlayerChanged);
+    _notificationService.removeListener(_onNotificationsChanged);
+    _notificationNavigationSubscription?.cancel();
     super.dispose();
   }
 
@@ -117,6 +134,10 @@ class _MusicHomePageState extends State<MusicHomePage> {
     }
 
     _filterSongs(_searchController.text, rebuild: true);
+  }
+
+  void _onNotificationsChanged() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadAppPalette(Song? song) async {
@@ -399,6 +420,42 @@ class _MusicHomePageState extends State<MusicHomePage> {
     );
   }
 
+  void _showNotificationCenter() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => NotificationCenterPage(
+          service: _notificationService,
+          onOpenDestination: (destination) {
+            Navigator.of(context).pop();
+            _openNotificationDestination(destination);
+          },
+        ),
+      ),
+    );
+  }
+
+  void _openNotificationDestination(String destination) {
+    if (!mounted || !NotificationService.isValidDestination(destination))
+      return;
+    switch (destination) {
+      case 'songs':
+        setState(() => _section = MusicSection.songs);
+        return;
+      case 'playlists':
+        setState(() => _section = MusicSection.playlists);
+        return;
+      case 'home':
+        setState(() => _section = MusicSection.home);
+        return;
+      case 'settings':
+        _showSettings();
+        return;
+      case 'notifications':
+        _showNotificationCenter();
+        return;
+    }
+  }
+
   // ==========================================================
   // BUILD
   // ==========================================================
@@ -462,10 +519,11 @@ class _MusicHomePageState extends State<MusicHomePage> {
                                       onPressed: _toggleSearch,
                                       visualDensity: VisualDensity.compact,
                                       padding: EdgeInsets.zero,
-                                      constraints: const BoxConstraints.tightFor(
-                                        width: 32,
-                                        height: 32,
-                                      ),
+                                      constraints:
+                                          const BoxConstraints.tightFor(
+                                            width: 32,
+                                            height: 32,
+                                          ),
                                       icon: const Icon(
                                         Icons.close,
                                         color: Colors.white,
@@ -517,6 +575,49 @@ class _MusicHomePageState extends State<MusicHomePage> {
                                 icon: const Icon(
                                   Icons.queue_music_outlined,
                                   color: Colors.white,
+                                ),
+                              ),
+
+                            if (!_isSearching)
+                              IconButton(
+                                tooltip: _notificationService.unreadCount == 0
+                                    ? 'Notificaciones'
+                                    : 'Notificaciones: ${_notificationService.unreadCount} sin leer',
+                                onPressed: _showNotificationCenter,
+                                icon: Stack(
+                                  clipBehavior: Clip.none,
+                                  children: [
+                                    const Icon(
+                                      Icons.notifications_outlined,
+                                      color: Colors.white,
+                                    ),
+                                    if (_notificationService.unreadCount > 0)
+                                      Positioned(
+                                        right: -4,
+                                        top: -3,
+                                        child: Container(
+                                          width: 16,
+                                          height: 16,
+                                          decoration: const BoxDecoration(
+                                            color: Color(0xfff43f5e),
+                                            shape: BoxShape.circle,
+                                          ),
+                                          child: Center(
+                                            child: Text(
+                                              _notificationService.unreadCount >
+                                                      9
+                                                  ? '9+'
+                                                  : '${_notificationService.unreadCount}',
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 8,
+                                                fontWeight: FontWeight.w800,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                  ],
                                 ),
                               ),
 
@@ -933,14 +1034,22 @@ class _SoundNeedSettingsPageState extends State<SoundNeedSettingsPage>
 
   String _version = 'Cargando…';
   bool _notificationsEnabled = true;
+  bool _generalSystemNotificationsEnabled = false;
   Timer? _sleepTimerUi;
+  final NotificationService _notificationService = NotificationService.instance;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     widget.player.addListener(_onPlayerChanged);
+    _notificationService.addListener(_onNotificationSettingsChanged);
     _loadSettingsInfo();
+    unawaited(
+      _notificationService.initialize().then(
+        (_) => _loadGeneralNotificationStatus(),
+      ),
+    );
     _sleepTimerUi = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted && widget.player.sleepTimerDeadline != null) {
         setState(() {});
@@ -952,6 +1061,7 @@ class _SoundNeedSettingsPageState extends State<SoundNeedSettingsPage>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     widget.player.removeListener(_onPlayerChanged);
+    _notificationService.removeListener(_onNotificationSettingsChanged);
     _sleepTimerUi?.cancel();
     super.dispose();
   }
@@ -960,9 +1070,16 @@ class _SoundNeedSettingsPageState extends State<SoundNeedSettingsPage>
     if (mounted) setState(() {});
   }
 
+  void _onNotificationSettingsChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _loadNotificationStatus();
+    if (state == AppLifecycleState.resumed) {
+      _loadNotificationStatus();
+      _loadGeneralNotificationStatus();
+    }
   }
 
   Future<void> _loadSettingsInfo() async {
@@ -977,6 +1094,7 @@ class _SoundNeedSettingsPageState extends State<SoundNeedSettingsPage>
       if (mounted) setState(() => _version = 'No disponible');
     }
     await _loadNotificationStatus();
+    await _loadGeneralNotificationStatus();
   }
 
   Future<void> _loadNotificationStatus() async {
@@ -990,6 +1108,17 @@ class _SoundNeedSettingsPageState extends State<SoundNeedSettingsPage>
     } on PlatformException {
       // La pantalla de administración del sistema seguirá disponible.
     }
+  }
+
+  Future<void> _loadGeneralNotificationStatus() async {
+    final enabled = await _notificationService.areSystemNotificationsEnabled();
+    if (mounted) setState(() => _generalSystemNotificationsEnabled = enabled);
+  }
+
+  Future<void> _manageGeneralNotificationPermission() async {
+    await _notificationService.requestSystemPermission();
+    await Future<void>.delayed(const Duration(milliseconds: 350));
+    await _loadGeneralNotificationStatus();
   }
 
   Future<void> _openNotificationSettings() async {
@@ -1136,6 +1265,19 @@ class _SoundNeedSettingsPageState extends State<SoundNeedSettingsPage>
     color: Colors.white10,
   );
 
+  String _notificationCategoryDescription(NotificationCategory category) =>
+      switch (category) {
+        NotificationCategory.downloads => 'Finalización y errores de descargas',
+        NotificationCategory.imports =>
+          'Playlists compartidas importadas o con errores',
+        NotificationCategory.errors =>
+          'Problemas importantes que requieren atención',
+        NotificationCategory.library => 'Cambios importantes de la biblioteca',
+        NotificationCategory.news => 'Novedades publicadas por SoundNeed',
+        NotificationCategory.maintenance =>
+          'Procesos de mantenimiento de la biblioteca',
+      };
+
   @override
   Widget build(BuildContext context) {
     final statusText = _notificationsEnabled
@@ -1235,6 +1377,51 @@ class _SoundNeedSettingsPageState extends State<SoundNeedSettingsPage>
                   await _loadNotificationStatus();
                 },
               ),
+            ],
+          ),
+          _sectionLabel('Avisos generales'),
+          _settingsCard(
+            children: [
+              ListTile(
+                leading: const _SettingsIcon(
+                  icon: Icons.notifications_active_outlined,
+                ),
+                title: const Text(
+                  'Notificaciones de Android',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                subtitle: Text(
+                  _generalSystemNotificationsEnabled
+                      ? 'Activadas; el historial interno se conserva.'
+                      : 'Desactivadas en Android; SoundNeed conservará el historial.',
+                  style: const TextStyle(color: AppColors.textSecondary),
+                ),
+                trailing: const Icon(
+                  Icons.open_in_new_rounded,
+                  size: 19,
+                  color: AppColors.textSecondary,
+                ),
+                onTap: _manageGeneralNotificationPermission,
+              ),
+              _divider(),
+              for (final category in NotificationCategory.values) ...[
+                SwitchListTile.adaptive(
+                  secondary: _SettingsIcon(icon: category.icon),
+                  title: Text(
+                    category.label,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  subtitle: Text(
+                    _notificationCategoryDescription(category),
+                    style: const TextStyle(color: AppColors.textSecondary),
+                  ),
+                  activeThumbColor: const Color(0xFFB99AFF),
+                  value: _notificationService.isCategoryEnabled(category),
+                  onChanged: (enabled) => _notificationService
+                      .setCategoryEnabled(category, enabled),
+                ),
+                if (category != NotificationCategory.values.last) _divider(),
+              ],
             ],
           ),
           _sectionLabel('Reproducción'),

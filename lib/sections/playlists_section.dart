@@ -15,6 +15,7 @@ import '../playlist_sharing.dart';
 import '../services/playlist_share_service.dart';
 import '../services/youtube_audio_service.dart';
 import '../services/artwork_palette.dart';
+import '../services/notification_service.dart';
 import '../widgets/soundneed_search_field.dart';
 import '../widgets/section_spotlight.dart';
 import '../widgets/soundneed_empty_state.dart';
@@ -684,7 +685,67 @@ class _PlaylistContentsState extends State<_PlaylistContents> {
   }
 
   Future<void> _downloadPlaylist(List<Song> songs) async {
-    final failures = await widget.player.downloadPlaylist(songs);
+    final notificationKey =
+        'playlist-download:${songs.map((song) => song.id).join(',')}';
+    final notifications = NotificationService.instance;
+    await notifications.publish(
+      NotificationDraft(
+        deduplicationKey: notificationKey,
+        category: NotificationCategory.downloads,
+        title: 'Descargando playlist',
+        description: '${songs.length} canciones en cola.',
+        eventType: 'playlist_download_started',
+        destination: 'songs',
+        status: NotificationStatus.ongoing,
+      ),
+    );
+    var failures = 0;
+    try {
+      failures = await widget.player.downloadPlaylist(songs);
+      await notifications.publish(
+        NotificationDraft(
+          deduplicationKey: notificationKey,
+          category: NotificationCategory.downloads,
+          title: failures == 0
+              ? 'Descarga de playlist completada'
+              : 'La playlist terminó con errores',
+          description: failures == 0
+              ? '${songs.length} canciones se guardaron en el dispositivo.'
+              : '$failures de ${songs.length} canciones no se pudieron descargar.',
+          eventType: failures == 0
+              ? 'playlist_download_completed'
+              : 'playlist_download_failed',
+          destination: 'songs',
+          priority: failures == 0
+              ? NotificationPriority.normal
+              : NotificationPriority.high,
+          status: failures == 0
+              ? NotificationStatus.completed
+              : NotificationStatus.failed,
+          metadata: <String, Object?>{
+            'downloadedCount': songs.length - failures,
+            'failureCount': failures,
+            'requestedCount': songs.length,
+          },
+        ),
+      );
+    } catch (error) {
+      failures = songs.length;
+      await notifications.publish(
+        NotificationDraft(
+          deduplicationKey: notificationKey,
+          category: NotificationCategory.downloads,
+          title: 'No se pudo completar la descarga',
+          description: 'Inténtalo de nuevo desde la playlist.',
+          eventType: 'playlist_download_failed',
+          destination: 'songs',
+          priority: NotificationPriority.high,
+          status: NotificationStatus.failed,
+          metadata: <String, Object?>{'failureCount': failures},
+        ),
+      );
+      debugPrint('[SoundNeed] Error al descargar playlist: $error');
+    }
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(

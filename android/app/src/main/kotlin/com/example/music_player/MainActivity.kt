@@ -120,6 +120,7 @@ class MainActivity : AudioServiceFragmentActivity() {
     private var castDiscoveryManager: CastDiscoveryManager? = null
     private var castSenderManager: CastSenderManager? = null
     private var audioOutputManager: AudioOutputManager? = null
+    private var notificationBridge: SoundNeedNotificationBridge? = null
 
     companion object {
         private const val CHANNEL = "music_player/media"
@@ -177,6 +178,9 @@ class MainActivity : AudioServiceFragmentActivity() {
             this,
             flutterEngine.dartExecutor.binaryMessenger
         )
+        notificationBridge = SoundNeedNotificationBridge(this).also {
+            it.attach(flutterEngine.dartExecutor.binaryMessenger)
+        }
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
@@ -390,7 +394,7 @@ class MainActivity : AudioServiceFragmentActivity() {
                             theme,
                         )
                         val intent = imageShareIntent(title, shareText, cardUri)
-                        val chooser = Intent.createChooser(intent, "Compartir historia")
+                        val chooser = Intent.createChooser(intent, "Compartir estado")
                         startActivity(chooser)
                         result.success(true)
                     } catch (error: Exception) {
@@ -1194,6 +1198,7 @@ class MainActivity : AudioServiceFragmentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         if (handleShareActionIntent(intent)) return
+        if (notificationBridge?.handleIntent(intent) == true) return
         val link = intent.dataString
         if (isSoundNeedShareLink(link)) {
             if (sharedSongEventSink == null) {
@@ -2180,6 +2185,13 @@ class MainActivity : AudioServiceFragmentActivity() {
                     Manifest.permission.POST_NOTIFICATIONS
                 ) != PackageManager.PERMISSION_GRANTED
             ) {
+
+                val notificationPreferences = getSharedPreferences(
+                    "soundneed_general_notification_permission",
+                    Context.MODE_PRIVATE,
+                )
+                if (notificationPreferences.getBoolean("requested_once", false)) return
+                notificationPreferences.edit().putBoolean("requested_once", true).apply()
 
                 ActivityCompat.requestPermissions(
                     this,
