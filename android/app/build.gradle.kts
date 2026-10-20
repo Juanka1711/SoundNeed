@@ -1,16 +1,12 @@
-<<<<<<< HEAD
 import java.io.FileInputStream
 import java.util.Properties
 
-=======
->>>>>>> 1f6e8dce69bd1be9392142d64d1fcaf6d7107d52
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-<<<<<<< HEAD
 val signingProperties = Properties()
 val signingPropertiesFile = rootProject.file("key.properties")
 if (signingPropertiesFile.exists()) {
@@ -19,10 +15,6 @@ if (signingPropertiesFile.exists()) {
 
 android {
     namespace = "sound_need.music_player"
-=======
-android {
-    namespace = "com.example.music_player"
->>>>>>> 1f6e8dce69bd1be9392142d64d1fcaf6d7107d52
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -34,12 +26,7 @@ android {
     }
 
     defaultConfig {
-<<<<<<< HEAD
         applicationId = "sound_need.music_player"
-=======
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.music_player"
->>>>>>> 1f6e8dce69bd1be9392142d64d1fcaf6d7107d52
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = 24  // Android 7.0 (API 24)
@@ -52,7 +39,6 @@ android {
         versionName = flutter.versionName
     }
 
-<<<<<<< HEAD
     signingConfigs {
         create("release") {
             signingProperties["storeFile"]?.toString()?.let { storeFile = file(it) }
@@ -67,13 +53,6 @@ android {
             // Release builds must use a project-owned key. Configure it in
             // android/key.properties; never publish an APK signed with debug keys.
             signingConfig = signingConfigs.getByName("release")
-=======
-    buildTypes {
-        release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
->>>>>>> 1f6e8dce69bd1be9392142d64d1fcaf6d7107d52
 
             // NOTE: The Flutter Gradle Plugin force-enables R8 minification for the
             // "release" build type, so disabling it here has no effect. R8 overrides

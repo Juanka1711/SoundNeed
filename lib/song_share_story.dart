@@ -2,31 +2,61 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
-/// Standalone preview shown before sending a song as a visual story.
-class SongShareStoryPage extends StatelessWidget {
+enum SongShareFormat { story, chat, video }
+
+/// Share session with a real card preview and three content formats.
+class SongShareStoryPage extends StatefulWidget {
   const SongShareStoryPage({
     super.key,
     required this.title,
     required this.artist,
-    required this.artwork,
-    required this.onShare,
-    required this.onShareLink,
-    required this.onShareStatusLink,
+    required this.preview,
+    required this.accentColor,
+    required this.onShareStory,
+    required this.onShareChat,
+    required this.onShareVideo,
   });
 
   final String title;
   final String artist;
-  final Uint8List artwork;
-  final Future<void> Function() onShare;
-  final Future<void> Function() onShareLink;
-  final Future<void> Function() onShareStatusLink;
+  final Uint8List preview;
+  final Color accentColor;
+  final Future<void> Function() onShareStory;
+  final Future<void> Function() onShareChat;
+  final Future<void> Function() onShareVideo;
+
+  @override
+  State<SongShareStoryPage> createState() => _SongShareStoryPageState();
+}
+
+class _SongShareStoryPageState extends State<SongShareStoryPage> {
+  SongShareFormat _format = SongShareFormat.story;
+  bool _isSharing = false;
 
   @override
   Widget build(BuildContext context) {
+    final formatInfo = switch (_format) {
+      SongShareFormat.story => (
+        icon: Icons.photo_outlined,
+        label: 'Compartir foto',
+        description: 'Tarjeta vertical para estados e historias',
+      ),
+      SongShareFormat.chat => (
+        icon: Icons.chat_bubble_outline_rounded,
+        label: 'Compartir enlace',
+        description: 'Enlace inteligente para enviar por chat',
+      ),
+      SongShareFormat.video => (
+        icon: Icons.movie_creation_outlined,
+        label: 'Compartir vídeo',
+        description: 'Vídeo vertical con un fragmento de música',
+      ),
+    };
+
     return Scaffold(
       backgroundColor: const Color(0xff070f15),
       appBar: AppBar(
-        title: const Text('Compartir historia'),
+        title: const Text('Compartir canción'),
         backgroundColor: const Color(0xff070f15),
       ),
       body: SafeArea(
@@ -35,77 +65,20 @@ class SongShareStoryPage extends StatelessWidget {
             Expanded(
               child: Center(
                 child: AspectRatio(
-                  aspectRatio: 4 / 5,
+                  aspectRatio: 9 / 16,
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
                     child: ClipRRect(
-                      borderRadius: BorderRadius.circular(28),
-                      child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          Image.memory(artwork, fit: BoxFit.cover),
-                          const DecoratedBox(
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.topCenter,
-                                end: Alignment.bottomCenter,
-                                colors: [
-                                  Color(0x33000000),
-                                  Color(0x00101010),
-                                  Color(0xee050b10),
-                                ],
-                                stops: [0, .36, 1],
-                              ),
-                            ),
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.all(22),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const _BrandPill(),
-                                const Spacer(),
-                                Text(
-                                  title,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 25,
-                                    height: 1.08,
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  artist,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: Color(0xffd4dbe0),
-                                    fontSize: 16,
-                                  ),
-                                ),
-                                const SizedBox(height: 18),
-                                const Row(
-                                  children: [
-                                    Icon(Icons.play_circle_fill_rounded,
-                                        color: Color(0xff58d9ca), size: 28),
-                                    SizedBox(width: 9),
-                                    Text(
-                                      'Compartida desde SoundNeed',
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w600,
-                                        fontSize: 13,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
+                      borderRadius: BorderRadius.circular(26),
+                      child: Semantics(
+                        label:
+                            'Vista previa de ${widget.title}, de ${widget.artist}',
+                        image: true,
+                        child: Image.memory(
+                          widget.preview,
+                          fit: BoxFit.cover,
+                          gaplessPlayback: true,
+                        ),
                       ),
                     ),
                   ),
@@ -113,36 +86,71 @@ class SongShareStoryPage extends StatelessWidget {
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  const Text(
+                    'Formato',
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 9),
+                  Row(
+                    children: [
+                      _formatButton(
+                        SongShareFormat.story,
+                        Icons.photo_outlined,
+                        'Historia',
+                      ),
+                      const SizedBox(width: 8),
+                      _formatButton(
+                        SongShareFormat.chat,
+                        Icons.chat_bubble_outline_rounded,
+                        'Chat',
+                      ),
+                      const SizedBox(width: 8),
+                      _formatButton(
+                        SongShareFormat.video,
+                        Icons.movie_creation_outlined,
+                        'Vídeo',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    formatInfo.description,
+                    style: const TextStyle(
+                      color: Colors.white60,
+                      fontSize: 13,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
                   SizedBox(
                     width: double.infinity,
-                    height: 54,
+                    height: 52,
                     child: FilledButton.icon(
-                      onPressed: () => _share(context, onShare),
-                      icon: const Icon(Icons.movie_creation_outlined),
-                      label: const Text('Compartir estado con música'),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 50,
-                    child: OutlinedButton.icon(
-                      onPressed: () => _share(context, onShareLink),
-                      icon: const Icon(Icons.chat_bubble_outline_rounded),
-                      label: const Text('Compartir enlace en un chat'),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 50,
-                    child: OutlinedButton.icon(
-                      onPressed: () => _share(context, onShareStatusLink),
-                      icon: const Icon(Icons.link_rounded),
-                      label: const Text('Publicar enlace clicable en Estado'),
+                      onPressed: _isSharing ? null : _shareSelectedFormat,
+                      style: FilledButton.styleFrom(
+                        backgroundColor: widget.accentColor,
+                        foregroundColor: Colors.white,
+                      ),
+                      icon: _isSharing
+                          ? const SizedBox.square(
+                              dimension: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : Icon(formatInfo.icon),
+                      label: Text(
+                        _isSharing ? 'Preparando…' : formatInfo.label,
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
                     ),
                   ),
                 ],
@@ -154,40 +162,73 @@ class SongShareStoryPage extends StatelessWidget {
     );
   }
 
-  Future<void> _share(
-    BuildContext context,
-    Future<void> Function() action,
-  ) async {
+  Widget _formatButton(SongShareFormat format, IconData icon, String label) {
+    final selected = _format == format;
+    return Expanded(
+      child: GestureDetector(
+        onTap: _isSharing ? null : () => setState(() => _format = format),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          height: 42,
+          decoration: BoxDecoration(
+            color: selected
+                ? widget.accentColor.withValues(alpha: .20)
+                : Colors.white.withValues(alpha: .06),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: selected
+                  ? widget.accentColor.withValues(alpha: .75)
+                  : Colors.white.withValues(alpha: .10),
+            ),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon,
+                size: 17,
+                color: selected ? widget.accentColor : Colors.white70,
+              ),
+              const SizedBox(width: 5),
+              Flexible(
+                child: Text(
+                  label,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: selected ? Colors.white : Colors.white70,
+                    fontSize: 12,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _shareSelectedFormat() async {
+    setState(() => _isSharing = true);
     try {
-      await action();
+      switch (_format) {
+        case SongShareFormat.story:
+          await widget.onShareStory();
+          break;
+        case SongShareFormat.chat:
+          await widget.onShareChat();
+          break;
+        case SongShareFormat.video:
+          await widget.onShareVideo();
+          break;
+      }
+      if (mounted) Navigator.of(context).pop();
     } catch (_) {
-      if (!context.mounted) return;
+      if (!mounted) return;
+      setState(() => _isSharing = false);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No se pudo compartir la canción.')),
       );
     }
   }
-}
-
-class _BrandPill extends StatelessWidget {
-  const _BrandPill();
-
-  @override
-  Widget build(BuildContext context) => DecoratedBox(
-        decoration: BoxDecoration(
-          color: const Color(0xb8070f15),
-          borderRadius: BorderRadius.circular(24),
-        ),
-        child: const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.graphic_eq_rounded, color: Color(0xff58d9ca), size: 19),
-              SizedBox(width: 7),
-              Text('SOUNDNEED', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, letterSpacing: 1.2, fontSize: 12)),
-            ],
-          ),
-        ),
-      );
 }

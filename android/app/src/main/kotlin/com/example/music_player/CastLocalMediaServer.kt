@@ -1,8 +1,4 @@
-<<<<<<< HEAD
 package sound_need.music_player
-=======
-package com.example.music_player
->>>>>>> 1f6e8dce69bd1be9392142d64d1fcaf6d7107d52
 
 import android.content.Context
 import android.net.Uri

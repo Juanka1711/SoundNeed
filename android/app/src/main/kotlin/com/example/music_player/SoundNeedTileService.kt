@@ -1,8 +1,4 @@
-<<<<<<< HEAD
 package sound_need.music_player
-=======
-package com.example.music_player
->>>>>>> 1f6e8dce69bd1be9392142d64d1fcaf6d7107d52
 
 import android.content.Intent
 import android.os.Build
@@ -25,13 +21,8 @@ import androidx.annotation.RequiresApi
 class SoundNeedTileService : TileService() {
 
     companion object {
-<<<<<<< HEAD
         private const val ACTION_PLAY_PAUSE = "sound_need.music_player.PLAY_PAUSE"
         private const val ACTION_OPEN_APP = "sound_need.music_player.OPEN_APP"
-=======
-        private const val ACTION_PLAY_PAUSE = "com.example.music_player.PLAY_PAUSE"
-        private const val ACTION_OPEN_APP = "com.example.music_player.OPEN_APP"
->>>>>>> 1f6e8dce69bd1be9392142d64d1fcaf6d7107d52
     }
 
     private var isPlaying = false

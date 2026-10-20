@@ -1,0 +1,5 @@
+ALTER TABLE shared_songs
+  ADD COLUMN preview_width INTEGER NOT NULL DEFAULT 1200;
+
+ALTER TABLE shared_songs
+  ADD COLUMN preview_height INTEGER NOT NULL DEFAULT 630;

@@ -13,6 +13,7 @@ import 'mini_player.dart';
 import 'playlist_actions.dart';
 import 'services/youtube_audio_service.dart';
 import 'services/song_share_service.dart';
+import 'services/share_session_controller.dart';
 import 'services/equalizer_service.dart';
 import 'widgets/cast_devices_sheet.dart';
 import 'services/cast_discovery_service.dart';
@@ -32,9 +33,6 @@ class FullPlayer extends StatefulWidget {
 class _FullPlayerState extends State<FullPlayer>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   MusicPlayerController get player => widget.player;
-  static const MethodChannel _mediaChannel = MethodChannel(
-    'music_player/media',
-  );
 
   Color _themeColor = Colors.white;
   Color _themeSecondary = Colors.white70;
@@ -2302,12 +2300,6 @@ class _FullPlayerState extends State<FullPlayer>
         deepLink: deepLink,
         artwork: artwork,
       );
-      final audioSource = song.isOnline
-          ? await YouTubeAudioService.instance.getAudioUrl(song.onlineVideoId)
-          : song.uri;
-      if (audioSource == null || audioSource.isEmpty) {
-        throw StateError('No se pudo preparar el fragmento de audio.');
-      }
       final clipDurationMs = song.duration > 0 && song.duration < 15000
           ? song.duration
           : 15000;
@@ -2318,19 +2310,18 @@ class _FullPlayerState extends State<FullPlayer>
           .clamp(0, maxClipStartMs)
           .toInt();
       if (!mounted) return;
-      await _mediaChannel.invokeMethod<void>(
-        'shareSong',
-        <String, Object?>{
-          'title': title,
-          'artist': safeArtist,
-          'album': safeAlbum,
-          'link': deepLink,
-          'shareUrl': shareUrl.toString(),
-          'artwork': artwork,
-          'audioSource': audioSource,
-          'startMs': clipStartMs,
-          'durationMs': clipDurationMs,
-        },
+      final shareSession = ShareSessionController();
+      await shareSession.shareStory(
+        title: title,
+        artist: safeArtist,
+        album: safeAlbum,
+        shareUrl: shareUrl.toString(),
+        artwork: artwork,
+        deepLink: deepLink,
+        audioSource: song.isOnline ? '' : song.uri,
+        videoId: song.isOnline ? song.onlineVideoId : '',
+        startMs: clipStartMs,
+        durationMs: clipDurationMs,
       );
     } on PlatformException catch (error) {
       debugPrint('[SoundNeed] No se pudo compartir la canción: $error');

@@ -451,6 +451,12 @@ class _MusicHomePageState extends State<MusicHomePage> {
                                     autofocus: true,
                                     hintText: 'Canción, artista o álbum',
                                     height: 46,
+                                    accent: _appPalette.primary,
+                                    surfaceColor: Color.lerp(
+                                      _appPalette.dark,
+                                      _appPalette.primary,
+                                      _appPalette.isArtworkDerived ? 0.16 : 0,
+                                    )!,
                                     suffix: IconButton(
                                       tooltip: 'Cerrar búsqueda',
                                       onPressed: _toggleSearch,

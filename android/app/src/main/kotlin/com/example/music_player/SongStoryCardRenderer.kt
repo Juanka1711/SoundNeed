@@ -1,8 +1,4 @@
-<<<<<<< HEAD
 package sound_need.music_player
-=======
-package com.example.music_player
->>>>>>> 1f6e8dce69bd1be9392142d64d1fcaf6d7107d52
 
 import android.content.Context
 import android.graphics.Bitmap
@@ -46,8 +42,10 @@ internal object SongStoryCardRenderer {
         context: Context,
         title: String,
         artist: String,
-        artworkBytes: ByteArray?
+        artworkBytes: ByteArray?,
+        theme: String = "ocean"
     ): Uri {
+        val accent = accentForTheme(theme)
         val output = Bitmap.createBitmap(
             WIDTH,
             HEIGHT,
@@ -73,7 +71,7 @@ internal object SongStoryCardRenderer {
             drawCinematicOverlay(canvas)
 
             // 3. Identidad visual.
-            drawBrand(canvas)
+            drawBrand(canvas, accent)
 
             // 4. Portada central nítida.
             val cover = RectF(
@@ -96,7 +94,7 @@ internal object SongStoryCardRenderer {
                 x = 104f,
                 y = 1280f,
                 size = 23f,
-                color = ACCENT,
+                color = accent,
                 typeface = Typeface.create(
                     "sans-serif-medium",
                     Typeface.NORMAL
@@ -136,7 +134,7 @@ internal object SongStoryCardRenderer {
             )
 
             // 6. Firma minimalista, sin ecualizadores ni líneas.
-            drawFooter(canvas)
+            drawFooter(canvas, accent)
 
             // 7. Exportar la tarjeta.
             val directory = File(context.cacheDir, "shared")
@@ -476,7 +474,13 @@ internal object SongStoryCardRenderer {
         paint.shader = null
     }
 
-    private fun drawBrand(canvas: Canvas) {
+    fun accentForTheme(theme: String): Int = when (theme.lowercase()) {
+        "sunset" -> 0xFFFF6B7D.toInt()
+        "violet" -> 0xFFB69CFF.toInt()
+        else -> ACCENT
+    }
+
+    private fun drawBrand(canvas: Canvas, accent: Int) {
         drawText(
             canvas = canvas,
             text = "SOUNDNEED",
@@ -491,7 +495,7 @@ internal object SongStoryCardRenderer {
         )
 
         paint.shader = null
-        paint.color = ACCENT
+        paint.color = accent
         canvas.drawCircle(320f, 140f, 5f, paint)
 
         drawText(
@@ -645,7 +649,7 @@ internal object SongStoryCardRenderer {
         )
     }
 
-    private fun drawFooter(canvas: Canvas) {
+    private fun drawFooter(canvas: Canvas, accent: Int) {
         drawText(
             canvas = canvas,
             text = "DESCÚBRELA. COMPÁRTELA.",
@@ -665,7 +669,7 @@ internal object SongStoryCardRenderer {
             x = 980f,
             y = 1805f,
             size = 24f,
-            color = ACCENT,
+            color = accent,
             typeface = Typeface.create(
                 "sans-serif-medium",
                 Typeface.NORMAL

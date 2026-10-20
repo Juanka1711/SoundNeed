@@ -6,7 +6,13 @@ La página pública corre en Cloudflare Workers con archivos estáticos y D1. El
 
 La configuración del proyecto está en `../wrangler.jsonc`. El binding `DB` conecta la base `soundneed-shares`, y `ASSETS` sirve los archivos estáticos de esta carpeta.
 
-Para volver a desplegar después de iniciar sesión con Wrangler:
+En una base D1 ya existente, aplica primero la migración de dimensiones. Las instalaciones nuevas pueden crear la base con `schema.sql`, que ya incluye estas columnas:
+
+```powershell
+pnpm dlx wrangler d1 execute soundneed-shares --remote --file=share-site/migrations/0004_song_preview_dimensions.sql
+```
+
+Después de iniciar sesión con Wrangler, despliega el Worker:
 
 ```powershell
 pnpm dlx wrangler deploy
@@ -30,7 +36,7 @@ El Worker está publicado en `https://soundneed-shares.breinermuleth64.workers.d
 flutter build apk --release --dart-define=SOUNDNEED_SHARE_BASE_URL=https://<tu-subdominio>.workers.dev
 ```
 
-No pongas una ruta después del dominio. La app envía los datos y una tarjeta propia de SoundNeed a `/api/share`; el servidor devuelve un enlace corto `/s/<id>`. Para playlists y “Me gusta”, envía el nombre, las canciones y una imagen compuesta con las cuatro primeras portadas a `/api/playlist`; el servidor devuelve `/p/<id>`. Ambas rutas sirven HTML con Open Graph desde la primera respuesta, para que WhatsApp pueda mostrar la tarjeta correcta.
+No pongas una ruta después del dominio. La app envía los datos y una tarjeta vertical propia de SoundNeed a `/api/share`; el servidor devuelve un enlace corto `/s/<id>` y conserva sus dimensiones Open Graph. Para playlists y “Me gusta”, envía el nombre, las canciones y una imagen compuesta con las cuatro primeras portadas a `/api/playlist`; el servidor devuelve `/p/<id>`. Ambas rutas sirven HTML con Open Graph desde la primera respuesta, para que WhatsApp pueda mostrar la tarjeta correcta.
 
 ## Límites y datos
 

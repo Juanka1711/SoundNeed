@@ -1,8 +1,4 @@
-<<<<<<< HEAD
 package sound_need.music_player
-=======
-package com.example.music_player
->>>>>>> 1f6e8dce69bd1be9392142d64d1fcaf6d7107d52
 
 import android.Manifest
 import android.content.ContentUris
@@ -10,7 +6,10 @@ import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.LabeledIntent
+import android.graphics.drawable.Icon
 import android.app.RecoverableSecurityException
+import android.app.AlertDialog
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -25,12 +24,18 @@ import android.net.NetworkCapabilities
 import android.net.Uri
 import android.net.NetworkRequest
 import android.os.Build
+import android.os.Bundle
 import android.os.Environment
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.provider.Settings
+import android.service.chooser.ChooserAction
 import android.util.Log
 import android.view.KeyEvent
+import android.view.Gravity
+import android.widget.LinearLayout
+import android.widget.ProgressBar
+import android.widget.TextView
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.net.HttpURLConnection
@@ -78,6 +83,7 @@ class MainActivity : AudioServiceFragmentActivity() {
     private var downloadProgressSink: EventChannel.EventSink? = null
     private var sharedSongEventSink: EventChannel.EventSink? = null
     private var pendingSharedSongLink: String? = null
+    private var shareProgressDialog: AlertDialog? = null
     private var connectivityManager: ConnectivityManager? = null
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
@@ -120,10 +126,30 @@ class MainActivity : AudioServiceFragmentActivity() {
         private const val MUSIC_FOLDERS_PREFS = "soundneed_music_folders"
         private const val MUSIC_FOLDERS_KEY = "paths"
         private const val DOWNLOAD_ARTWORKS_KEY = "artwork_files"
+        internal const val ACTION_OPEN_SHARE_THEME = "soundneed.action.OPEN_SHARE_THEME"
+        internal const val ACTION_OPEN_SHARE_FORMAT = "soundneed.action.OPEN_SHARE_FORMAT"
+        internal const val ACTION_SHARE_WITH_THEME = "soundneed.action.SHARE_WITH_THEME"
+        internal const val EXTRA_ARTWORK_PATH = "shareArtworkPath"
+        internal const val EXTRA_THEME = "shareTheme"
+        private const val EXTRA_VIDEO_ID = "shareVideoId"
+        private const val EXTRA_SHARE_FORMAT = "shareFormat"
         private val extractorExecutor =
             Executors.newFixedThreadPool(2)
         private val downloadExecutor =
             Executors.newSingleThreadExecutor()
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val launchIntent = intent
+        if (isShareActionIntent(launchIntent)) {
+            window.decorView.post {
+                if (isShareActionIntent(launchIntent)) {
+                    setIntent(Intent(this, MainActivity::class.java))
+                    handleShareActionIntent(launchIntent)
+                }
+            }
+        }
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -258,27 +284,88 @@ class MainActivity : AudioServiceFragmentActivity() {
                     }
                 }
 
-                "shareSongStatusLink" -> {
+                "createSongSharePreview" -> {
+                    try {
+                        val title = call.argument<String>("title") ?: "Canción"
+                        val artist = call.argument<String>("artist").orEmpty()
+                        val artwork = call.argument<ByteArray>("artwork")
+                            ?: throw IllegalArgumentException("Falta la portada de la canción")
+                        val cardUri = SongStoryCardRenderer.create(
+                            this,
+                            title,
+                            artist,
+                            artwork,
+                        )
+                        val preview = contentResolver.openInputStream(cardUri)?.use {
+                            it.readBytes()
+                        } ?: throw IllegalStateException("No se pudo leer la vista previa.")
+                        result.success(preview)
+                    } catch (error: Exception) {
+                        result.error("SONG_PREVIEW", error.message, null)
+                    }
+                }
+
+                "shareSongCard" -> {
                     try {
                         val title = call.argument<String>("title") ?: "Canción"
                         val artist = call.argument<String>("artist").orEmpty()
                         val album = call.argument<String>("album").orEmpty()
-                        val link = call.argument<String>("shareUrl")
+                        val shareLink = call.argument<String>("shareUrl")
                             ?: throw IllegalArgumentException("Falta el enlace público de SoundNeed")
+                        val artwork = call.argument<ByteArray>("artwork")
+                            ?: throw IllegalArgumentException("Falta la portada de la canción")
+                        val theme = call.argument<String>("theme") ?: "ocean"
+                        val deepLink = call.argument<String>("link").orEmpty()
+                        val audioSource = call.argument<String>("audioSource").orEmpty()
+                        val videoId = call.argument<String>("videoId").orEmpty()
+                        val startMs = call.argument<Int>("startMs")?.toLong() ?: 0L
+                        val durationMs = call.argument<Int>("durationMs")?.toLong() ?: 15_000L
                         val details = listOf(artist, album)
                             .filter { it.isNotBlank() }
                             .joinToString(" · ")
-                        val message = buildString {
+                        val shareText = buildString {
                             append("🎵 $title")
                             if (details.isNotBlank()) append("\n$details")
-                            append("\nEscúchala en SoundNeed:\n$link")
+                            append("\nEscúchala en SoundNeed:\n$shareLink")
                         }
-                        val intent = Intent(Intent.ACTION_SEND).apply {
-                            type = "text/plain"
-                            putExtra(Intent.EXTRA_SUBJECT, "$title · SoundNeed")
-                            putExtra(Intent.EXTRA_TEXT, message)
-                        }
-                        startActivity(Intent.createChooser(intent, "Publicar enlace en Estado"))
+                        val cardUri = SongStoryCardRenderer.create(
+                            this,
+                            title,
+                            artist,
+                            artwork,
+                            theme,
+                        )
+                        val intent = imageShareIntent(title, shareText, cardUri)
+                        val chooser = Intent.createChooser(intent, "Compartir historia")
+                        val shareExtras = themeShareExtras(
+                                title = title,
+                                artist = artist,
+                                album = album,
+                                shareUrl = shareLink,
+                                deepLink = deepLink,
+                                artwork = artwork,
+                                theme = theme,
+                                format = "story",
+                                audioSource = audioSource,
+                                videoId = videoId,
+                                startMs = startMs,
+                                durationMs = durationMs,
+                        )
+                        addThemeModifyAction(chooser, shareExtras)
+                        addShareFormatActions(chooser, shareExtras)
+                        startActivity(chooser)
+                        result.success(true)
+                    } catch (error: Exception) {
+                        result.error("SONG_CARD_SHARE", error.message, null)
+                    }
+                }
+
+                "shareSongStatusLink" -> {
+                    try {
+                        val title = call.argument<String>("title") ?: "Canción"
+                        val link = call.argument<String>("shareUrl")
+                            ?: throw IllegalArgumentException("Falta el enlace público de SoundNeed")
+                        shareSongStatusLink(title, link)
                         result.success(true)
                     } catch (error: Exception) {
                         result.error("SONG_STATUS_LINK_SHARE", error.message, null)
@@ -294,6 +381,7 @@ class MainActivity : AudioServiceFragmentActivity() {
                             ?: throw IllegalArgumentException("Falta el enlace público de SoundNeed")
                         val artwork = call.argument<ByteArray>("artwork")
                             ?: throw IllegalArgumentException("Falta la portada de la canción")
+                        val theme = call.argument<String>("theme") ?: "ocean"
                         val audioSource = call.argument<String>("audioSource")
                             ?: throw IllegalArgumentException("Falta el audio de la canción")
                         val startMs = call.argument<Int>("startMs")?.toLong() ?: 0L
@@ -304,7 +392,7 @@ class MainActivity : AudioServiceFragmentActivity() {
                             if (details.isNotBlank()) append("\n$details")
                             append("\nCompartido desde SoundNeed\n$shareLink")
                         }
-                        val cardUri = SongStoryCardRenderer.create(this, title, artist, artwork)
+                        val cardUri = SongStoryCardRenderer.create(this, title, artist, artwork, theme)
                         createSongStoryVideo(
                             cardUri = cardUri,
                             audioSource = audioSource,
@@ -320,11 +408,28 @@ class MainActivity : AudioServiceFragmentActivity() {
                                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                     clipData = android.content.ClipData.newUri(
                                         contentResolver,
-                                        "Historia de SoundNeed",
-                                        cardUri,
+                                        "Vídeo musical de SoundNeed",
+                                        videoUri,
                                     )
                                 }
-                                startActivity(Intent.createChooser(intent, "Compartir historia"))
+                                val chooser = Intent.createChooser(intent, "Compartir historia")
+                                addThemeModifyAction(
+                                    chooser,
+                                    themeShareExtras(
+                                        title = title,
+                                        artist = artist,
+                                        album = album,
+                                        shareUrl = shareLink,
+                                        deepLink = call.argument<String>("link").orEmpty(),
+                                        artwork = artwork,
+                                        theme = theme,
+                                        format = "video",
+                                        audioSource = audioSource,
+                                        startMs = startMs,
+                                        durationMs = durationMs,
+                                    ),
+                                )
+                                startActivity(chooser)
                                 result.success(true)
                             },
                             onError = { error ->
@@ -1011,6 +1116,7 @@ class MainActivity : AudioServiceFragmentActivity() {
     }
 
     override fun onDestroy() {
+        hideShareProgress()
         castDiscoveryManager?.dispose()
         castDiscoveryManager = null
         castSenderManager?.dispose()
@@ -1023,6 +1129,7 @@ class MainActivity : AudioServiceFragmentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        if (handleShareActionIntent(intent)) return
         val link = intent.dataString
         if (isSoundNeedShareLink(link)) {
             if (sharedSongEventSink == null) {
@@ -1032,6 +1139,22 @@ class MainActivity : AudioServiceFragmentActivity() {
             }
             intent.data = null
         }
+    }
+
+    private fun isShareActionIntent(intent: Intent?): Boolean = when (intent?.action) {
+        ACTION_OPEN_SHARE_THEME, ACTION_SHARE_WITH_THEME, ACTION_OPEN_SHARE_FORMAT -> true
+        else -> false
+    }
+
+    private fun handleShareActionIntent(intent: Intent): Boolean {
+        when (intent.action) {
+            ACTION_OPEN_SHARE_THEME -> openShareThemePicker(intent)
+            ACTION_SHARE_WITH_THEME -> shareWithSelectedTheme(intent)
+            ACTION_OPEN_SHARE_FORMAT -> openShareFormat(intent)
+            else -> return false
+        }
+        intent.action = null
+        return true
     }
 
     private fun isSoundNeedShareLink(link: String?): Boolean =
@@ -1111,7 +1234,9 @@ class MainActivity : AudioServiceFragmentActivity() {
         ).addItems(
             listOf(
                 androidx.media3.transformer.EditedMediaItem.Builder(imageItem)
-                    .setFrameRate(30)
+                    // La portada es estática; 15 fps reduce el trabajo de
+                    // exportación sin cambiar la apariencia del clip.
+                    .setFrameRate(15)
                     .build(),
             ),
         ).build()
@@ -1158,6 +1283,369 @@ class MainActivity : AudioServiceFragmentActivity() {
             onError(error)
         }
     }
+
+    private fun showShareProgress(message: String) {
+        if (shareProgressDialog?.isShowing == true) return
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(56, 40, 56, 40)
+            addView(ProgressBar(this@MainActivity), LinearLayout.LayoutParams(56, 56))
+            addView(TextView(this@MainActivity).apply {
+                text = message
+                textSize = 16f
+                setPadding(32, 0, 0, 0)
+            })
+        }
+        shareProgressDialog = AlertDialog.Builder(this)
+            .setView(content)
+            .setCancelable(false)
+            .create()
+        shareProgressDialog?.show()
+    }
+
+    private fun hideShareProgress() {
+        shareProgressDialog?.dismiss()
+        shareProgressDialog = null
+    }
+
+    private fun themeShareExtras(
+        title: String,
+        artist: String,
+        album: String,
+        shareUrl: String,
+        artwork: ByteArray,
+        theme: String,
+        format: String,
+        deepLink: String = "",
+        audioSource: String = "",
+        videoId: String = "",
+        startMs: Long = 0L,
+        durationMs: Long = 15_000L,
+    ): Bundle {
+        val artworkFile = File(cacheDir, "shared/share-theme-${System.currentTimeMillis()}.img")
+        artworkFile.parentFile?.mkdirs()
+        artworkFile.writeBytes(artwork)
+        return Bundle().apply {
+            putString("title", title)
+            putString("artist", artist)
+            putString("album", album)
+            putString("shareUrl", shareUrl)
+            putString("deepLink", deepLink)
+            putString("audioSource", audioSource)
+            putString(EXTRA_VIDEO_ID, videoId)
+            putString(EXTRA_ARTWORK_PATH, artworkFile.absolutePath)
+            putString(EXTRA_THEME, theme)
+            putString(EXTRA_SHARE_FORMAT, format)
+            putLong("startMs", startMs)
+            putLong("durationMs", durationMs)
+        }
+    }
+
+    private fun addThemeModifyAction(chooser: Intent, extras: Bundle) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return
+
+        val modifyIntent = Intent(this, MainActivity::class.java).apply {
+            action = ACTION_OPEN_SHARE_THEME
+            data = Uri.parse("soundneed://share-theme/${System.nanoTime()}")
+            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            putExtras(extras)
+        }
+        val pending = PendingIntent.getActivity(
+            this,
+            34,
+            modifyIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val modifyAction = ChooserAction.Builder(
+            Icon.createWithResource(this, R.mipmap.ic_launcher),
+            "Cambiar tema",
+            pending,
+        ).build()
+        chooser.putExtra(Intent.EXTRA_CHOOSER_MODIFY_SHARE_ACTION, modifyAction)
+    }
+
+    private fun addShareFormatActions(chooser: Intent, baseExtras: Bundle) {
+        val shortcuts = listOf(
+            "story" to "Estado",
+            "chat" to "Chat",
+            "video" to "Vídeo musical",
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            val actions = shortcuts.mapIndexed { index, (format, label) ->
+                val extras = Bundle(baseExtras).apply { putString(EXTRA_SHARE_FORMAT, format) }
+                val actionIntent = Intent(this, MainActivity::class.java).apply {
+                    action = ACTION_OPEN_SHARE_FORMAT
+                    data = Uri.parse("soundneed://share-format/$format/${System.nanoTime()}")
+                    addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                    putExtras(extras)
+                }
+                val pending = PendingIntent.getActivity(
+                    this,
+                    340 + index,
+                    actionIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                )
+                val icon = if (format == "chat") {
+                    android.R.drawable.ic_menu_send
+                } else {
+                    android.R.drawable.ic_media_play
+                }
+                ChooserAction.Builder(Icon.createWithResource(this, icon), label, pending).build()
+            }.toTypedArray()
+            chooser.putExtra(Intent.EXTRA_CHOOSER_CUSTOM_ACTIONS, actions)
+        } else {
+            // Older Android sheets support only two extra targets. The card is
+            // already the default Estado payload, so expose Chat and Video.
+            val targets = shortcuts.filter { it.first != "story" }.map { (format, label) ->
+                val actionIntent = Intent(this, MainActivity::class.java).apply {
+                    action = ACTION_OPEN_SHARE_FORMAT
+                    data = Uri.parse("soundneed://share-format/$format/${System.nanoTime()}")
+                    addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                    putExtras(Bundle(baseExtras).apply {
+                        putString(EXTRA_SHARE_FORMAT, format)
+                    })
+                }
+                LabeledIntent(actionIntent, packageName, label, R.mipmap.ic_launcher)
+            }.toTypedArray<android.os.Parcelable>()
+            chooser.putExtra(Intent.EXTRA_INITIAL_INTENTS, targets)
+        }
+    }
+
+    private fun openShareFormat(request: Intent) {
+        when (request.getStringExtra(EXTRA_SHARE_FORMAT)) {
+            "story" -> shareSongStatusLink(
+                title = request.getStringExtra("title") ?: "Canción",
+                link = request.getStringExtra("shareUrl").orEmpty(),
+            )
+            "chat" -> {
+                val title = request.getStringExtra("title") ?: "Canción"
+                val artist = request.getStringExtra("artist").orEmpty()
+                val album = request.getStringExtra("album").orEmpty()
+                val shareUrl = request.getStringExtra("shareUrl").orEmpty()
+                val shareExtras = Bundle(request.extras ?: Bundle()).apply {
+                    putString(EXTRA_SHARE_FORMAT, "chat")
+                }
+                shareSongLink(title, artist, album, shareUrl, shareExtras)
+            }
+            "video" -> {
+                val audioSource = request.getStringExtra("audioSource").orEmpty()
+                val videoId = request.getStringExtra(EXTRA_VIDEO_ID).orEmpty()
+                if (audioSource.isNotBlank() || videoId.isBlank()) {
+                    shareWithSelectedTheme(request)
+                    return
+                }
+                showShareProgress("Preparando vídeo musical…")
+                extractorExecutor.execute {
+                    val resolved = try {
+                        getYouTubeAudioStream(videoId)?.url
+                    } catch (error: Exception) {
+                        Log.e("SoundNeedShare", "No se pudo obtener el audio para el vídeo", error)
+                        null
+                    }
+                    runOnUiThread {
+                        if (resolved.isNullOrBlank()) {
+                            hideShareProgress()
+                            Log.e("SoundNeedShare", "No se encontró el audio para el vídeo compartido")
+                            android.widget.Toast.makeText(
+                                this,
+                                "No se pudo preparar el vídeo musical.",
+                                android.widget.Toast.LENGTH_LONG,
+                            ).show()
+                            return@runOnUiThread
+                        }
+                        request.putExtra("audioSource", resolved)
+                        shareWithSelectedTheme(request)
+                    }
+                }
+            }
+            else -> Log.w("SoundNeedShare", "Formato de compartir no reconocido")
+        }
+    }
+
+    private fun shareSongLink(
+        title: String,
+        artist: String,
+        album: String,
+        link: String,
+        formatExtras: Bundle? = null,
+    ) {
+        val details = listOf(artist, album).filter { it.isNotBlank() }.joinToString(" · ")
+        val message = buildString {
+            append("🎵 $title")
+            if (details.isNotBlank()) append("\n$details")
+            append("\nEscúchala en SoundNeed:\n$link")
+        }
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, "$title · SoundNeed")
+            putExtra(Intent.EXTRA_TEXT, message)
+        }
+        val chooser = Intent.createChooser(intent, "Compartir enlace de canción")
+        formatExtras?.let { addShareFormatActions(chooser, it) }
+        startActivity(chooser)
+    }
+
+    /** Shares the public song URL as text so WhatsApp can make its status link preview clickable. */
+    private fun shareSongStatusLink(
+        title: String,
+        link: String,
+    ) {
+        if (link.isBlank()) {
+            android.widget.Toast.makeText(
+                this,
+                "No está disponible el enlace de esta canción.",
+                android.widget.Toast.LENGTH_LONG,
+            ).show()
+            return
+        }
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, "$title · SoundNeed")
+            // WhatsApp builds a clickable status link preview from the URL;
+            // the title, artist and cover already come from its Open Graph page.
+            putExtra(Intent.EXTRA_TEXT, link)
+        }
+        startActivity(Intent.createChooser(intent, "Publicar enlace en Estado"))
+    }
+
+    private fun openShareThemePicker(source: Intent) {
+        try {
+            val pickerIntent = Intent(this, SongShareThemeActivity::class.java).apply {
+                putExtras(source.extras ?: Bundle())
+            }
+            startActivity(pickerIntent)
+        } catch (error: Exception) {
+            Log.e("SoundNeedShare", "No se pudo abrir el selector de temas", error)
+        }
+    }
+
+    private fun shareWithSelectedTheme(request: Intent) {
+        try {
+            val title = request.getStringExtra("title") ?: "Canción"
+            val artist = request.getStringExtra("artist").orEmpty()
+            val album = request.getStringExtra("album").orEmpty()
+            val shareUrl = request.getStringExtra("shareUrl").orEmpty()
+            val theme = request.getStringExtra(EXTRA_THEME) ?: "ocean"
+            val format = request.getStringExtra(EXTRA_SHARE_FORMAT) ?: "story"
+            val artworkPath = request.getStringExtra(EXTRA_ARTWORK_PATH)
+                ?: throw IllegalArgumentException("Falta la portada de la canción")
+            val artworkFile = File(artworkPath)
+            if (!artworkFile.isFile) throw IllegalStateException("La portada temporal ya no está disponible")
+            val artwork = artworkFile.readBytes()
+
+            when (format) {
+                "story" -> {
+                    val cardUri = SongStoryCardRenderer.create(this, title, artist, artwork, theme)
+                    val details = listOf(artist, album).filter { it.isNotBlank() }.joinToString(" · ")
+                    val shareText = buildString {
+                        append("🎵 $title")
+                        if (details.isNotBlank()) append("\n$details")
+                        append("\nEscúchala en SoundNeed:\n$shareUrl")
+                    }
+                    val sendIntent = imageShareIntent(title, shareText, cardUri)
+                    val chooser = Intent.createChooser(sendIntent, "Compartir historia")
+                    val shareExtras = themeShareExtras(
+                        title = title,
+                        artist = artist,
+                        album = album,
+                        shareUrl = shareUrl,
+                        deepLink = request.getStringExtra("deepLink").orEmpty(),
+                        artwork = artwork,
+                        theme = theme,
+                        format = "story",
+                        audioSource = request.getStringExtra("audioSource").orEmpty(),
+                        videoId = request.getStringExtra(EXTRA_VIDEO_ID).orEmpty(),
+                        startMs = request.getLongExtra("startMs", 0L),
+                        durationMs = request.getLongExtra("durationMs", 15_000L),
+                    )
+                    addThemeModifyAction(chooser, shareExtras)
+                    addShareFormatActions(chooser, shareExtras)
+                    startActivity(chooser)
+                }
+                "video" -> {
+                    showShareProgress("Preparando vídeo musical…")
+                    val audioSource = request.getStringExtra("audioSource")
+                        ?: throw IllegalArgumentException("Falta el audio de la canción")
+                    val startMs = request.getLongExtra("startMs", 0L)
+                    val durationMs = request.getLongExtra("durationMs", 15_000L)
+                    val deepLink = request.getStringExtra("deepLink").orEmpty()
+                    val cardUri = SongStoryCardRenderer.create(this, title, artist, artwork, theme)
+                    val details = listOf(artist, album).filter { it.isNotBlank() }.joinToString(" · ")
+                    val shareText = buildString {
+                        append("🎵 $title")
+                        if (details.isNotBlank()) append("\n$details")
+                        append("\nCompartido desde SoundNeed\n$shareUrl")
+                    }
+                    createSongStoryVideo(
+                        cardUri = cardUri,
+                        audioSource = audioSource,
+                        startMs = startMs,
+                        durationMs = durationMs,
+                        onComplete = { videoUri ->
+                            val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                type = "video/mp4"
+                                putExtra(Intent.EXTRA_TITLE, "$title · SoundNeed")
+                                putExtra(Intent.EXTRA_SUBJECT, "$title · SoundNeed")
+                                putExtra(Intent.EXTRA_TEXT, shareText)
+                                putExtra(Intent.EXTRA_STREAM, videoUri)
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                clipData = android.content.ClipData.newUri(
+                                    contentResolver,
+                                    "Vídeo musical de SoundNeed",
+                                    videoUri,
+                                )
+                            }
+                            hideShareProgress()
+                            val chooser = Intent.createChooser(sendIntent, "Compartir historia")
+                            val shareExtras = themeShareExtras(
+                                title = title,
+                                artist = artist,
+                                album = album,
+                                shareUrl = shareUrl,
+                                deepLink = deepLink,
+                                artwork = artwork,
+                                theme = theme,
+                                format = "video",
+                                audioSource = audioSource,
+                                videoId = request.getStringExtra(EXTRA_VIDEO_ID).orEmpty(),
+                                startMs = startMs,
+                                durationMs = durationMs,
+                            )
+                            addThemeModifyAction(
+                                chooser,
+                                shareExtras,
+                            )
+                            addShareFormatActions(chooser, shareExtras)
+                            startActivity(chooser)
+                        },
+                        onError = { error ->
+                            hideShareProgress()
+                            Log.e("SoundNeedShare", "No se pudo regenerar el vídeo", error)
+                            android.widget.Toast.makeText(
+                                this,
+                                "No se pudo preparar el vídeo musical.",
+                                android.widget.Toast.LENGTH_LONG,
+                            ).show()
+                        },
+                    )
+                }
+            }
+        } catch (error: Exception) {
+            Log.e("SoundNeedShare", "No se pudo aplicar el tema", error)
+        }
+    }
+
+    private fun imageShareIntent(title: String, shareText: String, cardUri: Uri): Intent =
+        Intent(Intent.ACTION_SEND).apply {
+            type = "image/jpeg"
+            putExtra(Intent.EXTRA_TITLE, "$title · SoundNeed")
+            putExtra(Intent.EXTRA_SUBJECT, "$title · SoundNeed")
+            putExtra(Intent.EXTRA_TEXT, shareText)
+            putExtra(Intent.EXTRA_STREAM, cardUri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            clipData = android.content.ClipData.newUri(contentResolver, "Tarjeta de SoundNeed", cardUri)
+        }
 
     private fun startAudioVisualizer(sessionId: Int): Boolean {
         stopAudioVisualizer()

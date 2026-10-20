@@ -10,7 +10,7 @@ const json = (value, status = 200) => new Response(JSON.stringify(value), {
 async function getSong(env, id) {
   if (!validId(id) || !env.DB) return null;
   return env.DB.prepare(
-    "SELECT id, title, artist, album, cover_base64, cover_type, preview_base64, preview_type, deep_link FROM shared_songs WHERE id = ?",
+    "SELECT id, title, artist, album, cover_base64, cover_type, preview_base64, preview_type, preview_width, preview_height, deep_link FROM shared_songs WHERE id = ?",
   ).bind(id).first();
 }
 
@@ -28,12 +28,9 @@ async function createShare(request, env) {
 
   let payload;
   try { payload = await request.json(); } catch (_) { return json({ error: "Solicitud no válida." }, 400); }
-<<<<<<< HEAD
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     return json({ error: "El cuerpo de la solicitud no es válido." }, 400);
   }
-=======
->>>>>>> 1f6e8dce69bd1be9392142d64d1fcaf6d7107d52
   const id = String(payload.id || "");
   const title = String(payload.title || "").trim().slice(0, 180);
   const artist = String(payload.artist || "").trim().slice(0, 180);
@@ -43,6 +40,8 @@ async function createShare(request, env) {
   const coverBase64 = String(payload.coverBase64 || "");
   const previewType = String(payload.previewType || "").toLowerCase();
   const previewBase64 = String(payload.previewBase64 || "");
+  const previewWidth = Number(payload.previewWidth || 1200);
+  const previewHeight = Number(payload.previewHeight || 630);
   const allowedTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
 
   if (!validId(id) || !title || !artist) return json({ error: "Faltan datos válidos de la canción." }, 400);
@@ -52,6 +51,9 @@ async function createShare(request, env) {
     return json({ error: "Enlace de SoundNeed no válido." }, 400);
   }
   if (!allowedTypes.has(coverType)) return json({ error: "Formato de portada no válido." }, 400);
+  if (!Number.isInteger(previewWidth) || !Number.isInteger(previewHeight) || previewWidth < 120 || previewHeight < 120 || previewWidth > 4096 || previewHeight > 4096) {
+    return json({ error: "Dimensiones de la vista previa no válidas." }, 400);
+  }
   if (!coverBase64 || coverBase64.length > 600_000 || Math.floor(coverBase64.length * 3 / 4) > 450_000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(coverBase64)) {
     return json({ error: "La portada está vacía o supera el tamaño permitido." }, 413);
   }
@@ -60,13 +62,14 @@ async function createShare(request, env) {
   }
 
   await env.DB.prepare(
-    `INSERT INTO shared_songs (id, title, artist, album, cover_base64, cover_type, preview_base64, preview_type, deep_link, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `INSERT INTO shared_songs (id, title, artist, album, cover_base64, cover_type, preview_base64, preview_type, preview_width, preview_height, deep_link, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
      ON CONFLICT(id) DO UPDATE SET title=excluded.title, artist=excluded.artist, album=excluded.album,
        cover_base64=excluded.cover_base64, cover_type=excluded.cover_type,
-       preview_base64=excluded.preview_base64, preview_type=excluded.preview_type, deep_link=excluded.deep_link,
+       preview_base64=excluded.preview_base64, preview_type=excluded.preview_type,
+       preview_width=excluded.preview_width, preview_height=excluded.preview_height, deep_link=excluded.deep_link,
        created_at=CURRENT_TIMESTAMP`,
-  ).bind(id, title, artist, album, coverBase64, coverType, previewBase64, previewType, deepLink).run();
+  ).bind(id, title, artist, album, coverBase64, coverType, previewBase64, previewType, previewWidth, previewHeight, deepLink).run();
   return json({ url: new URL(`/s/${id}`, request.url).toString() }, 201);
 }
 
@@ -77,12 +80,9 @@ async function createPlaylistShare(request, env) {
 
   let payload;
   try { payload = await request.json(); } catch (_) { return json({ error: "Solicitud no válida." }, 400); }
-<<<<<<< HEAD
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     return json({ error: "El cuerpo de la solicitud no es válido." }, 400);
   }
-=======
->>>>>>> 1f6e8dce69bd1be9392142d64d1fcaf6d7107d52
   const id = String(payload.id || "");
   const name = String(payload.name || "").trim().slice(0, 120);
   const songCount = Number(payload.songCount);
@@ -121,6 +121,8 @@ function songPage(song, origin) {
   const album = escapeHtml(song.album || "");
   const coverImage = escapeHtml(coverUrl);
   const image = escapeHtml(previewReady ? previewUrl : coverUrl);
+  const imageWidth = previewReady ? Number(song.preview_width) || 1200 : 320;
+  const imageHeight = previewReady ? Number(song.preview_height) || 630 : 320;
   const canonical = escapeHtml(pageUrl);
   const deepLink = escapeHtml(song.deep_link);
   const description = escapeHtml(`${song.artist}${song.album ? ` · ${song.album}` : ""} · Compartido desde SoundNeed`);
@@ -130,7 +132,7 @@ function songPage(song, origin) {
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#071510">
 <meta property="og:type" content="music.song"><meta property="og:site_name" content="SoundNeed"><meta property="og:title" content="${title} · SoundNeed">
 <meta property="og:description" content="${description}"><meta property="og:url" content="${canonical}"><meta property="og:image" content="${image}"><meta property="og:image:secure_url" content="${image}">
-<meta property="og:image:type" content="${imageType}"><meta property="og:image:width" content="${previewReady ? 1200 : 320}"><meta property="og:image:height" content="${previewReady ? 630 : 320}"><meta property="og:image:alt" content="Canción compartida: ${title} · ${artist}">
+<meta property="og:image:type" content="${imageType}"><meta property="og:image:width" content="${imageWidth}"><meta property="og:image:height" content="${imageHeight}"><meta property="og:image:alt" content="Canción compartida: ${title} · ${artist}">
 <meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="${title} · SoundNeed"><meta name="twitter:description" content="${description}"><meta name="twitter:image" content="${image}"><title>${title} · SoundNeed</title>
 <style>
 :root{color-scheme:dark;font-family:Inter,Roboto,"Segoe UI",Arial,sans-serif;background:#06110e;color:#f5f8f6}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(ellipse at 10% 0,#12382b 0,transparent 48%),radial-gradient(ellipse at 100% 100%,#10241d 0,transparent 48%),#06110e}

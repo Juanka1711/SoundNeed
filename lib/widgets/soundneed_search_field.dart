@@ -15,6 +15,7 @@ class SoundNeedSearchField extends StatefulWidget {
     this.height = 54,
     this.prominent = true,
     this.accent = const Color(0xFF8B5CF6),
+    this.surfaceColor,
   });
 
   final TextEditingController controller;
@@ -28,6 +29,7 @@ class SoundNeedSearchField extends StatefulWidget {
   final double height;
   final bool prominent;
   final Color accent;
+  final Color? surfaceColor;
 
   @override
   State<SoundNeedSearchField> createState() => _SoundNeedSearchFieldState();
@@ -61,14 +63,16 @@ class _SoundNeedSearchFieldState extends State<SoundNeedSearchField> {
       height: widget.height,
       padding: const EdgeInsets.symmetric(horizontal: 14),
       decoration: BoxDecoration(
-        gradient: widget.prominent
+        gradient: widget.prominent && widget.surfaceColor == null
             ? LinearGradient(
                 colors: const [Color(0xFF24212E), Color(0xFF17151F)],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               )
             : null,
-        color: widget.prominent ? null : const Color(0xFF1D1B27),
+        color: widget.prominent
+            ? widget.surfaceColor
+            : const Color(0xFF1D1B27),
         borderRadius: BorderRadius.circular(widget.prominent ? 30 : 20),
         border: Border.all(
           color: _focusNode.hasFocus
