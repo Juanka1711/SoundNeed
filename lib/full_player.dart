@@ -14,6 +14,7 @@ import 'playlist_actions.dart';
 import 'services/youtube_audio_service.dart';
 import 'services/song_share_service.dart';
 import 'services/share_session_controller.dart';
+import 'song_share_story.dart';
 import 'services/equalizer_service.dart';
 import 'widgets/cast_devices_sheet.dart';
 import 'services/cast_discovery_service.dart';
@@ -2311,17 +2312,81 @@ class _FullPlayerState extends State<FullPlayer>
           .toInt();
       if (!mounted) return;
       final shareSession = ShareSessionController();
-      await shareSession.shareStory(
+      final preview = await shareSession.createPreview(
         title: title,
         artist: safeArtist,
-        album: safeAlbum,
-        shareUrl: shareUrl.toString(),
         artwork: artwork,
-        deepLink: deepLink,
-        audioSource: song.isOnline ? '' : song.uri,
-        videoId: song.isOnline ? song.onlineVideoId : '',
-        startMs: clipStartMs,
-        durationMs: clipDurationMs,
+      );
+      if (!mounted) return;
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        backgroundColor: Colors.transparent,
+        barrierColor: Colors.black.withValues(alpha: .62),
+        builder: (_) => SongShareStoryPage(
+          title: title,
+          artist: safeArtist,
+          preview: preview,
+          onLoadTargets: shareSession.loadTargets,
+          onShareToTarget: (format, theme, target) =>
+              shareSession.shareToTarget(
+                format: format,
+                packageName: target['packageName']! as String,
+                className: target['className']! as String,
+                title: title,
+                artist: safeArtist,
+                album: safeAlbum,
+                shareUrl: shareUrl.toString(),
+                artwork: artwork,
+                theme: theme,
+                deepLink: deepLink,
+                audioSource: song.isOnline ? '' : song.uri,
+                videoId: song.isOnline ? song.onlineVideoId : '',
+                startMs: clipStartMs,
+                durationMs: clipDurationMs,
+              ),
+          onPreviewForTheme: (theme) => shareSession.createPreview(
+            title: title,
+            artist: safeArtist,
+            artwork: artwork,
+            theme: theme,
+          ),
+          onShareStory: (theme) => shareSession.shareStory(
+            title: title,
+            artist: safeArtist,
+            album: safeAlbum,
+            shareUrl: shareUrl.toString(),
+            artwork: artwork,
+            theme: theme,
+            deepLink: deepLink,
+            audioSource: song.isOnline ? '' : song.uri,
+            videoId: song.isOnline ? song.onlineVideoId : '',
+            startMs: clipStartMs,
+            durationMs: clipDurationMs,
+          ),
+          onShareChat: (theme) => shareSession.shareChat(
+            title: title,
+            artist: safeArtist,
+            album: safeAlbum,
+            shareUrl: shareUrl.toString(),
+            artwork: artwork,
+            theme: theme,
+          ),
+          onShareVideo: (theme) => shareSession.shareVideo(
+            title: title,
+            artist: safeArtist,
+            album: safeAlbum,
+            shareUrl: shareUrl.toString(),
+            deepLink: deepLink,
+            artwork: artwork,
+            audioSource: song.isOnline ? '' : song.uri,
+            videoId: song.isOnline ? song.onlineVideoId : '',
+            startMs: clipStartMs,
+            durationMs: clipDurationMs,
+            theme: theme,
+          ),
+        ),
       );
     } on PlatformException catch (error) {
       debugPrint('[SoundNeed] No se pudo compartir la canción: $error');
