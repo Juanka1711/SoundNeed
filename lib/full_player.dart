@@ -2587,8 +2587,9 @@ class _FullPlayerState extends State<FullPlayer>
       ),
     );
     try {
-      await player.downloadSong(selectedSong);
-      final downloadedSong = _findDownloadedSong(selectedSong);
+      final downloadedSong =
+          await player.downloadSong(selectedSong) ??
+          _findDownloadedSong(selectedSong);
       await notifications.publish(
         NotificationDraft(
           deduplicationKey: notificationKey,
@@ -2601,6 +2602,8 @@ class _FullPlayerState extends State<FullPlayer>
           progress: 100,
           metadata: <String, Object?>{
             if (downloadedSong != null) 'downloadedSongId': downloadedSong.id,
+            if (downloadedSong?.uri.isNotEmpty == true)
+              'downloadedSongUri': downloadedSong!.uri,
             'songTitle': downloadedSong?.title.isNotEmpty == true
                 ? downloadedSong!.title
                 : selectedSong.title,
@@ -2656,9 +2659,9 @@ class _FullPlayerState extends State<FullPlayer>
         .replaceAll(RegExp(r'\([^)]*\)|\[[^]]*\]'), '')
         .replaceAll(RegExp(r'[^a-z0-9áéíóúüñ]'), '');
 
-    final sourceTitle = normalize(source.title.isEmpty
-        ? source.displayName
-        : source.title);
+    final sourceTitle = normalize(
+      source.title.isEmpty ? source.displayName : source.title,
+    );
     if (sourceTitle.isEmpty) return null;
     final candidates = player.songs.where((candidate) {
       final candidateTitle = normalize(

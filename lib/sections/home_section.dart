@@ -45,6 +45,7 @@ class HomeSection extends StatefulWidget {
 }
 
 class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
+  static const Color _chartAccent = Color(0xFFB99AFF);
   final PlaylistManager _playlistManager = PlaylistManager.instance;
   List<ArtistPreference> _radioArtists = [];
   List<YouTubeSearchResult> _discoverySuggestions = [];
@@ -458,15 +459,15 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
               _buildContinueListening(),
             ],
 
-            const SizedBox(height: 30),
+            const SizedBox(height: 20),
             _buildDiscoverySuggestions(),
 
             if (_worldChart.isNotEmpty) ...[
-              const SizedBox(height: 26),
+              const SizedBox(height: 18),
               _buildWorldChart(),
             ],
 
-            const SizedBox(height: 30),
+            const SizedBox(height: 18),
             _buildPodcasts(),
 
             if (_radioArtists.isNotEmpty) ...[
@@ -1240,13 +1241,17 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
     }
   }
 
-  Widget _sectionHeading(String title, String trailing) =>
-      SoundNeedSectionHeading(
-        title: title,
-        detail: trailing,
-        accent: widget.palette.primaryTextColor,
-        titleFontSize: 19,
-      );
+  Widget _sectionHeading(
+    String title,
+    String trailing, {
+    Color? accent,
+    double titleFontSize = 19,
+  }) => SoundNeedSectionHeading(
+    title: title,
+    detail: trailing,
+    accent: accent ?? widget.palette.primaryTextColor,
+    titleFontSize: titleFontSize,
+  );
 
   Widget _buildPodcastTile(PodcastEpisode episode) => Padding(
     padding: const EdgeInsets.only(bottom: 10),
@@ -1355,29 +1360,33 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
       children: [
         Row(
           children: [
-            Expanded(child: _sectionHeading('Lo más escuchado ahora', '')),
+            Expanded(
+              child: _sectionHeading(
+                'Top Colombia',
+                '',
+                accent: _chartAccent,
+                titleFontSize: 22,
+              ),
+            ),
             IconButton(
               tooltip: 'Actualizar éxitos',
               onPressed: _loadingChart
                   ? null
                   : () => _loadCurrentChart(refresh: true),
-              icon: Icon(
-                Icons.refresh_rounded,
-                color: widget.palette.secondary,
-              ),
+              icon: Icon(Icons.refresh_rounded, color: _chartAccent),
             ),
           ],
         ),
         const SizedBox(height: 5),
         Text(
           _currentChart.isNotEmpty
-              ? 'Éxitos de Colombia · Top 30'
+              ? 'Colombia · Top 30 de canciones'
               : 'Nuevos descubrimientos',
           style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
         ),
         const SizedBox(height: 14),
         SizedBox(
-          height: 226,
+          height: 274,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
             itemCount: _currentChart.isNotEmpty
@@ -1391,99 +1400,9 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
                   (artist) =>
                       artist.name.toLowerCase() == track.artist.toLowerCase(),
                 );
-                return SizedBox(
-                  width: 148,
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(14),
-                    onTap: () => _playChartTrack(track),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Stack(
-                            fit: StackFit.expand,
-                            children: [
-                              ClipRRect(
-                                borderRadius: BorderRadius.circular(13),
-                                child: Image.network(
-                                  track.artworkUrl,
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (_, _, _) => const ColoredBox(
-                                    color: AppColors.card,
-                                    child: Icon(Icons.music_note_rounded),
-                                  ),
-                                ),
-                              ),
-                              Positioned(
-                                left: 8,
-                                top: 8,
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 9,
-                                    vertical: 5,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xD9000000),
-                                    borderRadius: BorderRadius.circular(20),
-                                  ),
-                                  child: Text(
-                                    '#${track.rank}',
-                                    style: const TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              const Positioned(
-                                right: 8,
-                                bottom: 8,
-                                child: CircleAvatar(
-                                  radius: 17,
-                                  backgroundColor: Colors.white,
-                                  child: Icon(
-                                    Icons.play_arrow_rounded,
-                                    color: Colors.black,
-                                    size: 22,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          track.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w700,
-                            fontSize: 13,
-                          ),
-                        ),
-                        const SizedBox(height: 3),
-                        Text(
-                          track.artist,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: AppColors.textSecondary,
-                            fontSize: 12,
-                          ),
-                        ),
-                        if (isRelated)
-                          const Text(
-                            'Te puede gustar',
-                            maxLines: 1,
-                            style: TextStyle(
-                              color: Color(0xFFC19AFF),
-                              fontSize: 10,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
+                return _buildChartTrackCard(
+                  track,
+                  showRecommendation: isRelated,
                 );
               }
 
@@ -1555,124 +1474,164 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
         Row(
           children: [
             Expanded(
-              child: _sectionHeading('Lo más escuchado en el mundo', 'Global'),
+              child: _sectionHeading(
+                'Top global',
+                'Global',
+                accent: _chartAccent,
+                titleFontSize: 22,
+              ),
             ),
             IconButton(
               tooltip: 'Actualizar éxitos del mundo',
               onPressed: _loadingWorldChart
                   ? null
                   : () => _loadWorldChart(refresh: true),
-              icon: Icon(
-                Icons.refresh_rounded,
-                color: widget.palette.secondary,
-              ),
+              icon: Icon(Icons.refresh_rounded, color: _chartAccent),
             ),
           ],
         ),
         const SizedBox(height: 5),
         const Text(
-          'Éxitos globales · Top 30',
+          'Global · Top 30 de canciones',
           style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
         ),
         const SizedBox(height: 14),
         SizedBox(
-          height: 218,
+          height: 250,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
             itemCount: _worldChart.take(30).length,
             separatorBuilder: (_, _) => const SizedBox(width: 14),
             itemBuilder: (context, index) {
               final track = _worldChart[index];
-              return SizedBox(
-                width: 148,
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(14),
-                  onTap: () => _playChartTrack(track),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(13),
-                              child: Image.network(
-                                track.artworkUrl,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, _, _) => const ColoredBox(
-                                  color: AppColors.card,
-                                  child: Icon(Icons.music_note_rounded),
-                                ),
-                              ),
-                            ),
-                            Positioned(
-                              top: 8,
-                              left: 8,
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 9,
-                                  vertical: 5,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xD9000000),
-                                  borderRadius: BorderRadius.circular(20),
-                                ),
-                                child: Text(
-                                  '#${track.rank} · MUNDO',
-                                  style: const TextStyle(
-                                    fontSize: 9,
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            const Positioned(
-                              right: 8,
-                              bottom: 8,
-                              child: CircleAvatar(
-                                radius: 17,
-                                backgroundColor: Colors.white,
-                                child: Icon(
-                                  Icons.play_arrow_rounded,
-                                  color: Colors.black,
-                                  size: 22,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        track.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 13,
-                        ),
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        track.artist,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: AppColors.textSecondary,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              );
+              return _buildChartTrackCard(track);
             },
           ),
         ),
       ],
     );
   }
+
+  Widget _buildChartTrackCard(
+    MusicChartTrack track, {
+    bool showRecommendation = false,
+  }) {
+    return SizedBox(
+      width: 198,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: () => _playChartTrack(track),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            AspectRatio(
+              aspectRatio: 1,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: AppColors.card,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: .08),
+                  ),
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(17),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      Image.network(
+                        track.artworkUrl,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, _, _) => const ColoredBox(
+                          color: AppColors.card,
+                          child: Icon(Icons.music_note_rounded, size: 34),
+                        ),
+                      ),
+                      Positioned(
+                        left: 10,
+                        top: 10,
+                        child: _chartRankBadge(rank: track.rank),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              track.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontWeight: FontWeight.w800,
+                fontSize: 15,
+                letterSpacing: -.2,
+                height: 1.15,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              track.artist,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: AppColors.textSecondary,
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            if (showRecommendation) ...[
+              const SizedBox(height: 5),
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: _chartAccent.withValues(alpha: .12),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: _chartAccent.withValues(alpha: .25),
+                      ),
+                    ),
+                    child: const Text(
+                      'RECOMENDADA',
+                      style: TextStyle(
+                        color: _chartAccent,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: .45,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _chartRankBadge({required int rank}) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
+    decoration: BoxDecoration(
+      color: const Color(0xD9000000),
+      borderRadius: BorderRadius.circular(20),
+      border: Border.all(color: Colors.white.withValues(alpha: .14)),
+    ),
+    child: Text(
+      '#${rank.toString().padLeft(2, '0')}',
+      style: const TextStyle(
+        color: Colors.white,
+        fontSize: 13,
+        fontWeight: FontWeight.w900,
+        height: 1,
+      ),
+    ),
+  );
 
   Widget _buildRecommendedStations() => Column(
     crossAxisAlignment: CrossAxisAlignment.start,

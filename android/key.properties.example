@@ -1,0 +1,4 @@
+storePassword=REEMPLAZAR_CON_TU_PASSWORD
+keyPassword=REEMPLAZAR_CON_TU_PASSWORD
+keyAlias=soundneed
+storeFile=../soundneed-release.jks

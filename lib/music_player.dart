@@ -1112,8 +1112,8 @@ class MusicPlayerController extends ChangeNotifier {
     return true;
   }
 
-  Future<void> downloadSong(Song song) async {
-    if (_isDownloading) return;
+  Future<Song?> downloadSong(Song song) async {
+    if (_isDownloading) return null;
     _isDownloading = true;
     _downloadProgress = null;
     notifyListeners();
@@ -1237,12 +1237,50 @@ class MusicPlayerController extends ChangeNotifier {
       }
 
       await loadSongs();
+      final savedUri = saved['uri']?.toString().trim() ?? '';
+      final savedPath = saved['folderPath']?.toString().trim() ?? '';
+      final savedName = saved['name']?.toString().trim() ?? '';
+      if (savedUri.isNotEmpty) {
+        for (final candidate in _songs) {
+          if (candidate.uri == savedUri) return candidate;
+        }
+      }
+
+      String normalizePath(String value) => value
+          .replaceAll('\\', '/')
+          .replaceAll(RegExp(r'/+$'), '')
+          .toLowerCase();
+      if (savedPath.isNotEmpty && savedName.isNotEmpty) {
+        final path = normalizePath(savedPath);
+        for (final candidate in _songs) {
+          if (normalizePath(candidate.folderPath) == path &&
+              candidate.displayName.toLowerCase() == savedName.toLowerCase()) {
+            return candidate;
+          }
+        }
+      }
+
+      final normalizedTitle = _downloadMatchText(song.title);
+      final normalizedArtist = _downloadMatchText(song.artist);
+      for (final candidate in _songs) {
+        if (_downloadMatchText(candidate.title) == normalizedTitle &&
+            (normalizedArtist.isEmpty ||
+                _downloadMatchText(candidate.artist) == normalizedArtist)) {
+          return candidate;
+        }
+      }
+      return null;
     } finally {
       _isDownloading = false;
       _downloadProgress = null;
       notifyListeners();
     }
   }
+
+  String _downloadMatchText(String value) => value
+      .toLowerCase()
+      .replaceAll(RegExp(r'\([^)]*\)|\[[^]]*\]'), '')
+      .replaceAll(RegExp(r'[^a-z0-9áéíóúüñ]'), '');
 
   Future<int> downloadPlaylist(List<Song> songs) async {
     if (_isDownloadingPlaylist || _isDownloading) return 0;

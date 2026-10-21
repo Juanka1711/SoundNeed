@@ -17,6 +17,8 @@ class SongsSection extends StatefulWidget {
   final String searchText;
   final ArtworkPalette palette;
   final int? focusedSongId;
+  final bool showDownloadsOnly;
+  final String? downloadsFolderPath;
 
   const SongsSection({
     super.key,
@@ -25,6 +27,8 @@ class SongsSection extends StatefulWidget {
     required this.searchText,
     required this.palette,
     this.focusedSongId,
+    this.showDownloadsOnly = false,
+    this.downloadsFolderPath,
   });
 
   @override
@@ -47,7 +51,9 @@ class _SongsSectionState extends State<SongsSection> {
   @override
   void didUpdateWidget(covariant SongsSection oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.focusedSongId != widget.focusedSongId) {
+    if (oldWidget.focusedSongId != widget.focusedSongId ||
+        oldWidget.showDownloadsOnly != widget.showDownloadsOnly ||
+        oldWidget.downloadsFolderPath != widget.downloadsFolderPath) {
       _scrollToFocusedSong();
     }
     if (oldWidget.player != widget.player) {
@@ -69,7 +75,7 @@ class _SongsSectionState extends State<SongsSection> {
     if (id == null) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scrollController.hasClients) return;
-      final index = widget.filteredSongs.indexWhere((song) => song.id == id);
+      final index = _visibleSongs.indexWhere((song) => song.id == id);
       if (index < 0) return;
       final estimatedOffset = 160.0 + index * 96.0;
       final offset = estimatedOffset.clamp(
@@ -110,11 +116,11 @@ class _SongsSectionState extends State<SongsSection> {
       return _buildPermissionMessage();
     }
 
-    if (widget.player.songs.isEmpty) {
+    if (widget.player.songs.isEmpty && !widget.showDownloadsOnly) {
       return _buildEmptyLibrary();
     }
 
-    final songs = widget.filteredSongs;
+    final songs = _visibleSongs;
 
     return RefreshIndicator(
       color: Colors.white,
@@ -146,6 +152,34 @@ class _SongsSectionState extends State<SongsSection> {
         },
       ),
     );
+  }
+
+  List<Song> get _visibleSongs {
+    if (!widget.showDownloadsOnly) return widget.filteredSongs;
+
+    String normalize(String value) => value
+        .replaceAll('\\', '/')
+        .replaceAll(RegExp(r'/+$'), '')
+        .toLowerCase();
+
+    final folder = normalize(widget.downloadsFolderPath ?? '');
+    final target = folder.isEmpty ? 'soundneed' : folder;
+    final inDownloadFolder = widget.filteredSongs.where((song) {
+      final path = normalize(song.folderPath);
+      return path == target ||
+          path.startsWith('$target/') ||
+          (folder.isNotEmpty &&
+              (path.endsWith('/$target') || target.endsWith('/$path'))) ||
+          (folder.isEmpty && path.split('/').contains('soundneed'));
+    }).toList();
+    if (inDownloadFolder.isNotEmpty) return inDownloadFolder;
+
+    final focused = widget.focusedSongId;
+    if (focused != null) {
+      final match = widget.filteredSongs.where((song) => song.id == focused);
+      if (match.isNotEmpty) return match.toList();
+    }
+    return inDownloadFolder;
   }
 
   Widget _buildLibraryHeader(List<Song> songs) {
@@ -216,7 +250,9 @@ class _SongsSectionState extends State<SongsSection> {
                     const SizedBox(width: 5),
                     Expanded(
                       child: Text(
-                        'BIBLIOTECA MUSICAL',
+                        widget.showDownloadsOnly
+                            ? 'DESCARGAS LOCALES'
+                            : 'BIBLIOTECA MUSICAL',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -230,8 +266,8 @@ class _SongsSectionState extends State<SongsSection> {
                   ],
                 ),
                 const SizedBox(height: 4),
-                const Text(
-                  'Tu música',
+                Text(
+                  widget.showDownloadsOnly ? 'Tus descargas' : 'Tu música',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -305,11 +341,6 @@ class _SongsSectionState extends State<SongsSection> {
     final accent = isCurrent && widget.palette.isArtworkDerived
         ? Color.lerp(widget.palette.primary, Colors.white, .28)!
         : Colors.white;
-    final location = song.folderPath.isNotEmpty
-        ? song.folderPath
-        : song.uri.isNotEmpty
-        ? song.uri
-        : 'Dispositivo';
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 5),
       child: Material(
@@ -348,19 +379,6 @@ class _SongsSectionState extends State<SongsSection> {
                           height: 1.22,
                         ),
                       ),
-                      if (isNotificationFocus) ...[
-                        const SizedBox(height: 3),
-                        Text(
-                          'Ubicación: $location',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: widget.palette.secondary,
-                            fontSize: 10.5,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
                       const SizedBox(height: 6),
                       Row(
                         children: [
@@ -435,11 +453,7 @@ class _SongsSectionState extends State<SongsSection> {
     );
   }
 
-  Widget _buildArtwork(
-    Song song, {
-    double size = 76,
-    bool isPlaying = false,
-  }) {
+  Widget _buildArtwork(Song song, {double size = 76, bool isPlaying = false}) {
     return FutureBuilder<Uint8List?>(
       future: widget.player.loadArtwork(song),
       builder: (context, snapshot) {
@@ -480,11 +494,7 @@ class _SongsSectionState extends State<SongsSection> {
     );
   }
 
-  Widget _artworkWithVisualizer(
-    Widget artwork,
-    double size,
-    bool isPlaying,
-  ) {
+  Widget _artworkWithVisualizer(Widget artwork, double size, bool isPlaying) {
     return SizedBox(
       width: size,
       height: size,
@@ -496,8 +506,10 @@ class _SongsSectionState extends State<SongsSection> {
             artwork,
             if (isPlaying)
               AudioArtworkVisualizer(
-                sessionIds: widget.player.audioPlayer.androidAudioSessionIdStream,
-                initialSessionId: widget.player.audioPlayer.androidAudioSessionId,
+                sessionIds:
+                    widget.player.audioPlayer.androidAudioSessionIdStream,
+                initialSessionId:
+                    widget.player.audioPlayer.androidAudioSessionId,
                 isPlaying: isPlaying,
               ),
           ],
@@ -509,8 +521,12 @@ class _SongsSectionState extends State<SongsSection> {
   Widget _buildNoResults() {
     return SoundNeedEmptyState(
       icon: Icons.search_off_rounded,
-      title: 'No encontramos canciones',
-      message: 'No hay resultados para “${widget.searchText}”.',
+      title: widget.showDownloadsOnly
+          ? 'Aún no aparecen tus descargas'
+          : 'No encontramos canciones',
+      message: widget.showDownloadsOnly
+          ? 'Desliza hacia abajo para actualizar la lista de canciones descargadas.'
+          : 'No hay resultados para “${widget.searchText}”.',
       accent: widget.palette.primary,
     );
   }

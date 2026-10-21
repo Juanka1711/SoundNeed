@@ -27,6 +27,7 @@ Future<void> main() async {
       androidNotificationChannelName: 'SoundNeed',
       androidNotificationChannelDescription:
           'Controles de reproducción de SoundNeed',
+      androidNotificationIcon: 'drawable/ic_stat_soundneed',
       androidNotificationOngoing: false,
       androidStopForegroundOnPause: false,
     ),

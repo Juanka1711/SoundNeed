@@ -140,7 +140,7 @@ internal class SoundNeedNotificationBridge(private val activity: Activity) {
         )
 
         val notification = NotificationCompat.Builder(activity, channelId(category))
-            .setSmallIcon(activity.applicationInfo.icon)
+            .setSmallIcon(R.drawable.ic_stat_soundneed)
             .setContentTitle(title)
             .setContentText(description)
             .setStyle(NotificationCompat.BigTextStyle().bigText(description))

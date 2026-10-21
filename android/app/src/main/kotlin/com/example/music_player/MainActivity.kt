@@ -2239,7 +2239,7 @@ class MainActivity : AudioServiceFragmentActivity() {
             this,
             NEW_MUSIC_NOTIFICATION_CHANNEL_ID
         )
-            .setSmallIcon(applicationInfo.icon)
+            .setSmallIcon(R.drawable.ic_stat_soundneed)
             .setContentTitle(title)
             .setContentText(message)
             .setStyle(NotificationCompat.BigTextStyle().bigText(message))

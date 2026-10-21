@@ -58,7 +58,7 @@ class _MusicHomePageState extends State<MusicHomePage> {
   final TextEditingController _searchController = TextEditingController();
   final NotificationService _notificationService = NotificationService.instance;
   StreamSubscription<NotificationNavigationRequest>?
-      _notificationNavigationSubscription;
+  _notificationNavigationSubscription;
 
   List<Song> _filteredSongs = [];
 
@@ -84,6 +84,8 @@ class _MusicHomePageState extends State<MusicHomePage> {
 
   MusicSection _section = MusicSection.home;
   int? _notificationFocusSongId;
+  bool _showNotificationDownloads = false;
+  String? _notificationDownloadsFolderPath;
 
   @override
   void initState() {
@@ -366,6 +368,9 @@ class _MusicHomePageState extends State<MusicHomePage> {
   void _selectSection(MusicSection section) {
     setState(() {
       _section = section;
+      _showNotificationDownloads = false;
+      _notificationDownloadsFolderPath = null;
+      _notificationFocusSongId = null;
     });
   }
 
@@ -417,7 +422,8 @@ class _MusicHomePageState extends State<MusicHomePage> {
   void _showSettings() {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => SoundNeedSettingsPage(player: widget.player),
+        builder: (_) =>
+            SoundNeedSettingsPage(player: widget.player, palette: _appPalette),
       ),
     );
   }
@@ -427,6 +433,8 @@ class _MusicHomePageState extends State<MusicHomePage> {
       MaterialPageRoute<void>(
         builder: (_) => NotificationCenterPage(
           service: _notificationService,
+          player: widget.player,
+          palette: _appPalette,
           onOpenDestination: (record) {
             Navigator.of(context).pop();
             unawaited(_openNotificationRecord(record));
@@ -443,7 +451,10 @@ class _MusicHomePageState extends State<MusicHomePage> {
         ? null
         : _notificationService.findByNotificationId(request.notificationId!);
     if (record != null) await _notificationService.markRead(record.id);
-    await _openNotificationRecord(record, fallbackDestination: request.destination);
+    await _openNotificationRecord(
+      record,
+      fallbackDestination: request.destination,
+    );
   }
 
   Future<void> _openNotificationRecord(
@@ -483,6 +494,8 @@ class _MusicHomePageState extends State<MusicHomePage> {
         setState(() {
           _section = MusicSection.songs;
           _notificationFocusSongId = null;
+          _showNotificationDownloads = false;
+          _notificationDownloadsFolderPath = null;
         });
         return;
       case 'playlists':
@@ -507,6 +520,8 @@ class _MusicHomePageState extends State<MusicHomePage> {
     final targetId = int.tryParse(
       '${metadata['downloadedSongId'] ?? metadata['songId'] ?? ''}',
     );
+    final targetUri = '${metadata['downloadedSongUri'] ?? ''}'.trim();
+    final folderPath = '${metadata['folderPath'] ?? ''}'.trim();
     final title =
         '${metadata['songTitle'] ?? record.description.replaceFirst(RegExp(r'\s+se guardó en el dispositivo\.?$'), '')}'
             .trim();
@@ -518,11 +533,21 @@ class _MusicHomePageState extends State<MusicHomePage> {
     if (!mounted) return;
 
     Song? song;
-    if (targetId != null) {
+    if (targetUri.isNotEmpty) {
       for (final candidate in widget.player.songs) {
-        if (candidate.id == targetId) {
+        if (candidate.uri == targetUri) {
           song = candidate;
           break;
+        }
+      }
+    }
+    if (targetId != null) {
+      if (song == null) {
+        for (final candidate in widget.player.songs) {
+          if (candidate.id == targetId) {
+            song = candidate;
+            break;
+          }
         }
       }
     }
@@ -539,8 +564,7 @@ class _MusicHomePageState extends State<MusicHomePage> {
         song = candidates.firstWhere(
           (candidate) =>
               normalizedArtist.isNotEmpty &&
-              _normalizeNotificationText(candidate.artist) ==
-                  normalizedArtist,
+              _normalizeNotificationText(candidate.artist) == normalizedArtist,
           orElse: () => candidates.first,
         );
       }
@@ -549,48 +573,18 @@ class _MusicHomePageState extends State<MusicHomePage> {
     setState(() {
       _section = MusicSection.songs;
       _notificationFocusSongId = song?.id;
+      _showNotificationDownloads = true;
+      _notificationDownloadsFolderPath = folderPath.isNotEmpty
+          ? folderPath
+          : song?.folderPath;
     });
-
-    if (song == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          behavior: SnackBarBehavior.floating,
-          content: Text(
-            title.isEmpty
-                ? 'La descarga terminó, pero no encontramos la canción en la biblioteca.'
-                : 'La descarga terminó, pero no encontramos “$title” en la biblioteca.',
-          ),
-        ),
-      );
-      return;
-    }
-
-    try {
-      final alreadySelected =
-          widget.player.currentSong?.id == song.id &&
-          widget.player.currentSong?.uri == song.uri;
-      if (alreadySelected && !widget.player.isPlaying) {
-        await widget.player.togglePlayPause();
-      } else if (!alreadySelected) {
-        await widget.player.playSong(song, createQueue: false);
-      }
-      if (!mounted) return;
-      final location = song.folderPath.isEmpty
-          ? 'la biblioteca'
-          : song.folderPath;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          behavior: SnackBarBehavior.floating,
-          content: Text('Reproduciendo “${song.title}” · $location'),
-        ),
-      );
-    } catch (error) {
-      debugPrint('[SoundNeed] No se pudo abrir una canción descargada: $error');
-      if (!mounted) return;
+    if (song == null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           behavior: SnackBarBehavior.floating,
-          content: Text('No se pudo reproducir la canción descargada.'),
+          content: Text(
+            'Abriendo tus descargas. Actualiza la lista si hace falta.',
+          ),
         ),
       );
     }
@@ -991,13 +985,15 @@ class _MusicHomePageState extends State<MusicHomePage> {
       case MusicSection.songs:
         return SongsSection(
           key: ValueKey<Object?>(
-            'songs-${_notificationFocusSongId ?? 'all'}',
+            'songs-${_showNotificationDownloads ? 'downloads' : 'all'}-${_notificationFocusSongId ?? 'none'}',
           ),
           player: widget.player,
           filteredSongs: _filteredSongs,
           searchText: _searchText,
           palette: _appPalette,
           focusedSongId: _notificationFocusSongId,
+          showDownloadsOnly: _showNotificationDownloads,
+          downloadsFolderPath: _notificationDownloadsFolderPath,
         );
 
       case MusicSection.playlists:
@@ -1167,9 +1163,14 @@ class _MusicHomePageState extends State<MusicHomePage> {
 }
 
 class SoundNeedSettingsPage extends StatefulWidget {
-  const SoundNeedSettingsPage({super.key, required this.player});
+  const SoundNeedSettingsPage({
+    super.key,
+    required this.player,
+    required this.palette,
+  });
 
   final MusicPlayerController player;
+  final ArtworkPalette palette;
 
   @override
   State<SoundNeedSettingsPage> createState() => _SoundNeedSettingsPageState();
@@ -1184,15 +1185,21 @@ class _SoundNeedSettingsPageState extends State<SoundNeedSettingsPage>
   String _version = 'Cargando…';
   bool _notificationsEnabled = true;
   bool _generalSystemNotificationsEnabled = false;
+  late ArtworkPalette _settingsPalette;
+  int? _paletteSongId;
+  int _paletteRequest = 0;
   Timer? _sleepTimerUi;
   final NotificationService _notificationService = NotificationService.instance;
 
   @override
   void initState() {
     super.initState();
+    _settingsPalette = widget.palette;
+    _paletteSongId = widget.player.currentSong?.id;
     WidgetsBinding.instance.addObserver(this);
     widget.player.addListener(_onPlayerChanged);
     _notificationService.addListener(_onNotificationSettingsChanged);
+    unawaited(_loadSettingsPalette(widget.player.currentSong));
     _loadSettingsInfo();
     unawaited(
       _notificationService.initialize().then(
@@ -1216,7 +1223,35 @@ class _SoundNeedSettingsPageState extends State<SoundNeedSettingsPage>
   }
 
   void _onPlayerChanged() {
+    final song = widget.player.currentSong;
+    if (song?.id != _paletteSongId) {
+      _paletteSongId = song?.id;
+      unawaited(_loadSettingsPalette(song));
+    }
     if (mounted) setState(() {});
+  }
+
+  Future<void> _loadSettingsPalette(Song? song) async {
+    final request = ++_paletteRequest;
+    if (song == null) {
+      if (mounted) setState(() => _settingsPalette = ArtworkPalette.neutral);
+      return;
+    }
+    try {
+      final artwork = await widget.player.loadArtwork(song);
+      final palette = artwork == null
+          ? ArtworkPalette.neutral
+          : await ArtworkPaletteExtractor.fromBytes(artwork);
+      if (!mounted || request != _paletteRequest) return;
+      setState(() => _settingsPalette = palette);
+    } catch (_) {
+      if (!mounted || request != _paletteRequest) return;
+      setState(() => _settingsPalette = ArtworkPalette.neutral);
+    }
+  }
+
+  Color _settingsAccent(int index) {
+    return _settingsPalette.primary;
   }
 
   void _onNotificationSettingsChanged() {
@@ -1312,8 +1347,18 @@ class _SoundNeedSettingsPageState extends State<SoundNeedSettingsPage>
 
     await showModalBottomSheet<void>(
       context: context,
-      backgroundColor: AppColors.surface,
+      backgroundColor: Color.lerp(
+        AppColors.surface,
+        _settingsPalette.dark,
+        .38,
+      ),
       showDragHandle: true,
+      shape: RoundedRectangleBorder(
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
+        side: BorderSide(
+          color: _settingsPalette.primary.withValues(alpha: .26),
+        ),
+      ),
       builder: (sheetContext) => SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 18),
@@ -1321,11 +1366,15 @@ class _SoundNeedSettingsPageState extends State<SoundNeedSettingsPage>
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Padding(
+              Padding(
                 padding: EdgeInsets.fromLTRB(8, 8, 8, 12),
                 child: Text(
                   'Temporizador para dormir',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                    color: _settingsPalette.primary,
+                  ),
                 ),
               ),
               for (final choice in choices)
@@ -1334,7 +1383,7 @@ class _SoundNeedSettingsPageState extends State<SoundNeedSettingsPage>
                     choice.$2 == null
                         ? Icons.timer_off_outlined
                         : Icons.bedtime_outlined,
-                    color: const Color(0xFFB99AFF),
+                    color: _settingsAccent(choices.indexOf(choice)),
                   ),
                   title: Text(choice.$1),
                   onTap: () async {
@@ -1362,7 +1411,17 @@ class _SoundNeedSettingsPageState extends State<SoundNeedSettingsPage>
     showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: AppColors.surface,
+        backgroundColor: Color.lerp(
+          AppColors.surface,
+          _settingsPalette.dark,
+          .38,
+        ),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(24),
+          side: BorderSide(
+            color: _settingsPalette.primary.withValues(alpha: .22),
+          ),
+        ),
         title: const Text('Ayuda de SoundNeed'),
         content: const Text(
           'Los controles de reproducción aparecen en las notificaciones mientras '
@@ -1378,6 +1437,9 @@ class _SoundNeedSettingsPageState extends State<SoundNeedSettingsPage>
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
+            style: TextButton.styleFrom(
+              foregroundColor: _settingsPalette.primary,
+            ),
             child: const Text('Entendido'),
           ),
         ],
@@ -1385,12 +1447,12 @@ class _SoundNeedSettingsPageState extends State<SoundNeedSettingsPage>
     );
   }
 
-  Widget _sectionLabel(String title) => Padding(
+  Widget _sectionLabel(String title, {Color? accent}) => Padding(
     padding: const EdgeInsets.fromLTRB(4, 22, 4, 10),
     child: Text(
       title.toUpperCase(),
-      style: const TextStyle(
-        color: AppColors.textSecondary,
+      style: TextStyle(
+        color: accent ?? AppColors.textSecondary,
         fontSize: 12,
         fontWeight: FontWeight.w800,
         letterSpacing: 1.15,
@@ -1398,13 +1460,155 @@ class _SoundNeedSettingsPageState extends State<SoundNeedSettingsPage>
     ),
   );
 
-  Widget _settingsCard({required List<Widget> children}) => Container(
+  Widget _settingsCard({required List<Widget> children, Color? accent}) =>
+      AnimatedContainer(
+        duration: const Duration(milliseconds: 650),
+        curve: Curves.easeInOutCubic,
+        decoration: BoxDecoration(
+          color: AppColors.card,
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(
+            color:
+                accent?.withValues(alpha: .22) ??
+                Colors.white.withValues(alpha: .055),
+          ),
+          boxShadow: accent == null
+              ? null
+              : [
+                  BoxShadow(
+                    color: accent.withValues(alpha: .08),
+                    blurRadius: 20,
+                    spreadRadius: -8,
+                  ),
+                ],
+        ),
+        child: Column(children: children),
+      );
+
+  Widget _subscriptionPlanCard() => AnimatedContainer(
+    duration: const Duration(milliseconds: 700),
+    curve: Curves.easeInOutCubic,
+    padding: const EdgeInsets.all(18),
     decoration: BoxDecoration(
-      color: AppColors.card,
-      borderRadius: BorderRadius.circular(22),
-      border: Border.all(color: Colors.white.withValues(alpha: .055)),
+      borderRadius: BorderRadius.circular(24),
+      gradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [
+          _settingsPalette.primary.withValues(alpha: .24),
+          _settingsPalette.primary.withValues(alpha: .08),
+          AppColors.card,
+        ],
+      ),
+      border: Border.all(
+        color: _settingsPalette.primary.withValues(alpha: .32),
+      ),
+      boxShadow: [
+        BoxShadow(
+          color: _settingsPalette.primary.withValues(alpha: .10),
+          blurRadius: 22,
+          offset: const Offset(0, 8),
+        ),
+      ],
     ),
-    child: Column(children: children),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: _settingsPalette.primary.withValues(alpha: .18),
+                borderRadius: BorderRadius.circular(15),
+              ),
+              child: Icon(
+                Icons.headphones_rounded,
+                color: _settingsPalette.primary,
+              ),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'SoundNeed Premium',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+              decoration: BoxDecoration(
+                color: _settingsPalette.primary.withValues(alpha: .14),
+                borderRadius: BorderRadius.circular(30),
+                border: Border.all(
+                  color: _settingsPalette.primary.withValues(alpha: .28),
+                ),
+              ),
+              child: Text(
+                'PRÓXIMAMENTE',
+                style: TextStyle(
+                  color: _settingsPalette.primary,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: .35,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            const Text(
+              '\$6.900',
+              style: TextStyle(
+                fontSize: 30,
+                height: 1,
+                fontWeight: FontWeight.w900,
+                letterSpacing: -1,
+              ),
+            ),
+            const SizedBox(width: 8),
+            const Padding(
+              padding: EdgeInsets.only(bottom: 2),
+              child: Text(
+                'COP / mes',
+                style: TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 9),
+        const Text(
+          'Estamos preparando el plan mensual de SoundNeed. Pronto podrás conocer y activar sus beneficios desde aquí.',
+          style: TextStyle(
+            color: AppColors.textSecondary,
+            fontSize: 13,
+            height: 1.4,
+          ),
+        ),
+        const SizedBox(height: 14),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: null,
+            style: FilledButton.styleFrom(
+              disabledBackgroundColor: _settingsPalette.primary.withValues(
+                alpha: .16,
+              ),
+              disabledForegroundColor: _settingsPalette.primary,
+            ),
+            icon: const Icon(Icons.lock_clock_rounded, size: 18),
+            label: const Text('Próximamente'),
+          ),
+        ),
+      ],
+    ),
   );
 
   Widget _divider() => const Divider(
@@ -1432,281 +1636,362 @@ class _SoundNeedSettingsPageState extends State<SoundNeedSettingsPage>
     final statusText = _notificationsEnabled
         ? 'Permitir controles desde la notificación de Android'
         : 'Las notificaciones están desactivadas en Android';
-
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        backgroundColor: AppColors.background,
-        title: const Text(
-          'Ajustes',
-          style: TextStyle(fontWeight: FontWeight.w800),
-        ),
+    final settingsTheme = Theme.of(context).copyWith(
+      colorScheme: Theme.of(context).colorScheme.copyWith(
+        primary: _settingsPalette.primary,
+        secondary: _settingsPalette.primary,
       ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(18, 8, 18, 32),
-        children: [
-          Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(24),
-              gradient: LinearGradient(
-                colors: [const Color(0xFF24203B), AppColors.card],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              border: Border.all(color: Colors.white.withValues(alpha: .07)),
-            ),
-            child: const Row(
-              children: [
-                CircleAvatar(
-                  radius: 25,
-                  backgroundColor: Color(0x338B5CF6),
-                  child: Icon(Icons.tune_rounded, color: Color(0xFFB99AFF)),
-                ),
-                SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Tu SoundNeed',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      SizedBox(height: 4),
-                      Text(
-                        'Personaliza tu experiencia',
-                        style: TextStyle(color: AppColors.textSecondary),
-                      ),
+    );
+
+    return Theme(
+      data: settingsTheme,
+      child: Scaffold(
+        backgroundColor: _settingsPalette.isArtworkDerived
+            ? Color.lerp(_settingsPalette.dark, AppColors.background, .58)
+            : AppColors.background,
+        appBar: AppBar(
+          backgroundColor: _settingsPalette.isArtworkDerived
+              ? Color.lerp(_settingsPalette.dark, AppColors.background, .58)
+              : AppColors.background,
+          foregroundColor: _settingsPalette.primary,
+          title: const Text(
+            'Ajustes',
+            style: TextStyle(fontWeight: FontWeight.w800),
+          ),
+        ),
+        body: AnimatedContainer(
+          duration: const Duration(milliseconds: 700),
+          curve: Curves.easeInOutCubic,
+          color: _settingsPalette.isArtworkDerived
+              ? Color.lerp(_settingsPalette.dark, AppColors.background, .58)
+              : AppColors.background,
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(18, 8, 18, 32),
+            children: [
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 700),
+                curve: Curves.easeInOutCubic,
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(24),
+                  gradient: LinearGradient(
+                    colors: [
+                      _settingsPalette.primary.withValues(alpha: .28),
+                      _settingsPalette.primary.withValues(alpha: .08),
+                      AppColors.card,
                     ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  border: Border.all(
+                    color: _settingsPalette.primary.withValues(alpha: .30),
                   ),
                 ),
-              ],
-            ),
-          ),
-          _sectionLabel('Notificaciones'),
-          _settingsCard(
-            children: [
-              ListTile(
-                leading: const _SettingsIcon(icon: Icons.graphic_eq_rounded),
-                title: const Text(
-                  'Controles de reproducción',
-                  style: TextStyle(fontWeight: FontWeight.w700),
+                child: Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 25,
+                      backgroundColor: _settingsPalette.primary.withValues(
+                        alpha: .20,
+                      ),
+                      child: Icon(
+                        Icons.tune_rounded,
+                        color: _settingsPalette.primary,
+                      ),
+                    ),
+                    SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Tu SoundNeed',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          SizedBox(height: 4),
+                          Text(
+                            'Personaliza tu experiencia',
+                            style: TextStyle(color: AppColors.textSecondary),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-                subtitle: Text(
-                  statusText,
-                  style: const TextStyle(color: AppColors.textSecondary),
-                ),
-                trailing: const Icon(
-                  Icons.open_in_new_rounded,
-                  size: 19,
-                  color: AppColors.textSecondary,
-                ),
-                onTap: _openNotificationSettings,
               ),
-              _divider(),
-              SwitchListTile.adaptive(
-                secondary: const _SettingsIcon(icon: Icons.fiber_new_rounded),
-                title: const Text(
-                  'Música nueva',
-                  style: TextStyle(fontWeight: FontWeight.w700),
-                ),
-                subtitle: Text(
-                  _notificationsEnabled
-                      ? 'Avisos al actualizar las tendencias de Colombia y el mundo'
-                      : 'Activa las notificaciones de SoundNeed en Android',
-                  style: const TextStyle(color: AppColors.textSecondary),
-                ),
-                activeThumbColor: const Color(0xFFB99AFF),
-                value: widget.player.newMusicNotificationsEnabled,
-                onChanged: (enabled) async {
-                  await widget.player.setNewMusicNotificationsEnabled(enabled);
-                  await _loadNotificationStatus();
-                },
-              ),
-            ],
-          ),
-          _sectionLabel('Avisos generales'),
-          _settingsCard(
-            children: [
-              ListTile(
-                leading: const _SettingsIcon(
-                  icon: Icons.notifications_active_outlined,
-                ),
-                title: const Text(
-                  'Notificaciones de Android',
-                  style: TextStyle(fontWeight: FontWeight.w700),
-                ),
-                subtitle: Text(
-                  _generalSystemNotificationsEnabled
-                      ? 'Activadas; el historial interno se conserva.'
-                      : 'Desactivadas en Android; SoundNeed conservará el historial.',
-                  style: const TextStyle(color: AppColors.textSecondary),
-                ),
-                trailing: const Icon(
-                  Icons.open_in_new_rounded,
-                  size: 19,
-                  color: AppColors.textSecondary,
-                ),
-                onTap: _manageGeneralNotificationPermission,
-              ),
-              _divider(),
-              for (final category in NotificationCategory.values) ...[
-                SwitchListTile.adaptive(
-                  secondary: _SettingsIcon(icon: category.icon),
-                  title: Text(
-                    category.label,
-                    style: const TextStyle(fontWeight: FontWeight.w700),
+              const SizedBox(height: 20),
+              _subscriptionPlanCard(),
+              _sectionLabel('Notificaciones', accent: _settingsAccent(1)),
+              _settingsCard(
+                accent: _settingsAccent(0),
+                children: [
+                  ListTile(
+                    leading: _SettingsIcon(
+                      icon: Icons.graphic_eq_rounded,
+                      color: _settingsAccent(0),
+                    ),
+                    title: const Text(
+                      'Controles de reproducción',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    subtitle: Text(
+                      statusText,
+                      style: const TextStyle(color: AppColors.textSecondary),
+                    ),
+                    trailing: Icon(
+                      Icons.open_in_new_rounded,
+                      size: 19,
+                      color: _settingsAccent(0),
+                    ),
+                    onTap: _openNotificationSettings,
                   ),
-                  subtitle: Text(
-                    _notificationCategoryDescription(category),
-                    style: const TextStyle(color: AppColors.textSecondary),
+                  _divider(),
+                  SwitchListTile.adaptive(
+                    secondary: _SettingsIcon(
+                      icon: Icons.fiber_new_rounded,
+                      color: _settingsAccent(1),
+                    ),
+                    title: const Text(
+                      'Música nueva',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    subtitle: Text(
+                      _notificationsEnabled
+                          ? 'Avisos al actualizar las tendencias de Colombia y el mundo'
+                          : 'Activa las notificaciones de SoundNeed en Android',
+                      style: const TextStyle(color: AppColors.textSecondary),
+                    ),
+                    activeThumbColor: _settingsAccent(1),
+                    inactiveTrackColor: _settingsAccent(1)
+                        .withValues(alpha: .20),
+                    value: widget.player.newMusicNotificationsEnabled,
+                    onChanged: (enabled) async {
+                      await widget.player.setNewMusicNotificationsEnabled(
+                        enabled,
+                      );
+                      await _loadNotificationStatus();
+                    },
                   ),
-                  activeThumbColor: const Color(0xFFB99AFF),
-                  value: _notificationService.isCategoryEnabled(category),
-                  onChanged: (enabled) => _notificationService
-                      .setCategoryEnabled(category, enabled),
+                ],
+              ),
+              _sectionLabel('Avisos generales', accent: _settingsAccent(2)),
+              _settingsCard(
+                accent: _settingsAccent(2),
+                children: [
+                  ListTile(
+                    leading: _SettingsIcon(
+                      icon: Icons.notifications_active_outlined,
+                      color: _settingsAccent(2),
+                    ),
+                    title: const Text(
+                      'Notificaciones de Android',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    subtitle: Text(
+                      _generalSystemNotificationsEnabled
+                          ? 'Activadas; el historial interno se conserva.'
+                          : 'Desactivadas en Android; SoundNeed conservará el historial.',
+                      style: const TextStyle(color: AppColors.textSecondary),
+                    ),
+                    trailing: Icon(
+                      Icons.open_in_new_rounded,
+                      size: 19,
+                      color: _settingsAccent(2),
+                    ),
+                    onTap: _manageGeneralNotificationPermission,
+                  ),
+                  _divider(),
+                  for (final category in NotificationCategory.values) ...[
+                    SwitchListTile.adaptive(
+                      secondary: _SettingsIcon(
+                        icon: category.icon,
+                        color: _settingsAccent(category.index + 3),
+                      ),
+                      title: Text(
+                        category.label,
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      subtitle: Text(
+                        _notificationCategoryDescription(category),
+                        style: const TextStyle(color: AppColors.textSecondary),
+                      ),
+                      activeThumbColor: _settingsAccent(category.index + 3),
+                      inactiveTrackColor: _settingsAccent(category.index + 3)
+                          .withValues(alpha: .20),
+                      value: _notificationService.isCategoryEnabled(category),
+                      onChanged: (enabled) => _notificationService
+                          .setCategoryEnabled(category, enabled),
+                    ),
+                    if (category != NotificationCategory.values.last)
+                      _divider(),
+                  ],
+                ],
+              ),
+              _sectionLabel('Reproducción', accent: _settingsAccent(3)),
+              _settingsCard(
+                accent: _settingsAccent(3),
+                children: [
+                  ListTile(
+                    leading: _SettingsIcon(
+                      icon: Icons.bedtime_outlined,
+                      color: _settingsAccent(3),
+                    ),
+                    title: const Text(
+                      'Temporizador para dormir',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    subtitle: Text(
+                      _formatRemaining(widget.player.sleepTimerRemaining),
+                      style: const TextStyle(color: AppColors.textSecondary),
+                    ),
+                    trailing: Icon(
+                      Icons.chevron_right_rounded,
+                      color: _settingsAccent(3),
+                    ),
+                    onTap: _showSleepTimerOptions,
+                  ),
+                  _divider(),
+                  SwitchListTile.adaptive(
+                    secondary: _SettingsIcon(
+                      icon: Icons.playlist_play_rounded,
+                      color: _settingsAccent(4),
+                    ),
+                    title: const Text(
+                      'Continuar automáticamente',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    subtitle: const Text(
+                      'Al terminar la cola, sigue con canciones recomendadas',
+                      style: TextStyle(color: AppColors.textSecondary),
+                    ),
+                    activeThumbColor: _settingsAccent(4),
+                    inactiveTrackColor: _settingsAccent(4)
+                        .withValues(alpha: .20),
+                    value: widget.player.autoContinueEnabled,
+                    onChanged: widget.player.setAutoContinueEnabled,
+                  ),
+                  _divider(),
+                  SwitchListTile.adaptive(
+                    secondary: _SettingsIcon(
+                      icon: Icons.history_rounded,
+                      color: _settingsAccent(0),
+                    ),
+                    title: const Text(
+                      'Recordar dónde quedaste',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    subtitle: const Text(
+                      'Restaura la canción y el punto al volver a abrir SoundNeed',
+                      style: TextStyle(color: AppColors.textSecondary),
+                    ),
+                    activeThumbColor: _settingsAccent(0),
+                    inactiveTrackColor: _settingsAccent(0)
+                        .withValues(alpha: .20),
+                    value: widget.player.rememberPlaybackEnabled,
+                    onChanged: widget.player.setRememberPlaybackEnabled,
+                  ),
+                ],
+              ),
+              _sectionLabel('Acerca de SoundNeed', accent: _settingsAccent(4)),
+              _settingsCard(
+                accent: _settingsAccent(4),
+                children: [
+                  ListTile(
+                    leading: _SettingsIcon(
+                      icon: Icons.info_outline_rounded,
+                      color: _settingsAccent(4),
+                    ),
+                    title: const Text(
+                      'Versión',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    subtitle: Text(
+                      _version,
+                      style: const TextStyle(color: AppColors.textSecondary),
+                    ),
+                  ),
+                  _divider(),
+                  ListTile(
+                    leading: _SettingsIcon(
+                      icon: Icons.help_outline_rounded,
+                      color: _settingsAccent(0),
+                    ),
+                    title: const Text(
+                      'Ayuda',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    subtitle: const Text(
+                      'Consejos para usar SoundNeed',
+                      style: TextStyle(color: AppColors.textSecondary),
+                    ),
+                    trailing: Icon(
+                      Icons.chevron_right_rounded,
+                      color: _settingsAccent(0),
+                    ),
+                    onTap: _showHelp,
+                  ),
+                  _divider(),
+                  ListTile(
+                    leading: _SettingsIcon(
+                      icon: Icons.chat_bubble_outline_rounded,
+                      color: _settingsAccent(2),
+                    ),
+                    title: const Text(
+                      'Comentarios',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    subtitle: const Text(
+                      'Comparte una idea o reporta un problema',
+                      style: TextStyle(color: AppColors.textSecondary),
+                    ),
+                    trailing: Icon(
+                      Icons.chevron_right_rounded,
+                      color: _settingsAccent(2),
+                    ),
+                    onTap: _shareFeedback,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              Center(
+                child: Text(
+                  'SoundNeed  ·  $_version',
+                  style: const TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 12,
+                  ),
                 ),
-                if (category != NotificationCategory.values.last) _divider(),
-              ],
+              ),
             ],
           ),
-          _sectionLabel('Reproducción'),
-          _settingsCard(
-            children: [
-              ListTile(
-                leading: const _SettingsIcon(icon: Icons.bedtime_outlined),
-                title: const Text(
-                  'Temporizador para dormir',
-                  style: TextStyle(fontWeight: FontWeight.w700),
-                ),
-                subtitle: Text(
-                  _formatRemaining(widget.player.sleepTimerRemaining),
-                  style: const TextStyle(color: AppColors.textSecondary),
-                ),
-                trailing: const Icon(
-                  Icons.chevron_right_rounded,
-                  color: AppColors.textSecondary,
-                ),
-                onTap: _showSleepTimerOptions,
-              ),
-              _divider(),
-              SwitchListTile.adaptive(
-                secondary: const _SettingsIcon(
-                  icon: Icons.playlist_play_rounded,
-                ),
-                title: const Text(
-                  'Continuar automáticamente',
-                  style: TextStyle(fontWeight: FontWeight.w700),
-                ),
-                subtitle: const Text(
-                  'Al terminar la cola, sigue con canciones recomendadas',
-                  style: TextStyle(color: AppColors.textSecondary),
-                ),
-                activeThumbColor: const Color(0xFFB99AFF),
-                value: widget.player.autoContinueEnabled,
-                onChanged: widget.player.setAutoContinueEnabled,
-              ),
-              _divider(),
-              SwitchListTile.adaptive(
-                secondary: const _SettingsIcon(icon: Icons.history_rounded),
-                title: const Text(
-                  'Recordar dónde quedaste',
-                  style: TextStyle(fontWeight: FontWeight.w700),
-                ),
-                subtitle: const Text(
-                  'Restaura la canción y el punto al volver a abrir SoundNeed',
-                  style: TextStyle(color: AppColors.textSecondary),
-                ),
-                activeThumbColor: const Color(0xFFB99AFF),
-                value: widget.player.rememberPlaybackEnabled,
-                onChanged: widget.player.setRememberPlaybackEnabled,
-              ),
-            ],
-          ),
-          _sectionLabel('Acerca de SoundNeed'),
-          _settingsCard(
-            children: [
-              ListTile(
-                leading: const _SettingsIcon(icon: Icons.info_outline_rounded),
-                title: const Text(
-                  'Versión',
-                  style: TextStyle(fontWeight: FontWeight.w700),
-                ),
-                subtitle: Text(
-                  _version,
-                  style: const TextStyle(color: AppColors.textSecondary),
-                ),
-              ),
-              _divider(),
-              ListTile(
-                leading: const _SettingsIcon(icon: Icons.help_outline_rounded),
-                title: const Text(
-                  'Ayuda',
-                  style: TextStyle(fontWeight: FontWeight.w700),
-                ),
-                subtitle: const Text(
-                  'Consejos para usar SoundNeed',
-                  style: TextStyle(color: AppColors.textSecondary),
-                ),
-                trailing: const Icon(
-                  Icons.chevron_right_rounded,
-                  color: AppColors.textSecondary,
-                ),
-                onTap: _showHelp,
-              ),
-              _divider(),
-              ListTile(
-                leading: const _SettingsIcon(
-                  icon: Icons.chat_bubble_outline_rounded,
-                ),
-                title: const Text(
-                  'Comentarios',
-                  style: TextStyle(fontWeight: FontWeight.w700),
-                ),
-                subtitle: const Text(
-                  'Comparte una idea o reporta un problema',
-                  style: TextStyle(color: AppColors.textSecondary),
-                ),
-                trailing: const Icon(
-                  Icons.chevron_right_rounded,
-                  color: AppColors.textSecondary,
-                ),
-                onTap: _shareFeedback,
-              ),
-            ],
-          ),
-          const SizedBox(height: 20),
-          Center(
-            child: Text(
-              'SoundNeed  ·  $_version',
-              style: const TextStyle(
-                color: AppColors.textSecondary,
-                fontSize: 12,
-              ),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
 }
 
 class _SettingsIcon extends StatelessWidget {
-  const _SettingsIcon({required this.icon});
+  const _SettingsIcon({
+    required this.icon,
+    this.color = const Color(0xFFB99AFF),
+  });
 
   final IconData icon;
+  final Color color;
 
   @override
-  Widget build(BuildContext context) => Container(
+  Widget build(BuildContext context) => AnimatedContainer(
+    duration: const Duration(milliseconds: 650),
+    curve: Curves.easeInOutCubic,
     width: 40,
     height: 40,
     decoration: BoxDecoration(
-      color: const Color(0x228B5CF6),
+      color: color.withValues(alpha: .14),
       borderRadius: BorderRadius.circular(13),
     ),
-    child: Icon(icon, color: const Color(0xFFB99AFF), size: 21),
+    child: Icon(icon, color: color, size: 21),
   );
 }
