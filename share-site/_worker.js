@@ -1,4 +1,12 @@
 const validId = (id) => /^[A-Za-z0-9_-]{12,24}$/.test(id || "");
+const assetLinks = [{
+  relation: ["delegate_permission/common.handle_all_urls"],
+  target: {
+    namespace: "android_app",
+    package_name: "sound_need.music_player",
+    sha256_cert_fingerprints: ["B2:77:8C:21:1F:5E:D6:F7:68:52:48:48:CD:AB:46:F4:22:5B:88:03:7D:66:C5:5F:08:05:56:B8:49:47:3A:15"],
+  },
+}];
 const escapeHtml = (value = "") => String(value).replace(/[&<>"']/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
 })[character]);
@@ -202,6 +210,14 @@ function playlistPreviewResponse(playlist) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    if (url.pathname === "/.well-known/assetlinks.json" && request.method === "GET") {
+      return new Response(JSON.stringify(assetLinks), { headers: {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "public, max-age=3600",
+        "x-content-type-options": "nosniff",
+      }});
+    }
+
     if (url.pathname === "/api/share") {
       if (request.method !== "POST") return new Response("Method not allowed", { status: 405, headers: { allow: "POST" } });
       return createShare(request, env);

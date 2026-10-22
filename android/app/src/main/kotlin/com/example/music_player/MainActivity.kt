@@ -1233,12 +1233,18 @@ class MainActivity : AudioServiceFragmentActivity() {
             val soundNeedLink = uri.scheme.equals("soundneed", ignoreCase = true) &&
                 (host.equals("track", ignoreCase = true) ||
                     host.equals("playlist", ignoreCase = true))
-            val verifiedShareLink =
-                uri.scheme.equals("https", ignoreCase = true) &&
-                    host.equals("soundneed-shares.breinermuleth64.workers.dev", ignoreCase = true) &&
-                    uri.pathSegments.size == 2 &&
-                    uri.pathSegments[0] in setOf("s", "p") &&
-                    uri.pathSegments[1].matches(Regex("[A-Za-z0-9_-]{12,24}"))
+            val supportedShareHost = host.equals("soundneed-links.pages.dev", ignoreCase = true) ||
+                host.equals("soundneed-shares.breinermuleth64.workers.dev", ignoreCase = true)
+            val shareRecordLink = uri.pathSegments.size == 2 &&
+                uri.pathSegments[0] in setOf("s", "p") &&
+                uri.pathSegments[1].matches(Regex("[A-Za-z0-9_-]{12,24}"))
+            val legacySharePage = uri.path == "/share.html" &&
+                (uri.getQueryParameter("i").orEmpty().matches(Regex("[A-Za-z0-9_-]{11}")) ||
+                    uri.getQueryParameter("videoId").orEmpty().matches(Regex("[A-Za-z0-9_-]{11}")) ||
+                    !uri.getQueryParameter("p").isNullOrEmpty() ||
+                    uri.getQueryParameter("shareId").orEmpty().matches(Regex("[A-Za-z0-9_-]{12,24}")))
+            val verifiedShareLink = uri.scheme.equals("https", ignoreCase = true) &&
+                supportedShareHost && (shareRecordLink || legacySharePage)
             soundNeedLink || verifiedShareLink
         } == true
 
@@ -1250,7 +1256,7 @@ class MainActivity : AudioServiceFragmentActivity() {
         val source = Uri.parse(deepLink)
         val result = Uri.Builder()
             .scheme("https")
-            .authority("soundneed-shares.breinermuleth64.workers.dev")
+            .authority("soundneed-links.pages.dev")
             .appendPath("share.html")
 
         val videoId = source.pathSegments.firstOrNull().orEmpty()

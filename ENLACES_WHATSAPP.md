@@ -1,11 +1,5 @@
-# Enlaces de canciones para WhatsApp
+# Enlaces compartidos de SoundNeed
 
-SoundNeed comparte un enlace de GitHub Pages (`https://juanka1711.github.io/SoundNeed/share.html?...`). La página intenta abrir `soundneed://track/...`; Android abre la canción si SoundNeed está instalada. Si el salto automático se bloquea, el usuario toca **Abrir en SoundNeed**. Si no tiene la app, puede escuchar la canción en YouTube cuando hay un ID disponible.
+Los enlaces nuevos de canciones, playlists y **Me gusta** usan `https://soundneed-links.pages.dev`. Cuando SoundNeed está instalada, Android verifica el host con `/.well-known/assetlinks.json` y abre las rutas compatibles directamente dentro de la app. Sin la app, el enlace conserva su página web para mostrar la vista previa y permitir abrir o importar el contenido.
 
-## Activar la página una sola vez
-
-En GitHub, abre `Juanka1711/SoundNeed` → **Settings → Pages** y selecciona **GitHub Actions** como origen de publicación. Después publica el workflow `.github/workflows/deploy-share-page.yml` en `main`; GitHub Actions desplegará `share-site/` y la página quedará en:
-
-`https://juanka1711.github.io/SoundNeed/share.html`
-
-No requiere Firebase, dominio propio ni archivo de asociación de Android. El enlace usa un esquema propio de SoundNeed y la página web sirve de puente para lanzarlo.
+La configuración de Cloudflare Pages, el Worker y la base D1 está documentada en [share-site/DEPLOYMENT.md](share-site/DEPLOYMENT.md). Los enlaces anteriores de `soundneed-shares.breinermuleth64.workers.dev` se mantienen compatibles.

@@ -92,13 +92,13 @@ El archivo `.jks` tampoco debe subirse. Para publicar actualizaciones de la mism
 
 ## Enlaces compartidos
 
-La aplicación usa Cloudflare Workers y D1 para guardar metadatos, portadas y playlists compartidas. La configuración y los comandos de despliegue están en [share-site/DEPLOYMENT.md](share-site/DEPLOYMENT.md).
+La aplicación usa Cloudflare Pages, Workers y D1 para guardar metadatos, portadas y playlists compartidas. Los nuevos enlaces usan el host de marca `soundneed-links.pages.dev`. La configuración y los comandos de despliegue están en [share-site/DEPLOYMENT.md](share-site/DEPLOYMENT.md).
 
 Para usar otro dominio al compilar:
 
 ```powershell
 flutter build appbundle --release `
-  --dart-define=SOUNDNEED_SHARE_BASE_URL=https://tu-dominio.workers.dev
+  --dart-define=SOUNDNEED_SHARE_BASE_URL=https://soundneed-links.pages.dev
 ```
 
 El dominio debe incluir solo el origen HTTPS, sin una ruta adicional.

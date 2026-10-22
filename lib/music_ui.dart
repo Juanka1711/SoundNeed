@@ -84,6 +84,7 @@ class _MusicHomePageState extends State<MusicHomePage> {
 
   MusicSection _section = MusicSection.home;
   int? _notificationFocusSongId;
+  Timer? _notificationFocusTimer;
   bool _showNotificationDownloads = false;
   String? _notificationDownloadsFolderPath;
 
@@ -118,6 +119,7 @@ class _MusicHomePageState extends State<MusicHomePage> {
   void dispose() {
     _searchController.dispose();
     _onlineSearchDebounce?.cancel();
+    _notificationFocusTimer?.cancel();
     widget.player.removeListener(_onPlayerChanged);
     _notificationService.removeListener(_onNotificationsChanged);
     _notificationNavigationSubscription?.cancel();
@@ -366,6 +368,7 @@ class _MusicHomePageState extends State<MusicHomePage> {
   // ==========================================================
 
   void _selectSection(MusicSection section) {
+    _notificationFocusTimer?.cancel();
     setState(() {
       _section = section;
       _showNotificationDownloads = false;
@@ -578,6 +581,14 @@ class _MusicHomePageState extends State<MusicHomePage> {
           ? folderPath
           : song?.folderPath;
     });
+    _notificationFocusTimer?.cancel();
+    if (song != null) {
+      final highlightedSongId = song.id;
+      _notificationFocusTimer = Timer(const Duration(seconds: 2), () {
+        if (!mounted || _notificationFocusSongId != highlightedSongId) return;
+        setState(() => _notificationFocusSongId = null);
+      });
+    }
     if (song == null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -985,7 +996,7 @@ class _MusicHomePageState extends State<MusicHomePage> {
       case MusicSection.songs:
         return SongsSection(
           key: ValueKey<Object?>(
-            'songs-${_showNotificationDownloads ? 'downloads' : 'all'}-${_notificationFocusSongId ?? 'none'}',
+            'songs-${_showNotificationDownloads ? 'downloads' : 'all'}',
           ),
           player: widget.player,
           filteredSongs: _filteredSongs,
@@ -1485,131 +1496,260 @@ class _SoundNeedSettingsPageState extends State<SoundNeedSettingsPage>
         child: Column(children: children),
       );
 
-  Widget _subscriptionPlanCard() => AnimatedContainer(
-    duration: const Duration(milliseconds: 700),
-    curve: Curves.easeInOutCubic,
-    padding: const EdgeInsets.all(18),
-    decoration: BoxDecoration(
-      borderRadius: BorderRadius.circular(24),
-      gradient: LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [
-          _settingsPalette.primary.withValues(alpha: .24),
-          _settingsPalette.primary.withValues(alpha: .08),
-          AppColors.card,
+  Widget _subscriptionPlanCard() {
+    final accent = _settingsPalette.primary;
+    final surface = Color.lerp(AppColors.card, _settingsPalette.dark, .22)!;
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 700),
+      curve: Curves.easeInOutCubic,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(28),
+        border: Border.all(color: accent.withValues(alpha: .30)),
+        boxShadow: [
+          BoxShadow(
+            color: accent.withValues(alpha: .12),
+            blurRadius: 30,
+            offset: const Offset(0, 12),
+          ),
         ],
       ),
-      border: Border.all(
-        color: _settingsPalette.primary.withValues(alpha: .32),
-      ),
-      boxShadow: [
-        BoxShadow(
-          color: _settingsPalette.primary.withValues(alpha: .10),
-          blurRadius: 22,
-          offset: const Offset(0, 8),
-        ),
-      ],
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(27),
+        child: Stack(
           children: [
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: _settingsPalette.primary.withValues(alpha: .18),
-                borderRadius: BorderRadius.circular(15),
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Color.lerp(surface, accent, .25)!,
+                      surface,
+                      Color.lerp(surface, accent, .08)!,
+                    ],
+                    stops: const [0, .48, 1],
+                  ),
+                ),
               ),
+            ),
+            Positioned(
+              top: -62,
+              right: -48,
+              child: Container(
+                width: 190,
+                height: 190,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: accent.withValues(alpha: .10),
+                ),
+              ),
+            ),
+            Positioned(
+              top: 18,
+              right: 14,
               child: Icon(
-                Icons.headphones_rounded,
-                color: _settingsPalette.primary,
+                Icons.graphic_eq_rounded,
+                size: 118,
+                color: Colors.white.withValues(alpha: .045),
               ),
             ),
-            const SizedBox(width: 12),
-            const Expanded(
-              child: Text(
-                'SoundNeed Premium',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-              ),
-            ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
-              decoration: BoxDecoration(
-                color: _settingsPalette.primary.withValues(alpha: .14),
-                borderRadius: BorderRadius.circular(30),
-                border: Border.all(
-                  color: _settingsPalette.primary.withValues(alpha: .28),
-                ),
-              ),
-              child: Text(
-                'PRÓXIMAMENTE',
-                style: TextStyle(
-                  color: _settingsPalette.primary,
-                  fontSize: 9,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: .35,
-                ),
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 48,
+                        height: 48,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [
+                              accent.withValues(alpha: .34),
+                              accent.withValues(alpha: .12),
+                            ],
+                          ),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: accent.withValues(alpha: .34),
+                          ),
+                        ),
+                        child: Icon(Icons.graphic_eq_rounded, color: accent),
+                      ),
+                      const SizedBox(width: 13),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'SOUNDNEED',
+                              style: TextStyle(
+                                color: AppColors.textSecondary,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 1.8,
+                              ),
+                            ),
+                            SizedBox(height: 2),
+                            Text(
+                              'Premium',
+                              style: TextStyle(
+                                fontSize: 21,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: -.45,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 7,
+                        ),
+                        decoration: BoxDecoration(
+                          color: accent.withValues(alpha: .13),
+                          borderRadius: BorderRadius.circular(30),
+                          border: Border.all(
+                            color: accent.withValues(alpha: .30),
+                          ),
+                        ),
+                        child: Text(
+                          'PRÓXIMAMENTE',
+                          style: TextStyle(
+                            color: accent,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: .65,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 19),
+                  Text(
+                    'Tu música,\na tu manera.',
+                    style: TextStyle(
+                      fontSize: 27,
+                      height: 1.06,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: -.75,
+                      shadows: [
+                        Shadow(
+                          color: Colors.black.withValues(alpha: .22),
+                          blurRadius: 12,
+                          offset: const Offset(0, 3),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 7),
+                  Text(
+                    'Estamos preparando una nueva forma de disfrutar SoundNeed.',
+                    style: TextStyle(
+                      color: AppColors.textSecondary.withValues(alpha: .94),
+                      fontSize: 13,
+                      height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Container(
+                    padding: const EdgeInsets.fromLTRB(15, 13, 15, 13),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: .18),
+                      borderRadius: BorderRadius.circular(19),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: .08),
+                      ),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          '\$6.900',
+                          style: TextStyle(
+                            color: accent,
+                            fontSize: 31,
+                            height: .98,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -1.1,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        const Padding(
+                          padding: EdgeInsets.only(bottom: 2),
+                          child: Text(
+                            'COP / mes',
+                            style: TextStyle(
+                              color: AppColors.textSecondary,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        const Spacer(),
+                        Icon(
+                          Icons.calendar_month_rounded,
+                          size: 17,
+                          color: accent.withValues(alpha: .9),
+                        ),
+                        const SizedBox(width: 5),
+                        const Text(
+                          'Plan mensual',
+                          style: TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 13),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 12,
+                    ),
+                    decoration: BoxDecoration(
+                      color: accent.withValues(alpha: .10),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.notifications_active_outlined,
+                          size: 18,
+                          color: accent,
+                        ),
+                        const SizedBox(width: 9),
+                        Expanded(
+                          child: Text(
+                            'Pronto anunciaremos qué incluye el plan.',
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: .88),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
         ),
-        const SizedBox(height: 16),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            const Text(
-              '\$6.900',
-              style: TextStyle(
-                fontSize: 30,
-                height: 1,
-                fontWeight: FontWeight.w900,
-                letterSpacing: -1,
-              ),
-            ),
-            const SizedBox(width: 8),
-            const Padding(
-              padding: EdgeInsets.only(bottom: 2),
-              child: Text(
-                'COP / mes',
-                style: TextStyle(
-                  color: AppColors.textSecondary,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 9),
-        const Text(
-          'Estamos preparando el plan mensual de SoundNeed. Pronto podrás conocer y activar sus beneficios desde aquí.',
-          style: TextStyle(
-            color: AppColors.textSecondary,
-            fontSize: 13,
-            height: 1.4,
-          ),
-        ),
-        const SizedBox(height: 14),
-        SizedBox(
-          width: double.infinity,
-          child: FilledButton.icon(
-            onPressed: null,
-            style: FilledButton.styleFrom(
-              disabledBackgroundColor: _settingsPalette.primary.withValues(
-                alpha: .16,
-              ),
-              disabledForegroundColor: _settingsPalette.primary,
-            ),
-            icon: const Icon(Icons.lock_clock_rounded, size: 18),
-            label: const Text('Próximamente'),
-          ),
-        ),
-      ],
-    ),
-  );
+      ),
+    );
+  }
 
   Widget _divider() => const Divider(
     height: 1,

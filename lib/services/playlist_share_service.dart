@@ -9,13 +9,14 @@ import 'package:http/http.dart' as http;
 
 import 'share_card_palette.dart';
 import '../playlist_sharing.dart';
+import 'soundneed_share_links.dart';
 
 class PlaylistShareService {
   PlaylistShareService._();
 
   static const String _baseUrl = String.fromEnvironment(
     'SOUNDNEED_SHARE_BASE_URL',
-    defaultValue: 'https://soundneed-shares.breinermuleth64.workers.dev',
+    defaultValue: SoundNeedShareLinks.baseUrl,
   );
   static final Random _secureRandom = Random.secure();
 
@@ -87,7 +88,7 @@ class PlaylistShareService {
     final base = Uri.tryParse(_baseUrl.trim());
     if (base == null ||
         shareLink.scheme != 'https' ||
-        shareLink.host != base.host ||
+        !SoundNeedShareLinks.supportsHost(shareLink.host) ||
         shareLink.pathSegments.length != 2 ||
         shareLink.pathSegments.first != 'p') {
       return null;

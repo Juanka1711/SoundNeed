@@ -105,6 +105,36 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data
                     android:scheme="https"
+                    android:host="soundneed-links.pages.dev"
+                    android:pathPrefix="/s/" />
+            </intent-filter>
+
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="soundneed-links.pages.dev"
+                    android:pathPrefix="/p/" />
+            </intent-filter>
+
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="soundneed-links.pages.dev"
+                    android:path="/share.html" />
+            </intent-filter>
+
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
                     android:host="soundneed-shares.breinermuleth64.workers.dev"
                     android:pathPrefix="/s/" />
             </intent-filter>
@@ -117,6 +147,16 @@
                     android:scheme="https"
                     android:host="soundneed-shares.breinermuleth64.workers.dev"
                     android:pathPrefix="/p/" />
+            </intent-filter>
+
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="soundneed-shares.breinermuleth64.workers.dev"
+                    android:path="/share.html" />
             </intent-filter>
 
         </activity>

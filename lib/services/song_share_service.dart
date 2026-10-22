@@ -8,16 +8,17 @@ import 'package:image/image.dart' as img;
 import 'package:http/http.dart' as http;
 
 import 'share_card_palette.dart';
+import 'soundneed_share_links.dart';
 
 /// Publishes one song's metadata and artwork so crawlers can read its Open
-/// Graph tags from the initial HTML response. Override the deployed Worker
-/// origin with --dart-define=SOUNDNEED_SHARE_BASE_URL=https://...workers.dev.
+/// Graph tags from the initial HTML response. Override the deployed share
+/// origin with --dart-define=SOUNDNEED_SHARE_BASE_URL=https://...
 class SongShareService {
   SongShareService._();
 
   static const String _baseUrl = String.fromEnvironment(
     'SOUNDNEED_SHARE_BASE_URL',
-    defaultValue: 'https://soundneed-shares.breinermuleth64.workers.dev',
+    defaultValue: SoundNeedShareLinks.baseUrl,
   );
   static final Random _secureRandom = Random.secure();
 
@@ -390,7 +391,7 @@ class SongShareService {
     final base = Uri.tryParse(_baseUrl.trim());
     if (base == null ||
         shareLink.scheme != 'https' ||
-        shareLink.host != base.host ||
+        !SoundNeedShareLinks.supportsHost(shareLink.host) ||
         shareLink.pathSegments.length != 2 ||
         shareLink.pathSegments.first != 's') {
       return null;

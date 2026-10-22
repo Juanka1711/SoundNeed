@@ -1,0 +1,13 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "soundneed-links",
+  "pages_build_output_dir": "./share-site",
+  "compatibility_date": "2026-10-09",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "soundneed-shares",
+      "database_id": "841648c2-ea34-419c-bb6d-7239f9952630"
+    }
+  ]
+}

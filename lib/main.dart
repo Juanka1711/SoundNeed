@@ -10,6 +10,7 @@ import 'services/audio_handler.dart';
 import 'services/youtube_audio_service.dart';
 import 'services/song_share_service.dart';
 import 'services/playlist_share_service.dart';
+import 'services/soundneed_share_links.dart';
 import 'playlist_manager.dart';
 import 'playlist_sharing.dart';
 import 'full_player.dart';
@@ -339,10 +340,8 @@ class _SoundNeedHomeState extends State<SoundNeedHome> {
     if (!mounted) return;
     var uri = Uri.tryParse(link);
     if (uri == null) return;
-    if (uri.scheme == 'https' &&
-        uri.host == 'soundneed-shares.breinermuleth64.workers.dev' &&
-        uri.pathSegments.length == 2) {
-      if (uri.pathSegments.first == 's') {
+    if (uri.scheme == 'https' && SoundNeedShareLinks.supportsHost(uri.host)) {
+      if (uri.pathSegments.length == 2 && uri.pathSegments.first == 's') {
         try {
           uri = await SongShareService.resolveSongLink(uri);
         } catch (error) {
@@ -362,11 +361,37 @@ class _SoundNeedHomeState extends State<SoundNeedHome> {
           }
           return;
         }
-      } else if (uri.pathSegments.first == 'p') {
+      } else if (uri.pathSegments.length == 2 &&
+          uri.pathSegments.first == 'p') {
         uri = Uri(
           scheme: 'soundneed',
           host: 'playlist',
           queryParameters: {'shareId': uri.pathSegments.last},
+        );
+      } else if (uri.path == '/share.html') {
+        final playlistPayload = uri.queryParameters['p'];
+        final sharedPlaylistId = uri.queryParameters['shareId'];
+        final videoId =
+            uri.queryParameters['i'] ?? uri.queryParameters['videoId'] ?? '';
+        uri = Uri(
+          scheme: 'soundneed',
+          host:
+              playlistPayload?.isNotEmpty == true ||
+                  sharedPlaylistId?.isNotEmpty == true
+              ? 'playlist'
+              : 'track',
+          pathSegments: videoId.isEmpty ? const <String>[] : <String>[videoId],
+          queryParameters: <String, String>{
+            if (playlistPayload?.isNotEmpty == true) 'p': playlistPayload!,
+            if (sharedPlaylistId?.isNotEmpty == true)
+              'shareId': sharedPlaylistId!,
+            if (uri.queryParameters['title']?.isNotEmpty == true)
+              'title': uri.queryParameters['title']!,
+            if (uri.queryParameters['artist']?.isNotEmpty == true)
+              'artist': uri.queryParameters['artist']!,
+            if (uri.queryParameters['album']?.isNotEmpty == true)
+              'album': uri.queryParameters['album']!,
+          },
         );
       }
     }

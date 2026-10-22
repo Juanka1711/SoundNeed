@@ -343,109 +343,117 @@ class _SongsSectionState extends State<SongsSection> {
         : Colors.white;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 5),
-      child: Material(
-        color: isNotificationFocus
-            ? widget.palette.primary.withValues(alpha: .30)
-            : isCurrent
-            ? widget.palette.primary.withValues(alpha: .16)
-            : AppColors.card.withValues(alpha: .55),
-        borderRadius: BorderRadius.circular(20),
-        child: InkWell(
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 420),
+        curve: Curves.easeOutCubic,
+        decoration: BoxDecoration(
+          color: isNotificationFocus
+              ? widget.palette.primary.withValues(alpha: .30)
+              : isCurrent
+              ? widget.palette.primary.withValues(alpha: .16)
+              : AppColors.card.withValues(alpha: .55),
           borderRadius: BorderRadius.circular(20),
-          onTap: () => selectSongOrOpenPlayer(context, widget.player, song),
-          onLongPress: () => confirmDeleteSong(context, widget.player, song),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(10, 9, 5, 9),
-            child: Row(
-              children: [
-                _buildArtwork(song, size: 62, isPlaying: isPlaying),
-                const SizedBox(width: 12),
+        ),
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(20),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(20),
+            onTap: () => selectSongOrOpenPlayer(context, widget.player, song),
+            onLongPress: () => confirmDeleteSong(context, widget.player, song),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(10, 9, 5, 9),
+              child: Row(
+                children: [
+                  _buildArtwork(song, size: 62, isPlaying: isPlaying),
+                  const SizedBox(width: 12),
 
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        song.title.isEmpty ? song.displayName : song.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 15.5,
-                          fontWeight: isCurrent
-                              ? FontWeight.w800
-                              : FontWeight.w700,
-                          color: accent,
-                          letterSpacing: -.15,
-                          height: 1.22,
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          song.title.isEmpty ? song.displayName : song.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 15.5,
+                            fontWeight: isCurrent
+                                ? FontWeight.w800
+                                : FontWeight.w700,
+                            color: accent,
+                            letterSpacing: -.15,
+                            height: 1.22,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 6),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              song.artist.isEmpty
-                                  ? 'Artista desconocido'
-                                  : song.artist,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 12.5,
-                                color: AppColors.textSecondary,
-                                letterSpacing: .08,
-                                height: 1.3,
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                song.artist.isEmpty
+                                    ? 'Artista desconocido'
+                                    : song.artist,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 12.5,
+                                  color: AppColors.textSecondary,
+                                  letterSpacing: .08,
+                                  height: 1.3,
+                                ),
                               ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: .055),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      widget.player.formatDuration(song.duration),
+                      style: const TextStyle(
+                        color: Colors.white60,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  PopupMenuButton<String>(
+                    tooltip: 'Opciones de canción',
+                    icon: const Icon(
+                      Icons.more_vert_rounded,
+                      color: Colors.white70,
+                    ),
+                    onSelected: (value) {
+                      if (value == 'delete') {
+                        confirmDeleteSong(context, widget.player, song);
+                      }
+                    },
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(
+                        value: 'delete',
+                        child: Row(
+                          children: [
+                            Icon(Icons.delete_outline_rounded),
+                            SizedBox(width: 12),
+                            Text('Eliminar del dispositivo'),
+                          ],
+                        ),
                       ),
                     ],
                   ),
-                ),
-                const SizedBox(width: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 5,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: .055),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Text(
-                    widget.player.formatDuration(song.duration),
-                    style: const TextStyle(
-                      color: Colors.white60,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-                PopupMenuButton<String>(
-                  tooltip: 'Opciones de canción',
-                  icon: const Icon(
-                    Icons.more_vert_rounded,
-                    color: Colors.white70,
-                  ),
-                  onSelected: (value) {
-                    if (value == 'delete') {
-                      confirmDeleteSong(context, widget.player, song);
-                    }
-                  },
-                  itemBuilder: (_) => const [
-                    PopupMenuItem(
-                      value: 'delete',
-                      child: Row(
-                        children: [
-                          Icon(Icons.delete_outline_rounded),
-                          SizedBox(width: 12),
-                          Text('Eliminar del dispositivo'),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
