@@ -428,7 +428,7 @@ class _ArtistAlbumDiscoverySectionState
             _emptyPersonalHint(),
           if (_isArtists && query.isEmpty) ...[
             const SizedBox(height: 18),
-            _sectionHeading('Descubre en YouTube', 'Búsqueda actual'),
+            _sectionHeading('Descubre en SoundNeed', 'Artistas para ti'),
             const SizedBox(height: 12),
             if (_loadingDiscovery)
               const Center(
@@ -783,10 +783,10 @@ class _ArtistAlbumDiscoverySectionState
             ).map(_localSongTile),
           ],
           const SizedBox(height: 24),
-          _sectionHeading('Descubre en YouTube', 'Resultados de búsqueda'),
+          _sectionHeading('Descubre en SoundNeed', 'Canciones para ti'),
           const SizedBox(height: 5),
           const Text(
-            'Son resultados actuales de búsqueda; YouTube no proporciona aquí un ranking oficial ni fechas verificadas.',
+            'Explora canciones relacionadas y amplía tu biblioteca.',
             style: TextStyle(color: Colors.white38, fontSize: 11),
           ),
           const SizedBox(height: 10),
