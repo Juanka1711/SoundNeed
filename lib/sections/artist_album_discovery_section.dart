@@ -1124,7 +1124,11 @@ class _ArtistAlbumDiscoverySectionState
   );
 
   Future<void> _playOnlineResult(YouTubeSearchResult result) async {
-    final ok = await widget.player.playOnline(result);
+    final ok = await widget.player.playOnline(
+      result,
+      playlist: _youtubeDiscovery,
+      relatedToSelected: true,
+    );
     if (!ok && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -1260,7 +1264,11 @@ class _ArtistAlbumDiscoverySectionState
             ],
           ),
           onTap: () async {
-            final ok = await widget.player.playOnline(result);
+            final ok = await widget.player.playOnline(
+              result,
+              playlist: _artistResults,
+              relatedToSelected: true,
+            );
             if (!ok && mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(

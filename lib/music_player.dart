@@ -113,6 +113,12 @@ class Song {
   String get onlineVideoId => Uri.tryParse(uri)?.queryParameters['v'] ?? '';
 }
 
+class SongAlreadyDownloadedException implements Exception {
+  final Song downloadedSong;
+
+  const SongAlreadyDownloadedException(this.downloadedSong);
+}
+
 String _resolvedArtist(String artist, String title, String displayName) {
   final normalized = artist.trim().toLowerCase();
   const missingValues = {
@@ -1122,6 +1128,16 @@ class MusicPlayerController extends ChangeNotifier {
     notifyListeners();
     try {
       debugPrint('[SoundNeed] Iniciando descarga: ${song.title}');
+      final canBeDownloaded =
+          song.isOnline ||
+          song.isPodcast ||
+          song.uri.startsWith('http://') ||
+          song.uri.startsWith('https://');
+      final knownDuplicate = canBeDownloaded ? findDownloadedSong(song) : null;
+      if (knownDuplicate != null) {
+        throw SongAlreadyDownloadedException(knownDuplicate);
+      }
+
       final sourceMetadata = song.isOnline
           ? await YouTubeAudioService.instance.getVideoMetadata(
               song.onlineVideoId,
@@ -1132,6 +1148,19 @@ class MusicPlayerController extends ChangeNotifier {
           ? sourceTitle!
           : song.title;
       final sourceArtist = sourceMetadata['artist']?.trim() ?? '';
+      final artist = _validSourceArtist(sourceArtist)
+          ? sourceArtist
+          : _artistForDownload(song);
+      final songTitle = _songTitleForDownload(downloadTitle, artist);
+      final existing = findDownloadedSong(
+        song,
+        title: songTitle,
+        artist: artist,
+      );
+      if (canBeDownloaded && existing != null) {
+        throw SongAlreadyDownloadedException(existing);
+      }
+
       final artworkFuture = loadArtwork(song)
           .then<Uint8List?>((value) => value, onError: (_) => null);
 
@@ -1177,10 +1206,6 @@ class MusicPlayerController extends ChangeNotifier {
 
         final artwork = await artworkFuture;
 
-        final artist = _validSourceArtist(sourceArtist)
-            ? sourceArtist
-            : _artistForDownload(song);
-        final songTitle = _songTitleForDownload(downloadTitle, artist);
         debugPrint(
           '[SoundNeed] Descargando archivo (intento $attempt): $artist - $songTitle',
         );
@@ -1285,6 +1310,74 @@ class MusicPlayerController extends ChangeNotifier {
       .replaceAll(RegExp(r'\([^)]*\)|\[[^]]*\]'), '')
       .replaceAll(RegExp(r'[^a-z0-9áéíóúüñ]'), '');
 
+  Song? findDownloadedSong(Song source, {String? title, String? artist}) {
+    final requestedTitle = _downloadDuplicateMatchText(
+      _songTitleForDownload(
+        title ?? (source.title.isEmpty ? source.displayName : source.title),
+        artist ?? source.artist,
+      ),
+    );
+    if (requestedTitle.isEmpty) return null;
+
+    final sameTitle = _songs.where((candidate) {
+      if (candidate.isOnline || candidate.isPodcast) return false;
+      final candidateTitle = _downloadDuplicateMatchText(
+        _songTitleForDownload(
+          candidate.title.isEmpty ? candidate.displayName : candidate.title,
+          candidate.artist,
+        ),
+      );
+      return candidateTitle == requestedTitle;
+    }).toList();
+    if (sameTitle.isEmpty) return null;
+
+    final requestedArtist = _validSourceArtist(artist ?? source.artist)
+        ? _downloadDuplicateArtistText(artist ?? source.artist)
+        : '';
+    if (requestedArtist.isNotEmpty) {
+      for (final candidate in sameTitle) {
+        if (_validSourceArtist(candidate.artist) &&
+            _downloadDuplicateArtistText(candidate.artist) == requestedArtist) {
+          return candidate;
+        }
+      }
+      return null;
+    }
+
+    // With no reliable artist, only skip when the title identifies one local
+    // track unambiguously and its duration is compatible.
+    if (sameTitle.length == 1 &&
+        (source.duration <= 0 ||
+            sameTitle.first.duration <= 0 ||
+            (sameTitle.first.duration - source.duration).abs() <= 8000)) {
+      return sameTitle.first;
+    }
+    return null;
+  }
+
+  String _downloadDuplicateMatchText(String value) => value
+      .toLowerCase()
+      .replaceAll('á', 'a')
+      .replaceAll('é', 'e')
+      .replaceAll('í', 'i')
+      .replaceAll('ó', 'o')
+      .replaceAll('ú', 'u')
+      .replaceAll('ü', 'u')
+      .replaceAll('ñ', 'n')
+      .replaceAll(
+        RegExp(r'\b(topic|official|audio|video|lyrics?|vevo|visualizer)\b'),
+        ' ',
+      )
+      .replaceAll(RegExp(r'[^a-z0-9]+'), '');
+
+  String _downloadDuplicateArtistText(String value) =>
+      _downloadDuplicateMatchText(
+        value.replaceAll(
+          RegExp(r'\b(featuring|feat|ft|with|and|y|con)\b'),
+          ' ',
+        ),
+      );
+
   Future<int> downloadPlaylist(List<Song> songs) async {
     if (_isDownloadingPlaylist || _isDownloading) return 0;
     final downloadable = songs
@@ -1307,6 +1400,11 @@ class MusicPlayerController extends ChangeNotifier {
       for (final song in downloadable) {
         try {
           await downloadSong(song);
+        } on SongAlreadyDownloadedException catch (error) {
+          debugPrint(
+            '[SoundNeed] Se omitió una canción ya descargada: '
+            '${error.downloadedSong.title}',
+          );
         } catch (error) {
           failures++;
           debugPrint('[SoundNeed] Falló una descarga de playlist: $error');

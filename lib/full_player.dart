@@ -2573,6 +2573,17 @@ class _FullPlayerState extends State<FullPlayer>
 
   Future<void> _downloadSong(dynamic song) async {
     final selectedSong = song as Song;
+    if (player.findDownloadedSong(selectedSong) != null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('Esta canción ya está descargada en tu biblioteca.'),
+        ),
+      );
+      return;
+    }
+
     final notificationKey = 'song-download:${selectedSong.id}';
     final notifications = NotificationService.instance;
     await notifications.publish(
@@ -2620,6 +2631,34 @@ class _FullPlayerState extends State<FullPlayer>
         const SnackBar(
           behavior: SnackBarBehavior.floating,
           content: Text('Canción guardada en el dispositivo.'),
+        ),
+      );
+    } on SongAlreadyDownloadedException catch (error) {
+      await notifications.publish(
+        NotificationDraft(
+          deduplicationKey: notificationKey,
+          category: NotificationCategory.downloads,
+          title: 'Canción ya descargada',
+          description:
+              '${error.downloadedSong.title} ya está en tu biblioteca.',
+          eventType: 'song_download_already_exists',
+          destination: 'songs',
+          status: NotificationStatus.completed,
+          metadata: <String, Object?>{
+            'downloadedSongId': error.downloadedSong.id,
+            'downloadedSongUri': error.downloadedSong.uri,
+            'songTitle': error.downloadedSong.title,
+            'songArtist': error.downloadedSong.artist,
+            if (error.downloadedSong.folderPath.isNotEmpty)
+              'folderPath': error.downloadedSong.folderPath,
+          },
+        ),
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('Esta canción ya está descargada en tu biblioteca.'),
         ),
       );
     } catch (error) {
