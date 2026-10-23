@@ -164,6 +164,161 @@ class ArtistDiscoveryService {
 
   List<MusicChartTrack> get worldChart => List.unmodifiable(_worldChart);
 
+  String _normalizeChartText(String value) => value
+      .toLowerCase()
+      .replaceAll('á', 'a')
+      .replaceAll('é', 'e')
+      .replaceAll('í', 'i')
+      .replaceAll('ó', 'o')
+      .replaceAll('ú', 'u')
+      .replaceAll('ü', 'u')
+      .replaceAll('ñ', 'n')
+      .replaceAll(
+        RegExp(r'\b(topic|official|audio|video|lyrics?|vevo|visualizer)\b'),
+        ' ',
+      )
+      .replaceAll(RegExp(r'[^a-z0-9áéíóúüñ]+'), ' ')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+
+  String _chartTrackKey(MusicChartTrack track) =>
+      '${_normalizeChartText(track.title)}|${_normalizeChartText(track.artist)}';
+
+  double _chartTitleMatch(String resultTitle, String wantedTitle) {
+    final result = _normalizeChartText(resultTitle);
+    final wanted = _normalizeChartText(wantedTitle);
+    if (result.isEmpty || wanted.isEmpty) return 0;
+    if (result == wanted) return 1;
+    final resultWords = result
+        .split(' ')
+        .where((word) => word.length > 1)
+        .toSet();
+    final wantedWords = wanted
+        .split(' ')
+        .where((word) => word.length > 1)
+        .toSet();
+    if (wantedWords.isEmpty) return 0;
+    return resultWords.intersection(wantedWords).length / wantedWords.length;
+  }
+
+  double _chartArtistMatch(
+    String resultTitle,
+    String resultArtist,
+    String wantedArtist,
+  ) {
+    final resultWords = _normalizeChartText('$resultTitle $resultArtist')
+        .split(' ')
+        .where((word) => word.length > 1)
+        .toSet();
+    final wantedWords = _normalizeChartText(wantedArtist)
+        .split(' ')
+        .where(
+          (word) =>
+              word.length > 1 &&
+              !const {
+                'and',
+                'y',
+                'feat',
+                'ft',
+                'con',
+                'de',
+                'del',
+                'la',
+                'las',
+                'el',
+                'los',
+                'the',
+              }.contains(word),
+        )
+        .toSet();
+    if (resultWords.isEmpty || wantedWords.isEmpty) return 0;
+    return resultWords.intersection(wantedWords).length / wantedWords.length;
+  }
+
+  YouTubeSearchResult _applyChartArtwork(
+    YouTubeSearchResult result,
+    MusicChartTrack track,
+  ) {
+    final chartArtwork = track.artworkUrl.trim();
+    if (chartArtwork.isEmpty) return result;
+    return YouTubeSearchResult(
+      videoId: result.videoId,
+      title: result.title,
+      artist: result.artist,
+      duration: result.duration,
+      thumbnail: chartArtwork,
+      url: result.url,
+    );
+  }
+
+  /// Busca la mejor versión disponible del tema para reproducirlo desde el chart.
+  /// Prioriza título y artista, pero tolera metadatos incompletos de YouTube.
+  Future<YouTubeSearchResult?> resolveTrackForPlayback(
+    MusicChartTrack track,
+  ) async {
+    if (track.title.trim().isEmpty || track.artist.trim().isEmpty) return null;
+    final key = _chartTrackKey(track);
+    final cached = _resolvedChartResults[key];
+    if (cached != null) return _applyChartArtwork(cached, track);
+
+    try {
+      final results = <YouTubeSearchResult>[];
+      final seenVideoIds = <String>{};
+      YouTubeSearchResult? best;
+      var bestScore = 0.0;
+      var bestTitleScore = 0.0;
+      var bestArtistScore = 0.0;
+
+      final queries = <String>[
+        '${track.title} ${track.artist} audio',
+        '${track.title} ${track.artist}',
+        track.title,
+      ];
+      for (final query in queries) {
+        final batch = await YouTubeAudioService.instance.search(query);
+        for (final result in batch) {
+          if (seenVideoIds.add(result.videoId)) results.add(result);
+          final titleScore = _chartTitleMatch(result.title, track.title);
+          final artistScore = _chartArtistMatch(
+            result.title,
+            result.artist,
+            track.artist,
+          );
+          final score = titleScore * 0.7 + artistScore * 0.3;
+          if (score > bestScore) {
+            best = result;
+            bestScore = score;
+            bestTitleScore = titleScore;
+            bestArtistScore = artistScore;
+          }
+        }
+
+        // Skip broader searches when we already have a convincing match.
+        if (bestTitleScore >= 0.72 && bestArtistScore >= 0.25) break;
+      }
+      if (results.isEmpty) return null;
+
+      // If YouTube metadata is incomplete, allow a strong title match. If its
+      // result titles are poor too, the queries already tried the chart title
+      // with its artist and on its own, so use the closest available result.
+      if (best == null ||
+          (bestTitleScore < 0.72 &&
+              !(bestTitleScore >= 0.5 && bestArtistScore >= 0.25))) {
+        best = results.first;
+      }
+      if (best != null) {
+        final resultWithArtwork = _applyChartArtwork(best, track);
+        _resolvedChartResults[key] = resultWithArtwork;
+        return resultWithArtwork;
+      }
+    } catch (error) {
+      debugPrint(
+        '[ArtistDiscovery] No se pudo resolver ${track.title}: $error',
+      );
+    }
+    return null;
+  }
+
   /// Resuelve una cola con una búsqueda individual por cada tema del chart.
   /// Evita llenar la cola con versiones del mismo tema y portadas distintas.
   Future<List<YouTubeSearchResult>> resolvePlaybackQueue(
@@ -187,54 +342,10 @@ class ArtistDiscoveryService {
             ...tracks.take(startIndex),
           ];
 
-    String normalize(String value) => value
-        .toLowerCase()
-        .replaceAll(
-          RegExp(r'\b(topic|official|audio|video|lyrics?)\b'),
-          ' ',
-        )
-        .replaceAll(RegExp(r'[^a-z0-9áéíóúüñ]+'), ' ')
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .trim();
-
-    double titleMatch(String resultTitle, String wantedTitle) {
-      final result = normalize(resultTitle);
-      final wanted = normalize(wantedTitle);
-      if (result.isEmpty || wanted.isEmpty) return 0;
-      if (result == wanted) return 1;
-      if (result.contains(wanted) || wanted.contains(result)) return 0.92;
-      final resultWords = result
-          .split(' ')
-          .where((word) => word.length > 1)
-          .toSet();
-      final wantedWords = wanted
-          .split(' ')
-          .where((word) => word.length > 1)
-          .toSet();
-      if (wantedWords.isEmpty) return 0;
-      return resultWords.intersection(wantedWords).length / wantedWords.length;
-    }
-
-    double artistMatch(
-      String resultTitle,
-      String resultArtist,
-      MusicChartTrack track,
-    ) {
-      final result = normalize('$resultTitle $resultArtist');
-      final wanted = normalize(track.artist);
-      if (result.isEmpty || wanted.isEmpty) return 0;
-      if (result.contains(wanted) || wanted.contains(result)) return 0.15;
-      final resultWords = result.split(' ').where((word) => word.length > 1).toSet();
-      final wantedWords = wanted.split(' ').where((word) => word.length > 1).toSet();
-      if (wantedWords.isEmpty) return 0;
-      final overlap = resultWords.intersection(wantedWords).length;
-      return overlap == 0 ? 0 : 0.08 * overlap / wantedWords.length;
-    }
-
     final uniqueTracks = <MusicChartTrack>[];
     final trackKeys = <String>{};
     for (final track in ordered) {
-      final key = '${normalize(track.title)}|${normalize(track.artist)}';
+      final key = _chartTrackKey(track);
       if (track.title.trim().isEmpty || !trackKeys.add(key)) continue;
       uniqueTracks.add(track);
       if (uniqueTracks.length >= limit) break;
@@ -243,38 +354,15 @@ class ArtistDiscoveryService {
     Future<(MusicChartTrack, YouTubeSearchResult?)> resolve(
       MusicChartTrack track,
     ) async {
-      final key = '${normalize(track.title)}|${normalize(track.artist)}';
-      if (key ==
-              '${normalize(startWith.title)}|${normalize(startWith.artist)}' &&
+      final key = _chartTrackKey(track);
+      if (key == _chartTrackKey(startWith) &&
           firstResult != null) {
-        _resolvedChartResults[key] = firstResult;
-        return (track, firstResult);
+        final resultWithArtwork = _applyChartArtwork(firstResult, track);
+        _resolvedChartResults[key] = resultWithArtwork;
+        return (track, resultWithArtwork);
       }
-      final cached = _resolvedChartResults[key];
-      if (cached != null) return (track, cached);
-      try {
-        final results = await YouTubeAudioService.instance.search(
-          '${track.title} ${track.artist} audio',
-        );
-        YouTubeSearchResult? best;
-        var bestScore = 0.0;
-        for (final result in results) {
-          final titleScore = titleMatch(result.title, track.title);
-          final score =
-              titleScore + artistMatch(result.title, result.artist, track);
-          if (score > bestScore) {
-            best = result;
-            bestScore = score;
-          }
-        }
-        if (best != null && bestScore >= 0.55) {
-          _resolvedChartResults[key] = best;
-          return (track, best);
-        }
-      } catch (_) {
-        // Una búsqueda fallida no cancela el resto de la cola.
-      }
-      return (track, null);
+      final result = await resolveTrackForPlayback(track);
+      return (track, result == null ? null : _applyChartArtwork(result, track));
     }
 
     final resolved = await Future.wait(uniqueTracks.map(resolve));
@@ -285,7 +373,8 @@ class ArtistDiscoveryService {
         if (item.$2 != null &&
             seenVideoIds.add(item.$2!.videoId) &&
             seenSongs.add(
-              '${normalize(item.$2!.title)}|${normalize(item.$2!.artist)}',
+              '${_normalizeChartText(item.$2!.title)}|'
+              '${_normalizeChartText(item.$2!.artist)}',
             ))
           item.$2!,
     ]);
@@ -581,10 +670,7 @@ class ArtistDiscoveryService {
       final response = await http
           .get(
             uri,
-            headers: const {
-              'Cache-Control': 'no-cache',
-              'Pragma': 'no-cache',
-            },
+            headers: const {'Cache-Control': 'no-cache', 'Pragma': 'no-cache'},
           )
           .timeout(const Duration(seconds: 15));
       if (response.statusCode != 200) return chart;

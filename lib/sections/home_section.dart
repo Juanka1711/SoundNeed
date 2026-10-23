@@ -1195,29 +1195,25 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
             candidate.artist == track.artist,
       );
       final sourceChart = inColombiaChart ? _currentChart : _worldChart;
-      final results = await YouTubeAudioService.instance.search(
-        '${track.title} ${track.artist} audio',
-      );
-      if (results.isEmpty) {
+      final discovery = ArtistDiscoveryService.instance;
+      final result = await discovery.resolveTrackForPlayback(track);
+      if (result == null) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('No encontramos este tema para reproducir.'),
+              content: Text(
+                'No encontramos audio disponible para esta canción ahora. Inténtalo de nuevo más tarde.',
+              ),
             ),
           );
         }
         return;
       }
-      final normalizedTitle = track.title.toLowerCase();
-      final result = results.firstWhere(
-        (candidate) => candidate.title.toLowerCase().contains(normalizedTitle),
-        orElse: () => results.first,
-      );
       final ok = await widget.player.playOnline(result, playlist: [result]);
       if (ok) {
         widget.player.loadChartQueue(
           result.videoId,
-          ArtistDiscoveryService.instance.resolvePlaybackQueue(
+          discovery.resolvePlaybackQueue(
             sourceChart,
             startWith: track,
             firstResult: result,
@@ -2106,6 +2102,7 @@ class _HomeSectionState extends State<HomeSection> with WidgetsBindingObserver {
             final ok = await widget.player.playOnline(
               result,
               playlist: widget.onlineResults,
+              relatedToSelected: true,
             );
 
             if (!ok && mounted) {

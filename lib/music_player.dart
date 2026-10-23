@@ -237,6 +237,9 @@ class MusicPlayerController extends ChangeNotifier {
   Timer? _progressUpdateTimer;
   Future<void> _recommendationQueue = Future<void>.value();
   Future<void>? _pendingChartQueue;
+  Future<void>? _pendingRelatedQueue;
+  String? _pendingRelatedSongId;
+  int _relatedQueueRequestId = 0;
 
   // Getters
   List<Song> get songs => _songs;
@@ -1666,6 +1669,12 @@ class MusicPlayerController extends ChangeNotifier {
     if (retryingFailedOnlineSong) {
       _prepareFreshOnlineRetry(song);
     }
+    if (_pendingRelatedSongId != null &&
+        _pendingRelatedSongId != song.onlineVideoId) {
+      _relatedQueueRequestId++;
+      _pendingRelatedQueue = null;
+      _pendingRelatedSongId = null;
+    }
     _pendingChartQueue = null;
 
     if (!retry) {
@@ -2181,6 +2190,7 @@ class MusicPlayerController extends ChangeNotifier {
     YouTubeSearchResult result, {
     List<YouTubeSearchResult>? playlist,
     bool repeatAll = false,
+    bool relatedToSelected = false,
   }) async {
     final source = (playlist == null || playlist.isEmpty)
         ? <YouTubeSearchResult>[result]
@@ -2188,23 +2198,160 @@ class MusicPlayerController extends ChangeNotifier {
 
     final song = Song.fromYouTube(result);
     _pendingChartQueue = null;
+    final requestId = ++_relatedQueueRequestId;
+    _pendingRelatedQueue = null;
+    _pendingRelatedSongId = null;
 
-    _queue = source.map(Song.fromYouTube).toList();
-
-    var index = _queue.indexWhere((s) => s.id == song.id);
-
-    if (index == -1) {
-      _queue.insert(0, song);
-      index = 0;
+    if (relatedToSelected) {
+      // Search results are often alternate uploads of the same track. Start
+      // with the selected song and replace the queue with artist-related
+      // tracks as soon as the background searches finish.
+      _queue = <Song>[song];
+      _queueIndex = 0;
+      _pendingRelatedSongId = song.onlineVideoId;
+      late final Future<void> pending;
+      pending = _buildRelatedOnlineQueue(song, source, requestId)
+          .catchError((Object error) {
+            debugPrint(
+              '[SoundNeed] No se pudo preparar la cola relacionada: $error',
+            );
+          })
+          .whenComplete(() {
+            if (identical(_pendingRelatedQueue, pending)) {
+              _pendingRelatedQueue = null;
+              _pendingRelatedSongId = null;
+            }
+          });
+      _pendingRelatedQueue = pending;
+      unawaited(pending);
+    } else {
+      _queue = source.map(Song.fromYouTube).toList();
+      var index = _queue.indexWhere((s) => s.id == song.id);
+      if (index == -1) {
+        _queue.insert(0, song);
+        index = 0;
+      }
+      _queueIndex = index;
     }
 
-    _queueIndex = index;
     if (repeatAll) _playbackMode = modeRepeatAll;
 
-    await playSong(_queue[_queueIndex], createQueue: false);
+    await playSong(song, createQueue: false);
 
     return playbackError == null;
   }
+
+  Future<void> _buildRelatedOnlineQueue(
+    Song selectedSong,
+    List<YouTubeSearchResult> searchResults,
+    int requestId,
+  ) async {
+    final artist = selectedSong.artist.trim();
+    final title = selectedSong.title.trim();
+    final queries = <String>[
+      if (artist.isNotEmpty) '$artist canciones',
+      if (title.isNotEmpty)
+        artist.isEmpty
+            ? '$title canciones similares'
+            : 'canciones similares a $title de $artist',
+    ];
+
+    final searchBatches = await Future.wait(
+      queries.map((query) async {
+        try {
+          return await YouTubeAudioService.instance.search(query);
+        } catch (error) {
+          debugPrint('[SoundNeed] Búsqueda relacionada falló: $error');
+          return <YouTubeSearchResult>[];
+        }
+      }),
+    );
+
+    if (requestId != _relatedQueueRequestId ||
+        _currentSong?.onlineVideoId != selectedSong.onlineVideoId) {
+      return;
+    }
+
+    final sameArtist = <YouTubeSearchResult>[];
+    final similar = <YouTubeSearchResult>[];
+    if (searchBatches.isNotEmpty) {
+      sameArtist.addAll(
+        searchBatches.first.where((candidate) {
+          return artist.isNotEmpty &&
+              _onlineArtistsMatch(artist, candidate.artist);
+        }),
+      );
+    }
+    if (searchBatches.length > 1) {
+      similar.addAll(searchBatches.last);
+    }
+    // Use same-artist results already on screen if YouTube's artist search
+    // returned few tracks. Keep them ahead of the broader similar-song search.
+    sameArtist.addAll(
+      searchResults.where((candidate) {
+        return artist.isNotEmpty &&
+            _onlineArtistsMatch(artist, candidate.artist);
+      }),
+    );
+
+    final selectedTitle = _onlineTextKey(title);
+    final nextTracks = <Song>[];
+    final seenIds = <String>{selectedSong.onlineVideoId};
+    final seenTitles = <String>{selectedTitle};
+
+    void addResults(Iterable<YouTubeSearchResult> results) {
+      for (final candidate in results) {
+        if (candidate.videoId.isEmpty || !seenIds.add(candidate.videoId)) {
+          continue;
+        }
+        final candidateTitle = _onlineTextKey(candidate.title);
+        if (candidateTitle.isEmpty ||
+            candidateTitle == selectedTitle ||
+            (selectedTitle.length > 5 &&
+                candidateTitle.contains(selectedTitle)) ||
+            (candidateTitle.length > 5 &&
+                selectedTitle.contains(candidateTitle)) ||
+            !seenTitles.add(candidateTitle)) {
+          continue;
+        }
+        nextTracks.add(Song.fromYouTube(candidate));
+        if (nextTracks.length >= 24) return;
+      }
+    }
+
+    addResults(sameArtist);
+    addResults(similar);
+
+    if (requestId != _relatedQueueRequestId ||
+        _currentSong?.onlineVideoId != selectedSong.onlineVideoId) {
+      return;
+    }
+
+    _queue = <Song>[selectedSong, ...nextTracks];
+    _queueIndex = 0;
+    notifyListeners();
+    unawaited(_savePlaybackSession());
+  }
+
+  bool _onlineArtistsMatch(String expected, String actual) {
+    final expectedWords = _onlineTextKey(expected)
+        .split(' ')
+        .where((word) => word.length > 1 && word != 'topic' && word != 'vevo')
+        .toSet();
+    final actualWords = _onlineTextKey(actual)
+        .split(' ')
+        .where((word) => word.length > 1 && word != 'topic' && word != 'vevo')
+        .toSet();
+    if (expectedWords.isEmpty || actualWords.isEmpty) return false;
+    final overlap = expectedWords.intersection(actualWords).length;
+    return overlap / expectedWords.length >= 0.6;
+  }
+
+  String _onlineTextKey(String value) => value
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9 ]'), ' ')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
 
   /// Completa en segundo plano la cola de un tema de tendencias.
   /// La primera canción empieza a sonar sin esperar las demás búsquedas.
@@ -2303,6 +2450,12 @@ class MusicPlayerController extends ChangeNotifier {
   // ============================================================
 
   Future<void> nextSong() async {
+    if (_queue.length <= 1 &&
+        _queue.isNotEmpty &&
+        _pendingRelatedSongId == _queue.first.onlineVideoId &&
+        _pendingRelatedQueue != null) {
+      await _pendingRelatedQueue;
+    }
     if (_queue.length <= 1 && _pendingChartQueue != null) {
       await _pendingChartQueue;
     }
@@ -2409,6 +2562,12 @@ class MusicPlayerController extends ChangeNotifier {
 
   Future<void> _handleSongCompleted() async {
     if (_loadingAutoContinue) return;
+    if (_queue.length <= 1 &&
+        _queue.isNotEmpty &&
+        _pendingRelatedSongId == _queue.first.onlineVideoId &&
+        _pendingRelatedQueue != null) {
+      await _pendingRelatedQueue;
+    }
     if (_queue.length <= 1 && _pendingChartQueue != null) {
       await _pendingChartQueue;
     }

@@ -1428,27 +1428,25 @@ class _ArtistAlbumDiscoverySectionState
 
   Future<void> _playWorldTrack(MusicChartTrack track) async {
     try {
-      final results = await YouTubeAudioService.instance.search(
-        '${track.title} ${track.artist} audio',
-      );
-      if (results.isEmpty) {
+      final discovery = ArtistDiscoveryService.instance;
+      final selected = await discovery.resolveTrackForPlayback(track);
+      if (selected == null) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('No encontramos esta canción.')),
+            const SnackBar(
+              content: Text(
+                'No encontramos audio disponible para esta canción ahora. Inténtalo de nuevo más tarde.',
+              ),
+            ),
           );
         }
         return;
       }
-      final normalizedTitle = track.title.toLowerCase();
-      final selected = results.firstWhere(
-        (result) => result.title.toLowerCase().contains(normalizedTitle),
-        orElse: () => results.first,
-      );
       final ok = await widget.player.playOnline(selected, playlist: [selected]);
       if (ok) {
         widget.player.loadChartQueue(
           selected.videoId,
-          ArtistDiscoveryService.instance.resolvePlaybackQueue(
+          discovery.resolvePlaybackQueue(
             _worldSongsForArtist(track.artist),
             startWith: track,
             firstResult: selected,
